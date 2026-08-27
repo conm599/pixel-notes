@@ -5,10 +5,12 @@
  * action=test   : 管理员测试上游连通性
  * action=prefs  : 读取/保存用户 AI 偏好（跨端同步，用户主动勾选）
  *
+ * 实现以 protocol.md v1 为准（分段参数 / prompt 模板 / 纠错话术的唯一事实源），改动需与 js/ai-direct.js 同步
+ *
  * 安全设计：
  * - 管理员的上游 Key 存于 pn_settings，永不下发浏览器
  * - 用户自有 Key 默认只存浏览器 localStorage，每次请求由前端带上、内存转发不落盘
- * - 自有 Key 模式经管理员配置的透明代理转发（管理页「AI 设置」），未配置时直连目标，无硬编码
+ * - 自有 Key 模式强制经管理员配置的透明代理转发（管理页「AI 设置」），未配置则拒绝该模式，服务器永不直连用户目标
  * - 平台密钥按北京时间每日 8:00 重置配额；自有 Key 模式每用户每日 100 次防刷
  */
 
@@ -62,7 +64,67 @@ function jsonOut($data, $code = 200) {
 }
 
 /**
+ * SSRF 防护：IP 是否为内网/环回/链路本地/私网（含格式非法，保守视为内部）
+ */
+function aiIsInternalIp($ip) {
+    if (!is_string($ip) || $ip === '') return true;
+    // 私网(10/8、172.16/12、192.168/16、fc00::/7) + 保留段(127.0.0.0/8、169.254.0.0/16、0.0.0.0/8、::1、fe80::/10 等)
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * 解析域名全部 A/AAAA 记录（含 IPv6），失败返回空数组
+ */
+function aiResolveIps($host) {
+    $ips = array();
+    if (function_exists('dns_get_record')) {
+        $recs = @dns_get_record($host, DNS_A | DNS_AAAA);
+        if (is_array($recs)) {
+            foreach ($recs as $r) {
+                if (isset($r['ipv4']) && filter_var($r['ipv4'], FILTER_VALIDATE_IP)) $ips[] = $r['ipv4'];
+                elseif (isset($r['ipv6']) && filter_var($r['ipv6'], FILTER_VALIDATE_IP)) $ips[] = $r['ipv6'];
+            }
+        }
+    }
+    if (empty($ips) && function_exists('gethostbyname')) {
+        $g = gethostbyname($host);
+        if (filter_var($g, FILTER_VALIDATE_IP)) $ips[] = $g;
+    }
+    return $ips;
+}
+
+/**
+ * SSRF 防护：URL 的 host 是否安全。解析到内网/环回/链路本地/私网地址或无法解析时返回 false
+ */
+function aiEndpointHostSafe($url) {
+    $p = @parse_url($url);
+    if (!is_array($p) || empty($p['host'])) return false;
+    $host = strtolower(trim((string)$p['host'], '[]'));
+    $host = rtrim($host, '.');
+    if ($host === '') return false;
+    // localhost 及其子域
+    if ($host === 'localhost' || substr($host, -10) === '.localhost') return false;
+    // 形似 IP 简写的纯数字/十六进制主机名（如 127.1、2130706433、0x7f000001），curl 可能解析为环回
+    if (preg_match('/^\d+(?:\.\d+)*$/', $host) || preg_match('/^0x[0-9a-f]+$/i', $host)) return false;
+    // 字面 IP：直接判断
+    if (filter_var($host, FILTER_VALIDATE_IP)) {
+        return !aiIsInternalIp($host);
+    }
+    // 域名：解析全部 A/AAAA，任一命中内网即拒绝；解析失败也拒绝（保守）
+    $ips = aiResolveIps($host);
+    if (empty($ips)) return false;
+    foreach ($ips as $ip) {
+        if (aiIsInternalIp($ip)) return false;
+    }
+    return true;
+}
+
+/**
  * 归一化用户填写的 base_url：无协议补 https://，返回完整 chat/completions 地址
+ * 仅接受公网 http/https，拒绝内网/环回/链路本地/私网地址（SSRF 防护）
  */
 function ownEndpoint($baseUrl) {
     $base = trim((string)$baseUrl);
@@ -70,6 +132,7 @@ function ownEndpoint($baseUrl) {
     if (stripos($base, '://') === false) $base = 'https://' . $base;
     // 只接受 http/https
     if (stripos($base, 'https://') !== 0 && stripos($base, 'http://') !== 0) return '';
+    if (!aiEndpointHostSafe($base)) return '';
     $base = rtrim($base, '/');
     if (substr($base, -17) === '/chat/completions') return $base;
     return $base . '/chat/completions';
@@ -83,7 +146,7 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null)
         'model' => $model,
         'messages' => $messages,
         'max_tokens' => $maxTokens,
-        'temperature' => 0.4,
+        'temperature' => 0.1,
     );
     // 额外请求体参数（仅自有 Key 模式）：深度思考预设 + 用户自定义 Body，后者优先
     if (is_array($extra)) {
@@ -223,7 +286,11 @@ try {
             $fields = array();
             $fields['mode'] = (isset($input['mode']) && $input['mode'] === 'own') ? 'own' : 'platform';
             $fields['platform_key'] = isset($input['platform_key']) ? substr(trim((string)$input['platform_key']), 0, 64) : '';
-            $fields['own_base_url'] = isset($input['own_base_url']) ? substr(trim((string)$input['own_base_url']), 0, 255) : '';
+            $ownBaseUrl = isset($input['own_base_url']) ? substr(trim((string)$input['own_base_url']), 0, 255) : '';
+            if ($ownBaseUrl !== '' && ownEndpoint($ownBaseUrl) === '') {
+                jsonOut(array('success' => false, 'message' => '接口地址无效：仅支持公网 http/https 地址，禁止内网、本地或无法解析的地址'));
+            }
+            $fields['own_base_url'] = $ownBaseUrl;
             $fields['own_api_key'] = isset($input['own_api_key']) ? substr(trim((string)$input['own_api_key']), 0, 255) : '';
             $fields['own_model'] = isset($input['own_model']) ? substr(trim((string)$input['own_model']), 0, 100) : '';
             $proxy = isset($input['own_proxy']) ? trim((string)$input['own_proxy']) : '';
@@ -388,15 +455,18 @@ try {
                 $usage = $q['usage'];
             }
         } else {
-            // 自有 Key 模式：经 CF Worker 透明代理转发，无 SSRF 风险
+            // 自有 Key 模式：服务器只连管理员配置的透明代理（CF Worker），目标仅作为路径段转发，不直连用户目标
             $target = ownEndpoint(isset($prefs['ownBaseUrl']) ? $prefs['ownBaseUrl'] : '');
             $key  = isset($prefs['ownApiKey']) ? trim((string)$prefs['ownApiKey']) : '';
             $model = isset($prefs['ownModel']) ? trim((string)$prefs['ownModel']) : '';
-            if ($target === '' || $key === '' || $model === '') {
-                jsonOut(array('success' => false, 'message' => '自有 Key 模式需要在「AI 设置」里填写接口地址、API Key 和模型名'));
+            if ($target === '') {
+                jsonOut(array('success' => false, 'message' => '自有 Key 接口地址无效：仅支持公网 http/https 地址，禁止内网、本地或无法解析的地址'));
+            }
+            if ($key === '' || $model === '') {
+                jsonOut(array('success' => false, 'message' => '自有 Key 模式需要在「AI 设置」里填写 API Key 和模型名'));
             }
 
-            // 自有模式防刷限流：每用户每日（北京时间 8 点周期）100 次
+            // 自有模式防刷限流：每用户每日（北京时间 8 点周期）500 次
             $period = aiPeriodNow();
             $row = getUserAiPrefs($uid);
             $ownUsed = ($row && $row['own_period'] === $period) ? (int)$row['own_used'] : 0;
@@ -406,9 +476,12 @@ try {
             }
             $usage = array('used' => $ownUsed, 'limit' => AI_OWN_DAILY_LIMIT);
 
-            // 透明代理前缀由管理员在管理页配置（存 pn_settings）；未配置则服务器直连目标
+            // 强制走透明代理：未配置则拒绝自有 Key 模式，杜绝服务器直连用户目标（SSRF 根因）
             $proxyPrefix = rtrim(trim(getSetting('ai_own_proxy', '')), '/');
-            $url = ($proxyPrefix !== '') ? $proxyPrefix . '/' . $target : $target;
+            if (!preg_match('#^https://#i', $proxyPrefix)) {
+                jsonOut(array('success' => false, 'message' => '服务器未配置自有 Key 透明代理，请联系管理员在「AI 设置」中填写 https:// 的 CF Worker 代理地址'));
+            }
+            $url = $proxyPrefix . '/' . $target;
         }
 
         // ===== 额外请求体参数 =====
@@ -483,7 +556,7 @@ try {
                         . "【编辑指令】" . $instruction),
                 );
                 for ($att = 1; $att <= 2; $att++) {
-                    $r = aiChat($url, $key, $model, $segMsgs, 8000, $extra);
+                    $r = aiChat($url, $key, $model, $segMsgs, 16000, $extra);
                     if (!$r['ok']) {
                         jsonOut(array('success' => false, 'message' => '第 ' . ($ci + 1) . ' 段处理失败：' . $r['err'], 'usage' => $usage));
                     }

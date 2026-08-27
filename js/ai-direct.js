@@ -4,6 +4,8 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
+ * 实现以 protocol.md v1 为准（分段参数 / prompt 模板 / 纠错话术的唯一事实源），改动需与 api/ai.php 同步
+ *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
  */
@@ -57,6 +59,7 @@
     var m = null;
     var applied = 0;
     var failed = 0;
+    var bad = [];
     var result = originalContent.replace(/\r\n/g, '\n');
     while ((m = re.exec(text)) !== null) {
       var search = m[1].replace(/\r\n/g, '\n').replace(/\n+$/, '');
@@ -67,14 +70,15 @@
         applied++;
       } else {
         failed++;
+        bad.push(search);
       }
     }
-    return { result: result, applied: applied, failed: failed, hasBlocks: applied + failed > 0 };
+    return { result: result, applied: applied, failed: failed, bad: bad, hasBlocks: applied + failed > 0 };
   }
 
   // 单轮请求：返回 { ok, text, message }（ok=false 时 message 为错误说明）
   async function callOnce(proxy, target, apiKey, model, messages, extra) {
-    var payload = { model: model, messages: messages, max_tokens: 16000, temperature: 0.4 };
+    var payload = { model: model, messages: messages, max_tokens: 16000, temperature: 0.1 };
     // 额外请求体参数：深度思考预设 + 用户自定义 Body（后者优先，同名覆盖）
     if (extra) {
       for (var k in extra) {
@@ -257,13 +261,17 @@
         }
         // 全部匹配失败：带上下文重试
         if (attempt < maxAttempts) {
+          var fb = '你上一轮输出的替换块全部无法匹配原文（共 ' + b.failed + ' 个）。'
+            + 'SEARCH 段必须从【当前便签内容】中逐字精确复制（包括空格、换行、标点、Markdown 符号），禁止凭记忆复述。';
+          if (b.bad && b.bad.length) {
+            var preview = b.bad.slice(0, 3).map(function (s) {
+              return '「' + String(s).trim().replace(/\s+/g, ' ').slice(0, 20) + '…」';
+            }).join(' / ');
+            fb += '你上轮的 SEARCH 段开头分别是：' + preview;
+          }
+          fb += '请重新输出替换块完成原指令：' + opts.instruction;
           messages.push({ role: 'assistant', content: text });
-          messages.push({
-            role: 'user',
-            content: '你上一轮输出的替换块全部无法匹配原文（共 ' + b.failed + ' 个）。'
-              + 'SEARCH 段必须从【当前便签内容】中逐字精确复制（包括空格、换行、标点、Markdown 符号），禁止凭记忆复述。'
-              + '请重新输出替换块完成原指令：' + opts.instruction
-          });
+          messages.push({ role: 'user', content: fb });
           continue;
         }
         return { success: false, message: 'AI 指出的修改位置无法在原文中匹配，已自动重试 ' + maxAttempts + ' 轮仍失败，请重试或换个说法' };
