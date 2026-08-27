@@ -26,6 +26,32 @@ if (function_exists('set_time_limit')) @set_time_limit(150);
 
 define('AI_MAX_CONTENT', 30000);
 define('AI_MAX_INSTRUCTION', 2000);
+// 长文分段 agent：超过阈值则切块逐段处理（模型输入 512K 不是瓶颈，瓶颈在单次输出与响应时间）
+define('AI_CHUNK_THRESHOLD', 4500);
+define('AI_CHUNK_SIZE', 3000);
+
+/**
+ * 长文切块：优先在段落/换行边界切，块为原文的精确子串（保证后续能在全文中定位替换）
+ */
+function aiChunkText($text) {
+    $chunks = array();
+    $mb = function_exists('mb_strlen');
+    $len = $mb ? mb_strlen($text, 'UTF-8') : strlen($text);
+    if ($len <= AI_CHUNK_SIZE) return array($text);
+    $start = 0; $lastBreak = 0;
+    for ($i = 0; $i < $len; $i++) {
+        if ($i - $start >= AI_CHUNK_SIZE) {
+            $cut = ($lastBreak > $start) ? $lastBreak : $i;
+            $chunks[] = $mb ? mb_substr($text, $start, $cut - $start, 'UTF-8') : substr($text, $start, $cut - $start);
+            $start = $cut;
+            $lastBreak = $start;
+        }
+        $ch = $mb ? mb_substr($text, $i, 1, 'UTF-8') : $text[$i];
+        if ($ch === "\n") $lastBreak = $i + 1;
+    }
+    if ($start < $len) $chunks[] = $mb ? mb_substr($text, $start, $len - $start, 'UTF-8') : substr($text, $start);
+    return $chunks;
+}
 define('AI_POLICY_VERSION', 1);
 define('AI_OWN_DAILY_LIMIT', 500);
 
@@ -52,13 +78,20 @@ function ownEndpoint($baseUrl) {
 /**
  * 调用 OpenAI 兼容 chat/completions（url/key/model 由调用方指定）
  */
-function aiChat($url, $key, $model, $messages, $maxTokens = 8000) {
-    $payload = json_encode(array(
+function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null) {
+    $payloadArr = array(
         'model' => $model,
         'messages' => $messages,
         'max_tokens' => $maxTokens,
         'temperature' => 0.4,
-    ), defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0);
+    );
+    // 额外请求体参数（仅自有 Key 模式）：深度思考预设 + 用户自定义 Body，后者优先
+    if (is_array($extra)) {
+        foreach ($extra as $k => $v) {
+            if ($k !== 'model' && $k !== 'messages' && is_string($k)) $payloadArr[$k] = $v;
+        }
+    }
+    $payload = json_encode($payloadArr, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0);
 
     $body = false; $status = 0;
     if (function_exists('curl_init')) {
@@ -198,6 +231,23 @@ try {
             $fields['own_proxy'] = substr($proxy, 0, 255);
             $fields['send_time'] = !empty($input['send_time']) ? 1 : 0;
             $fields['style'] = isset($input['style']) ? substr(trim((string)$input['style']), 0, 500) : '';
+            // 深度思考 + 自定义 Body（仅自有 Key 模式生效）
+            $fields['own_deep_think'] = !empty($input['own_deep_think']) ? 1 : 0;
+            $bEnabled = !empty($input['own_body_enabled']);
+            $bKey = isset($input['own_body_key']) ? substr(trim((string)$input['own_body_key']), 0, 64) : '';
+            $bJson = isset($input['own_body_json']) ? substr(trim((string)$input['own_body_json']), 0, 500) : '';
+            if ($bEnabled) {
+                if (!preg_match('/^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$/', $bKey)) {
+                    jsonOut(array('success' => false, 'message' => '自定义 Body Key 格式无效（字母开头，可含数字/下划线/点/横线，最长 64 字符）'));
+                }
+                $bVal = json_decode($bJson, true);
+                if ($bVal === null && strtolower($bJson) !== 'null') {
+                    jsonOut(array('success' => false, 'message' => '自定义 Body JSON 解析失败，请填写合法 JSON（如 true / "high" / {"type":"enabled"}）'));
+                }
+            }
+            $fields['own_body_enabled'] = $bEnabled ? 1 : 0;
+            $fields['own_body_key'] = $bKey;
+            $fields['own_body_json'] = $bJson;
             if (!empty($input['policy_agreed'])) $fields['policy_version'] = AI_POLICY_VERSION;
             saveUserAiPrefs($uid, $fields);
         }
@@ -303,6 +353,7 @@ try {
         $pdo = getDB();
         $usage = null;
         $keyRow = null;
+        $extra = array();
 
         if ($mode === 'platform') {
             $isAdmin = isAdminUser();
@@ -360,6 +411,25 @@ try {
             $url = ($proxyPrefix !== '') ? $proxyPrefix . '/' . $target : $target;
         }
 
+        // ===== 额外请求体参数 =====
+        // 深度思考：所有模式（平台密钥/管理员/自有 Key）均生效；自定义 Body 同名键可覆盖
+        if (!empty($prefs['deepThink'])) {
+            $extra['enable_thinking'] = true;
+        }
+        // 自定义 Body：仅自有 Key 模式生效（平台/管理员上游不受用户自定义参数影响）
+        if ($mode === 'own' && !empty($prefs['bodyEnabled'])) {
+            $bKey = isset($prefs['bodyKey']) ? trim((string)$prefs['bodyKey']) : '';
+            $bJson = isset($prefs['bodyJson']) ? trim((string)$prefs['bodyJson']) : '';
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$/', $bKey)) {
+                jsonOut(array('success' => false, 'message' => '自定义 Body Key 格式无效（字母开头，可含数字/下划线/点/横线，最长 64 字符）'));
+            }
+            $bVal = json_decode($bJson, true);
+            if ($bVal === null && strtolower($bJson) !== 'null') {
+                jsonOut(array('success' => false, 'message' => '自定义 Body JSON 解析失败，请填写合法 JSON（如 true / "high" / {"type":"enabled"}）'));
+            }
+            $extra[$bKey] = $bVal;
+        }
+
         $system = "你是一个便签编辑代理。用户会给你一篇 Markdown 便签（可能为空）和一条编辑指令，你要精准地完成编辑。\n"
             . "【输出格式（二选一）】\n"
             . "A. 局部修改（默认首选）：只改动需要改的地方。每个改动输出一个替换块，格式严格如下：\n"
@@ -384,6 +454,102 @@ try {
             $system .= "\n【当前时间】现在是 " . $timeStr . "（用户本地时间）。涉及时间、日期、星期、节假日等内容的编辑请以此为准，不要虚构时间。";
         }
 
+        $contentN = str_replace("\r\n", "\n", $content);
+        $clenN = function_exists('mb_strlen') ? mb_strlen($contentN, 'UTF-8') : strlen($contentN);
+        $result = null;
+
+        // ===== 长文分段 agent 模式：切块逐段下达指令（附全文结构大纲），逐段收集替换块后在全文统一应用 =====
+        if ($clenN > AI_CHUNK_THRESHOLD) {
+            @set_time_limit(600);
+            $chunks = aiChunkText($contentN);
+            $n = count($chunks);
+            $outline = '';
+            foreach ($chunks as $ci => $ck) {
+                $first = trim(strtok($ck, "\n"));
+                if ($first === '') $first = trim($ck);
+                $first = function_exists('mb_substr') ? mb_substr($first, 0, 24, 'UTF-8') : substr($first, 0, 48);
+                $outline .= ($ci + 1) . '. ' . $first . "\n";
+            }
+            $segSystem = $system . "\n【分段模式】这是一篇长文，已分 " . $n . " 段，你只处理「本段内容」这一个段。SEARCH 段必须逐字复制自「本段内容」。若本段完全无需修改，只输出四个字：本段无需修改。";
+
+            $newContent = $contentN;
+            $applied = 0; $failed = 0;
+            foreach ($chunks as $ci => $ck) {
+                $segMsgs = array(
+                    array('role' => 'system', 'content' => $segSystem),
+                    array('role' => 'user', 'content' => "【便签标题】" . ($title !== '' ? $title : '(无标题)') . "\n"
+                        . "【全文结构（共" . $n . "段，你处理第 " . ($ci + 1) . " 段）】\n" . $outline
+                        . "【本段内容】\n" . ($ck !== '' ? $ck : '(空)') . "\n\n"
+                        . "【编辑指令】" . $instruction),
+                );
+                for ($att = 1; $att <= 2; $att++) {
+                    $r = aiChat($url, $key, $model, $segMsgs, 8000, $extra);
+                    if (!$r['ok']) {
+                        jsonOut(array('success' => false, 'message' => '第 ' . ($ci + 1) . ' 段处理失败：' . $r['err'], 'usage' => $usage));
+                    }
+                    $_SESSION['ai_last'] = $now;
+
+                    $text = trim($r['text']);
+                    if (preg_match('/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i', $text, $m)) $text = trim($m[1]);
+                    if ($text === '') {
+                        if ($att < 2) {
+                            $segMsgs[] = array('role' => 'assistant', 'content' => '（上一轮返回为空）');
+                            $segMsgs[] = array('role' => 'user', 'content' => '你上一轮返回了空内容，请重新处理本段。');
+                            continue;
+                        }
+                        $failed++;
+                        break;
+                    }
+                    // 无需修改：跳过本段
+                    if (!preg_match('/<<<SEARCH>>>/i', $text) && preg_match('/无需修改|没有需要|不涉及修改|不用修改/is', $text)) {
+                        break;
+                    }
+                    if (preg_match_all('/<<<SEARCH>>>\s*\n([\s\S]*?)\n?<<<REPLACE>>>\s*\n([\s\S]*?)\n?<<<END>>>/i', $text, $mm, PREG_SET_ORDER)) {
+                        $cApplied = 0;
+                        foreach ($mm as $b) {
+                            $search = str_replace("\r\n", "\n", rtrim($b[1], "\n"));
+                            $replace = str_replace("\r\n", "\n", rtrim($b[2], "\n"));
+                            $pos = ($search !== '') ? strpos($newContent, $search) : false;
+                            if ($pos !== false) {
+                                $newContent = substr_replace($newContent, $replace, $pos, strlen($search));
+                                $cApplied++; $applied++;
+                            } else {
+                                $failed++;
+                            }
+                        }
+                        if ($cApplied > 0) break;
+                        if ($att < 2) {
+                            $segMsgs[] = array('role' => 'assistant', 'content' => $text);
+                            $segMsgs[] = array('role' => 'user', 'content' => '你输出的替换块无法在「本段内容」中精确匹配。SEARCH 段必须逐字复制本段原文（含空格、换行、标点），请重新输出。');
+                            continue;
+                        }
+                    } else {
+                        // 无替换块：视输出为本段整体重写（块是原文精确子串，可在全文中定位）
+                        $pos = strpos($newContent, $ck);
+                        if ($pos !== false) {
+                            $newContent = substr_replace($newContent, $text, $pos, strlen($ck));
+                            $applied++;
+                        } else {
+                            $failed++;
+                        }
+                        break;
+                    }
+                }
+            }
+            $result = array(
+                'success' => true,
+                'mode'    => 'edits',
+                'applied' => $applied,
+                'failed'  => $failed,
+                'content' => $newContent,
+                'usage'   => $usage,
+                'chunked' => true,
+                'chunks'  => $n,
+                'attempts' => 1,
+            );
+        }
+
+        if ($result === null) {
         $userMsg = "【便签标题】" . ($title !== '' ? $title : '(无标题)') . "\n"
             . "【当前便签内容】\n" . ($content !== '' ? $content : '(空便签)') . "\n\n"
             . "【编辑指令】" . $instruction;
@@ -398,7 +564,7 @@ try {
         $lastErrText = '';
         $result = null;
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-            $r = aiChat($url, $key, $model, $messages);
+            $r = aiChat($url, $key, $model, $messages, 16000, $extra);
 
             if (!$r['ok']) {
                 jsonOut(array('success' => false, 'message' => $r['err'], 'usage' => $usage));
@@ -473,6 +639,7 @@ try {
             $result = array('success' => true, 'mode' => 'full', 'content' => $text, 'usage' => $usage, 'attempts' => $attempt);
             break;
         }
+        } // 结束单发模式（$result === null 分支）
 
         if ($result === null) {
             jsonOut(array('success' => false, 'message' => $lastErrText !== '' ? $lastErrText : 'AI 编辑失败', 'usage' => $usage));

@@ -681,11 +681,15 @@
         ownProxy: p.ownProxy || '',
         sendTime: !!p.sendTime,
         style: p.style || '',
+        ownDeepThink: !!p.ownDeepThink,
+        ownBodyEnabled: !!p.ownBodyEnabled,
+        ownBodyKey: p.ownBodyKey || '',
+        ownBodyJson: p.ownBodyJson || '',
         sync: !!p.sync,
         policyVersion: parseInt(p.policyVersion) || 0
       };
     } catch (e) {
-      return { mode: 'platform', platformKey: '', ownBaseUrl: '', ownApiKey: '', ownModel: '', ownProxy: '', sendTime: false, style: '', sync: false, policyVersion: 0 };
+      return { mode: 'platform', platformKey: '', ownBaseUrl: '', ownApiKey: '', ownModel: '', ownProxy: '', sendTime: false, style: '', ownDeepThink: false, ownBodyEnabled: false, ownBodyKey: '', ownBodyJson: '', sync: false, policyVersion: 0 };
     }
   }
 
@@ -702,7 +706,11 @@
       own_model: p.ownModel,
       own_proxy: p.ownProxy,
       send_time: p.sendTime ? 1 : 0,
-      style: p.style
+      style: p.style,
+      own_deep_think: p.ownDeepThink ? 1 : 0,
+      own_body_enabled: p.ownBodyEnabled ? 1 : 0,
+      own_body_key: p.ownBodyKey || '',
+      own_body_json: p.ownBodyJson || ''
     };
   }
 
@@ -717,6 +725,10 @@
       ownProxy: row.own_proxy || '',
       sendTime: !!parseInt(row.send_time),
       style: row.style || '',
+      ownDeepThink: !!parseInt(row.own_deep_think),
+      ownBodyEnabled: !!parseInt(row.own_body_enabled),
+      ownBodyKey: row.own_body_key || '',
+      ownBodyJson: row.own_body_json || '',
       policyVersion: parseInt(row.policy_version) || 0
     };
   }
@@ -910,6 +922,35 @@
       inp.setAttribute('data-field', s[0]);
       ownArea.appendChild(inp);
     });
+    // 自定义 Body 参数（仅自有 Key 模式）
+    var bodyBox = mkEl('div', 'ai-body-box');
+    var bodyChkRow = mkEl('div', 'ai-set-row');
+    var bodyChkLbl = mkEl('label', 'ai-sync-label');
+    var bchk = mkEl('input');
+    bchk.type = 'checkbox';
+    bchk.checked = p.ownBodyEnabled;
+    bchk.className = 'ai-sync-chk';
+    bodyChkLbl.appendChild(bchk);
+    bodyChkLbl.appendChild(mkEl('span', null, '⚙️ 自定义请求 Body 参数（随每次 AI 请求额外发送一个自定义字段）'));
+    bodyChkRow.appendChild(bodyChkLbl);
+    bodyBox.appendChild(bodyChkRow);
+    var bKeyInp = mkEl('input', 'form-input ai-input');
+    bKeyInp.type = 'text';
+    bKeyInp.placeholder = 'Body Key（参数名），如 enable_thinking / reasoning_effort / temperature';
+    bKeyInp.value = p.ownBodyKey;
+    bKeyInp.setAttribute('maxlength', '64');
+    var bJsonInp = mkEl('textarea', 'ai-instruction');
+    bJsonInp.placeholder = 'Body JSON（参数值，合法 JSON），如 true / "high" / {"type":"enabled","budget_tokens":1024}';
+    bJsonInp.value = p.ownBodyJson;
+    bJsonInp.setAttribute('maxlength', '500');
+    bJsonInp.style.minHeight = '54px';
+    var bodyHint = mkEl('div', 'ai-own-hint');
+    bodyHint.appendChild(mkEl('div', null, '💡 例：开启深度思考（Qwen 系）→ Key 填 enable_thinking，JSON 填 true；OpenAI o 系 → Key 填 reasoning_effort，JSON 填 "high"。与深度思考开关同名时以此处为准。仅「我自己的 Key」模式生效，平台密钥模式忽略。'));
+    bodyBox.appendChild(bKeyInp);
+    bodyBox.appendChild(bJsonInp);
+    bodyBox.appendChild(bodyHint);
+    ownArea.appendChild(bodyBox);
+
     var ownHint = mkEl('div', 'ai-own-hint');
     var ownHintTop = mkEl('div', null, '💡 Key 默认只存本浏览器；不填代理时经平台代理转发（每账号每日 500 次）；填写自己的透明代理后由浏览器直连你的代理，完全不经过平台、不限量。');
     ownHint.appendChild(ownHintTop);
@@ -946,6 +987,19 @@
     timeRow.appendChild(timeLbl);
     timeRow.appendChild(timeChk);
 
+    // 深度思考开关（平台密钥 / 管理员 / 自有 Key 模式均生效）
+    var thinkRow = mkEl('div', 'ai-set-row');
+    var thinkLbl = mkEl('div', 'ai-set-label', '深度思考');
+    var thinkChk = mkEl('label', 'ai-sync-label');
+    var dchk = mkEl('input');
+    dchk.type = 'checkbox';
+    dchk.checked = p.ownDeepThink;
+    dchk.className = 'ai-sync-chk';
+    thinkChk.appendChild(dchk);
+    thinkChk.appendChild(mkEl('span', null, '🧠 发送 enable_thinking: true，AI 思考更细致但响应明显更慢。所有模式均生效（前提是所用的模型支持思考）；参数名不同的厂商可用「自定义 Body」覆盖（仅自有 Key 模式）'));
+    thinkRow.appendChild(thinkLbl);
+    thinkRow.appendChild(thinkChk);
+
     // 同步
     var syncRow = mkEl('div', 'ai-set-row');
     var syncLbl = mkEl('div', 'ai-set-label', '跨端同步');
@@ -964,6 +1018,7 @@
     body.appendChild(ownArea);
     body.appendChild(styleArea);
     body.appendChild(timeRow);
+    body.appendChild(thinkRow);
     body.appendChild(syncRow);
 
     // 政策查看入口（随时可再看）
@@ -1017,6 +1072,22 @@
       });
       np.style = styleTa.value.trim();
       np.sendTime = tchk.checked;
+      np.ownDeepThink = dchk.checked;
+      np.ownBodyEnabled = bchk.checked;
+      np.ownBodyKey = bKeyInp.value.trim();
+      np.ownBodyJson = bJsonInp.value.trim();
+      if (np.ownBodyEnabled) {
+        if (!/^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$/.test(np.ownBodyKey)) {
+          showToast('⚠️ Body Key 格式无效（字母开头，可含数字/下划线/点/横线，最长 64 字符）', 'error');
+          return;
+        }
+        var bTest = null;
+        try { bTest = JSON.parse(np.ownBodyJson); } catch (e) { bTest = undefined; }
+        if (bTest === undefined) {
+          showToast('⚠️ Body JSON 不是合法 JSON（如 true / "high" / {"type":"enabled"}）', 'error');
+          return;
+        }
+      }
       np.sync = chk.checked;
       if (np.mode === 'own' && (!np.ownBaseUrl || !np.ownApiKey || !np.ownModel)) {
         showToast('⚠️ 自有 Key 模式需要填写接口地址、API Key 和模型名', 'error');
@@ -1246,11 +1317,16 @@
       acceptBtn.style.display = '';
       regenBtn.style.display = '';
       var info;
+      if (aiResult.chunked) {
+        info = '🧩 长文分段处理（共 ' + (aiResult.chunks || '?') + ' 段，逐段下发给 AI）· ';
+      } else {
+        info = '';
+      }
       if (aiResult.mode === 'edits') {
-        info = '📑 局部修改：应用了 ' + aiResult.applied + ' 处改动';
+        info += '📑 局部修改：应用了 ' + aiResult.applied + ' 处改动';
         if (aiResult.failed) info += '，另有 ' + aiResult.failed + ' 处位置未匹配被跳过';
       } else {
-        info = '📝 全文重写：AI 返回了整篇内容，请仔细核对差异';
+        info += '📝 全文重写：AI 返回了整篇内容，请仔细核对差异';
       }
       if (aiResult.attempts && aiResult.attempts > 1) {
         info += '（AI 首次输出有误，已自动纠错 ' + (aiResult.attempts - 1) + ' 次后成功）';
@@ -1308,7 +1384,11 @@
             proxy: prefs.ownProxy,
             baseUrl: prefs.ownBaseUrl,
             apiKey: prefs.ownApiKey,
-            model: prefs.ownModel
+            model: prefs.ownModel,
+            deepThink: prefs.ownDeepThink,
+            bodyEnabled: prefs.ownBodyEnabled,
+            bodyKey: prefs.ownBodyKey,
+            bodyJson: prefs.ownBodyJson
           });
           if (r.success && typeof r.content === 'string') {
             aiResult = {
@@ -1317,6 +1397,8 @@
               mode: r.mode || 'full',
               applied: r.applied || 0,
               failed: r.failed || 0,
+              chunked: !!r.chunked,
+              chunks: r.chunks || 0,
               attempts: r.attempts || 1,
               instruction: instruction
             };
@@ -1353,7 +1435,11 @@
             ownApiKey: prefs.ownApiKey,
             ownModel: prefs.ownModel,
             style: prefs.style,
-            time: prefs.sendTime ? formatLocalNow() : ''
+            time: prefs.sendTime ? formatLocalNow() : '',
+            deepThink: prefs.ownDeepThink,
+            bodyEnabled: prefs.ownBodyEnabled,
+            bodyKey: prefs.ownBodyKey,
+            bodyJson: prefs.ownBodyJson
           }
         });
         if (r.need_policy) {
@@ -1365,6 +1451,8 @@
             mode: r.mode || 'full',
             applied: r.applied || 0,
             failed: r.failed || 0,
+            chunked: !!r.chunked,
+            chunks: r.chunks || 0,
             attempts: r.attempts || 1,
             instruction: instruction
           };

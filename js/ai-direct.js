@@ -73,7 +73,14 @@
   }
 
   // 单轮请求：返回 { ok, text, message }（ok=false 时 message 为错误说明）
-  async function callOnce(proxy, target, apiKey, model, messages) {
+  async function callOnce(proxy, target, apiKey, model, messages, extra) {
+    var payload = { model: model, messages: messages, max_tokens: 16000, temperature: 0.4 };
+    // 额外请求体参数：深度思考预设 + 用户自定义 Body（后者优先，同名覆盖）
+    if (extra) {
+      for (var k in extra) {
+        if (Object.prototype.hasOwnProperty.call(extra, k) && k !== 'model' && k !== 'messages') payload[k] = extra[k];
+      }
+    }
     var resp;
     try {
       resp = await fetch(proxy + '/' + target, {
@@ -82,7 +89,7 @@
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + apiKey
         },
-        body: JSON.stringify({ model: model, messages: messages, max_tokens: 8000, temperature: 0.4 })
+        body: JSON.stringify(payload)
       });
     } catch (e) {
       return { ok: false, message: '无法连接你的透明代理（检查地址是否正确、Worker 是否已部署）' };
@@ -125,6 +132,22 @@
     if (!target) return { success: false, message: '接口地址无效' };
     if (!apiKey || !model) return { success: false, message: '缺少 API Key 或模型名' };
 
+    // 自定义请求体参数：深度思考预设 + 用户自定义 Body（同名时自定义优先）
+    var extra = {};
+    if (opts.deepThink) extra.enable_thinking = true;
+    if (opts.bodyEnabled) {
+      var bKey = String(opts.bodyKey || '').trim();
+      var bJson = String(opts.bodyJson || '').trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$/.test(bKey)) {
+        return { success: false, message: '自定义 Body Key 格式无效（字母开头，可含数字/下划线/点/横线）' };
+      }
+      var bVal;
+      try { bVal = JSON.parse(bJson); } catch (e) {
+        return { success: false, message: '自定义 Body JSON 不是合法 JSON（如 true / "high" / {"type":"enabled"}）' };
+      }
+      extra[bKey] = bVal;
+    }
+
     var messages = [
       { role: 'system', content: buildSystemPrompt(opts.style, opts.now) },
       {
@@ -135,10 +158,81 @@
       }
     ];
 
+    // ===== 长文分段 agent 模式：与服务器端同策略（>4500 字切块逐段处理） =====
+    var CHUNK_THRESHOLD = 4500, CHUNK_SIZE = 3000;
+    var contentN = String(opts.content || '').replace(/\r\n/g, '\n');
+    if (contentN.length > CHUNK_THRESHOLD) {
+      var chunks = chunkText(contentN, CHUNK_SIZE);
+      var n = chunks.length;
+      var outline = '';
+      for (var ci = 0; ci < n; ci++) {
+        var first = (chunks[ci].split('\n')[0] || chunks[ci]).trim().slice(0, 24);
+        outline += (ci + 1) + '. ' + first + '\n';
+      }
+      var segSystem = buildSystemPrompt(opts.style, opts.now)
+        + '\n【分段模式】这是一篇长文，已分 ' + n + ' 段，你只处理「本段内容」这一个段。SEARCH 段必须逐字复制自「本段内容」。若本段完全无需修改，只输出四个字：本段无需修改。';
+      var newContent = contentN, applied = 0, failed = 0;
+      for (var ci = 0; ci < n; ci++) {
+        var segMsgs = [
+          { role: 'system', content: segSystem },
+          {
+            role: 'user',
+            content: '【便签标题】' + (opts.title || '(无标题)') + '\n'
+              + '【全文结构（共' + n + '段，你处理第 ' + (ci + 1) + ' 段）】\n' + outline
+              + '【本段内容】\n' + (chunks[ci] || '(空)') + '\n\n'
+              + '【编辑指令】' + opts.instruction
+          }
+        ];
+        for (var att = 1; att <= 2; att++) {
+          var r = await callOnce(proxy, target, apiKey, model, segMsgs, extra);
+          if (!r.ok && !r.empty) return { success: false, message: '第 ' + (ci + 1) + ' 段处理失败：' + r.message };
+          var text = r.text || '';
+          var fence = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i);
+          if (fence) text = fence[1].trim();
+          if (!text) {
+            if (att < 2) {
+              segMsgs.push({ role: 'assistant', content: '（上一轮返回为空）' });
+              segMsgs.push({ role: 'user', content: '你上一轮返回了空内容，请重新处理本段。' });
+              continue;
+            }
+            failed++;
+            break;
+          }
+          if (!/<<<SEARCH>>>/i.test(text) && /无需修改|没有需要|不涉及修改|不用修改/.test(text)) break;
+          var b = applyBlocks(text, newContent);
+          if (b.hasBlocks) {
+            if (b.applied > 0) {
+              newContent = b.result;
+              applied += b.applied;
+              failed += b.failed;
+              break;
+            }
+            if (att < 2) {
+              segMsgs.push({ role: 'assistant', content: text });
+              segMsgs.push({ role: 'user', content: '你输出的替换块无法在「本段内容」中精确匹配。SEARCH 段必须逐字复制本段原文（含空格、换行、标点），请重新输出。' });
+              continue;
+            }
+            failed += b.failed;
+          } else {
+            // 无替换块：视输出为本段整体重写
+            var pos = newContent.indexOf(chunks[ci]);
+            if (pos !== -1) {
+              newContent = newContent.slice(0, pos) + text + newContent.slice(pos + chunks[ci].length);
+              applied++;
+            } else {
+              failed++;
+            }
+            break;
+          }
+        }
+      }
+      return { success: true, mode: 'edits', applied: applied, failed: failed, content: newContent, chunked: true, chunks: n, attempts: 1 };
+    }
+
     // 自纠错循环：SEARCH 块匹配失败时，带上上下文告诉 AI 哪里错了，最多 3 轮
     var maxAttempts = 3;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      var r = await callOnce(proxy, target, apiKey, model, messages);
+      var r = await callOnce(proxy, target, apiKey, model, messages, extra);
       if (!r.ok && !r.empty) return { success: false, message: r.message };
 
       var text = r.text || '';
@@ -179,6 +273,23 @@
       return { success: true, mode: 'full', content: text, attempts: attempt };
     }
     return { success: false, message: 'AI 编辑失败' };
+  }
+
+  // 长文切块：优先换行边界，块为原文精确子串（与服务器端同策略）
+  function chunkText(text, size) {
+    if (text.length <= size) return [text];
+    var chunks = [], start = 0, lastBreak = 0;
+    for (var i = 0; i < text.length; i++) {
+      if (i - start >= size) {
+        var cut = lastBreak > start ? lastBreak : i;
+        chunks.push(text.slice(start, cut));
+        start = cut;
+        lastBreak = start;
+      }
+      if (text[i] === '\n') lastBreak = i + 1;
+    }
+    if (start < text.length) chunks.push(text.slice(start));
+    return chunks;
   }
 
   window.AIDirect = { edit: edit, normalizeEndpoint: normalizeEndpoint, proxyUrl: proxyUrl };

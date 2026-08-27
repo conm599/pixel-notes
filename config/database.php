@@ -113,6 +113,10 @@ function ensureTables(&$error = null) {
             `own_proxy` VARCHAR(255) NOT NULL DEFAULT '',
             `send_time` TINYINT(1) NOT NULL DEFAULT 0,
             `style` VARCHAR(500) NOT NULL DEFAULT '',
+            `own_deep_think` TINYINT(1) NOT NULL DEFAULT 0,
+            `own_body_enabled` TINYINT(1) NOT NULL DEFAULT 0,
+            `own_body_key` VARCHAR(64) NOT NULL DEFAULT '',
+            `own_body_json` VARCHAR(500) NOT NULL DEFAULT '',
             `policy_version` INT NOT NULL DEFAULT 0,
             `own_used` INT NOT NULL DEFAULT 0,
             `own_period` VARCHAR(10) NOT NULL DEFAULT '',
@@ -152,6 +156,11 @@ function ensureTables(&$error = null) {
         $pdo->exec("ALTER TABLE `pn_user_ai_prefs` ADD COLUMN `own_proxy` VARCHAR(255) NOT NULL DEFAULT ''");
         // 自愈：AI 时间感知开关
         $pdo->exec("ALTER TABLE `pn_user_ai_prefs` ADD COLUMN `send_time` TINYINT(1) NOT NULL DEFAULT 0");
+        // 自愈：AI 深度思考 + 自定义 Body 参数（仅自有 Key 模式生效）
+        $pdo->exec("ALTER TABLE `pn_user_ai_prefs` ADD COLUMN `own_deep_think` TINYINT(1) NOT NULL DEFAULT 0");
+        $pdo->exec("ALTER TABLE `pn_user_ai_prefs` ADD COLUMN `own_body_enabled` TINYINT(1) NOT NULL DEFAULT 0");
+        $pdo->exec("ALTER TABLE `pn_user_ai_prefs` ADD COLUMN `own_body_key` VARCHAR(64) NOT NULL DEFAULT ''");
+        $pdo->exec("ALTER TABLE `pn_user_ai_prefs` ADD COLUMN `own_body_json` VARCHAR(500) NOT NULL DEFAULT ''");
         $pdo->setAttribute(PDO::ATTR_ERRMODE, $oldMode);
 
         try {
