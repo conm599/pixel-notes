@@ -2289,9 +2289,11 @@
     });
   }
 
-  // ============== 长按对调：长按便签 1.5s 选中 → 长按另一便签 1s → 两者位置对调 ==============
+  // ============== 长按对调：长按便签 500ms 选中 → 长按另一便签 500ms → 两者位置对调 ==============
   var swapArmedId = null;
   var lpTimer = null;
+  var LP_SELECT_MS = 500;   // 长按选中阈值（独立常量，便于单独调整）
+  var LP_SWAP_MS = 500;     // 选中后再长按对调的阈值
 
   function clearLpTimer() {
     if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
@@ -2377,7 +2379,7 @@
         } else {
           swapCards(swapArmedId, id);
         }
-      }, swapArmedId === null ? 1500 : 1000);
+      }, swapArmedId === null ? LP_SELECT_MS : LP_SWAP_MS);
       var onMove = function (ev) {
         if (Math.abs(ev.clientX - sx) > 10 || Math.abs(ev.clientY - sy) > 10) {
           clearLpTimer();                  // 移动超阈值视为拖拽意图，交给 Sortable
