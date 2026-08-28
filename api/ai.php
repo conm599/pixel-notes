@@ -5,7 +5,7 @@
  * action=test   : 管理员测试上游连通性
  * action=prefs  : 读取/保存用户 AI 偏好（跨端同步，用户主动勾选）
  *
- * 实现以 protocol.md v3 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 js/ai-direct.js 同步
+ * 实现以 protocol.md v4 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 js/ai-direct.js 同步
  *
  * 安全设计：
  * - 管理员的上游 Key 存于 pn_settings，永不下发浏览器
@@ -83,6 +83,68 @@ function jsonOut($data, $code = 200) {
     http_response_code($code);
     echo json_encode($data, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0);
     exit;
+}
+
+/**
+ * 输出净化（protocol v4）：全文重写 / 整段重写路径专用。
+ * 删除全部协议标记串（标记本身删除、内容保留）后 trim，根治「全文混入孤儿标记」。
+ * 必须在澄清解析与替换块提取之后使用，不得提前。
+ */
+function aiCleanOutput($text) {
+    $t = preg_replace('/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/i', '', (string)$text);
+    return trim((string)$t);
+}
+
+/**
+ * 宽容匹配辅助：空白集为 [ \t\r\n\f\v　]（ASCII 空白 + 全角空格），与 js/ai-direct.js 逐字一致
+ */
+function aiFoldWs($s) {
+    return preg_replace('/[ \t\r\n\f\v\x{3000}]+/u', ' ', (string)$s);
+}
+
+function aiRtrimLine($s) {
+    return preg_replace('/[ \t\x{3000}]+$/u', '', (string)$s);
+}
+
+/**
+ * 三级宽容匹配替换（protocol v4，与 js/ai-direct.js matchAndApply 逐字一致）：
+ * 1. 精确子串匹配；2. 行尾空白归一匹配；3. 全空白折叠归一匹配。
+ * 第 2/3 级按行滑窗、全文唯一命中才应用（0 处或多处均失败，避免错改）；
+ * 内层归一化长度超过 SEARCH 归一化长度即提前终止（随行数单调不减）。
+ * 成功返回替换后的新内容，失败返回 null。
+ */
+function aiApplyBlock($content, $search, $replace) {
+    if (!is_string($content) || $search === '') return null;
+    $pos = strpos($content, $search);
+    if ($pos !== false) {
+        return substr_replace($content, $replace, $pos, strlen($search));
+    }
+    $lines = explode("\n", $content);
+    $keyFns = array(
+        function ($s) { return implode("\n", array_map('aiRtrimLine', explode("\n", $s))); },
+        function ($s) { return trim(aiFoldWs($s), ' '); },
+    );
+    foreach ($keyFns as $kf) {
+        $needleKey = $kf($search);
+        if ($needleKey === '') continue;
+        $hits = array();
+        $n = count($lines);
+        for ($i = 0; $i < $n; $i++) {
+            $acc = '';
+            for ($j = $i; $j < $n; $j++) {
+                $acc .= ($j > $i ? "\n" : '') . $lines[$j];
+                $k = $kf($acc);
+                if ($k === $needleKey) { $hits[] = array($i, $j); break; }
+                if (strlen($k) > strlen($needleKey)) break;
+            }
+        }
+        if (count($hits) === 1) {
+            list($i, $j) = $hits[0];
+            $newLines = array_merge(array_slice($lines, 0, $i), array($replace), array_slice($lines, $j + 1));
+            return implode("\n", $newLines);
+        }
+    }
+    return null;
 }
 
 /**
@@ -644,9 +706,9 @@ try {
                         foreach ($mm as $b) {
                             $search = str_replace("\r\n", "\n", rtrim($b[1], "\n"));
                             $replace = str_replace("\r\n", "\n", rtrim($b[2], "\n"));
-                            $pos = ($search !== '') ? strpos($newContent, $search) : false;
-                            if ($pos !== false) {
-                                $newContent = substr_replace($newContent, $replace, $pos, strlen($search));
+                            $newC = aiApplyBlock($newContent, $search, $replace);
+                            if ($newC !== null) {
+                                $newContent = $newC;
                                 $cApplied++; $applied++;
                             } else {
                                 $failed++;
@@ -662,7 +724,7 @@ try {
                         // 无替换块：视输出为本段整体重写（块是原文精确子串，可在全文中定位）
                         $pos = strpos($newContent, $ck);
                         if ($pos !== false) {
-                            $newContent = substr_replace($newContent, $text, $pos, strlen($ck));
+                            $newContent = substr_replace($newContent, aiCleanOutput($text), $pos, strlen($ck));
                             $applied++;
                         } else {
                             $failed++;
@@ -742,8 +804,9 @@ try {
                 foreach ($mm as $b) {
                     $search = str_replace("\r\n", "\n", rtrim($b[1], "\n"));
                     $replace = str_replace("\r\n", "\n", rtrim($b[2], "\n"));
-                    if ($search !== '' && strpos($newContent, $search) !== false) {
-                        $newContent = substr_replace($newContent, $replace, strpos($newContent, $search), strlen($search));
+                    $newC = aiApplyBlock($newContent, $search, $replace);
+                    if ($newC !== null) {
+                        $newContent = $newC;
                         $applied++;
                     } else {
                         $failed++;
@@ -800,7 +863,7 @@ try {
             }
 
             // ===== 全文重写模式 =====
-            $result = array('success' => true, 'mode' => 'full', 'content' => $text, 'usage' => $usage, 'attempts' => $attempt);
+            $result = array('success' => true, 'mode' => 'full', 'content' => aiCleanOutput($text), 'usage' => $usage, 'attempts' => $attempt);
             break;
         }
         } // 结束单发模式（$result === null 分支）

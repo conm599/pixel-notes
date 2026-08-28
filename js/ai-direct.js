@@ -4,7 +4,7 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
- * 实现以 protocol.md v3 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 api/ai.php 同步
+ * 实现以 protocol.md v4 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 api/ai.php 同步
  *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
@@ -90,6 +90,58 @@
   }
 
   // 与服务端一致的局部修改块解析与应用
+  // 输出净化（protocol v4）：全文重写 / 整段重写路径专用，删除全部协议标记串后 trim；
+  // 必须在澄清解析与替换块提取之后使用，不得提前
+  function cleanOutput(text) {
+    return String(text || '').replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '').trim();
+  }
+
+  // 宽容匹配辅助：空白集为 [ \t\r\n\f\v　]（ASCII 空白 + 全角空格），与 api/ai.php 逐字一致
+  function foldWs(s) {
+    return s.replace(/[ \t\r\n\f\v\u3000]+/g, ' ');
+  }
+
+  function rtrimLine(s) {
+    return s.replace(/[ \t\u3000]+$/g, '');
+  }
+
+  // 三级宽容匹配替换（protocol v4，与 api/ai.php aiApplyBlock 逐字一致）：
+  // 1. 精确子串；2. 行尾空白归一；3. 全空白折叠归一。第 2/3 级按行滑窗、全文唯一命中才应用，
+  // 内层归一化长度超过 SEARCH 归一化长度即提前终止。成功返回新内容，失败返回 null。
+  function matchAndApply(content, search, replace) {
+    if (!search) return null;
+    var idx = content.indexOf(search);
+    if (idx !== -1) {
+      return content.slice(0, idx) + replace + content.slice(idx + search.length);
+    }
+    var lines = content.split('\n');
+    var keyFns = [
+      function (s) { return s.split('\n').map(rtrimLine).join('\n'); },
+      function (s) { return foldWs(s).replace(/^ | $/g, ''); }
+    ];
+    for (var ki = 0; ki < keyFns.length; ki++) {
+      var kf = keyFns[ki];
+      var needleKey = kf(search);
+      if (!needleKey) continue;
+      var hits = [];
+      for (var i = 0; i < lines.length; i++) {
+        var acc = '';
+        for (var j = i; j < lines.length; j++) {
+          acc += (j > i ? '\n' : '') + lines[j];
+          var k = kf(acc);
+          if (k === needleKey) { hits.push([i, j]); break; }
+          if (k.length > needleKey.length) break;
+        }
+      }
+      if (hits.length === 1) {
+        var seg = lines.slice(0, hits[0][0]);
+        seg.push(replace);
+        return seg.concat(lines.slice(hits[0][1] + 1)).join('\n');
+      }
+    }
+    return null;
+  }
+
   function applyBlocks(text, originalContent) {
     var re = /<<<SEARCH>>>\s*\n([\s\S]*?)\n?<<<REPLACE>>>\s*\n([\s\S]*?)\n?<<<END>>>/ig;
     var m = null;
@@ -100,9 +152,9 @@
     while ((m = re.exec(text)) !== null) {
       var search = m[1].replace(/\r\n/g, '\n').replace(/\n+$/, '');
       var replace = m[2].replace(/\r\n/g, '\n').replace(/\n+$/, '');
-      var idx = search !== '' ? result.indexOf(search) : -1;
-      if (idx !== -1) {
-        result = result.slice(0, idx) + replace + result.slice(idx + search.length);
+      var nc = matchAndApply(result, search, replace);
+      if (nc !== null) {
+        result = nc;
         applied++;
       } else {
         failed++;
@@ -270,7 +322,7 @@
             // 无替换块：视输出为本段整体重写
             var pos = newContent.indexOf(chunks[ci]);
             if (pos !== -1) {
-              newContent = newContent.slice(0, pos) + text + newContent.slice(pos + chunks[ci].length);
+              newContent = newContent.slice(0, pos) + cleanOutput(text) + newContent.slice(pos + chunks[ci].length);
               applied++;
             } else {
               failed++;
@@ -342,7 +394,7 @@
       }
 
       // 全文重写模式
-      return { success: true, mode: 'full', content: text, attempts: attempt };
+      return { success: true, mode: 'full', content: cleanOutput(text), attempts: attempt };
     }
     return { success: false, message: 'AI 编辑失败' };
   }
