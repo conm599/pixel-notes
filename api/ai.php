@@ -5,7 +5,7 @@
  * action=test   : 管理员测试上游连通性
  * action=prefs  : 读取/保存用户 AI 偏好（跨端同步，用户主动勾选）
  *
- * 实现以 protocol.md v2 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 js/ai-direct.js 同步
+ * 实现以 protocol.md v3 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 js/ai-direct.js 同步
  *
  * 安全设计：
  * - 管理员的上游 Key 存于 pn_settings，永不下发浏览器
@@ -459,7 +459,7 @@ try {
         if ($clen > AI_MAX_CONTENT) {
             jsonOut(array('success' => false, 'message' => '便签内容太长，AI 无法处理'));
         }
-        // 空便签不拦截：创作类指令由 B 格式直接创作；编辑类指令拿不准时由澄清提问确认（protocol.md v2）
+        // 空便签不拦截但严禁 A 格式（SEARCH 无原文可匹配）：创作走 B，拿不准走 C 澄清；模型误用 A 由空便签兜底接管（protocol.md v3）
 
         // ===== 选择上游：平台密钥 or 用户自有 Key =====
         $mode = (isset($prefs['mode']) && $prefs['mode'] === 'own') ? 'own' : 'platform';
@@ -570,7 +570,7 @@ try {
             . "3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出\n"
             . "4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n"
             . "5. 便签标题不在你负责范围内，只编辑正文\n"
-            . "6. 便签内容为空时：指令是创作新内容就直接用 B 格式创作；指令像是要编辑已有内容但你无从下手时，用 C 澄清提问确认用户想要什么";
+            . "6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么";
         if ($style !== '') {
             $system .= "\n【用户风格偏好】在不违背上述硬性规则的前提下，尽量按以下风格完成编辑：" . $style;
         }
@@ -761,6 +761,24 @@ try {
                         'attempts' => $attempt,
                     );
                     break;
+                }
+                // 空便签兜底（protocol v3）：空便签没有原文可匹配，模型误用 A 时把全部 REPLACE 段拼成新全文（视同 B），不进入重试
+                if (trim($content) === '') {
+                    $rebuilt = '';
+                    foreach ($mm as $b) {
+                        $part = str_replace("\r\n", "\n", rtrim($b[2], "\n"));
+                        if (trim($part) !== '') $rebuilt .= ($rebuilt !== '' ? "\n\n" : '') . $part;
+                    }
+                    if (trim($rebuilt) !== '') {
+                        $result = array(
+                            'success' => true,
+                            'mode'    => 'full',
+                            'content' => $rebuilt,
+                            'usage'   => $usage,
+                            'attempts' => $attempt,
+                        );
+                        break;
+                    }
                 }
                 // 全部匹配失败：带上下文重试
                 $lastErrText = 'AI 指出的修改位置无法在原文中匹配（模型复述原文有误）';

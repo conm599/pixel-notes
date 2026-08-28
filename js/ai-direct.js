@@ -4,7 +4,7 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
- * 实现以 protocol.md v2 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 api/ai.php 同步
+ * 实现以 protocol.md v3 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 api/ai.php 同步
  *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
@@ -52,7 +52,7 @@
       + '3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出\n'
       + '4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n'
       + '5. 便签标题不在你负责范围内，只编辑正文\n'
-      + '6. 便签内容为空时：指令是创作新内容就直接用 B 格式创作；指令像是要编辑已有内容但你无从下手时，用 C 澄清提问确认用户想要什么';
+      + '6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么';
     if (style) s += '\n【用户风格偏好】在不违背上述硬性规则的前提下，尽量按以下风格完成编辑：' + style;
     if (now) s += '\n【当前时间】现在是 ' + now + '（用户本地时间）。涉及时间、日期、星期、节假日等内容的编辑请以此为准，不要虚构时间。';
     return s;
@@ -311,6 +311,17 @@
       if (b.hasBlocks) {
         if (b.applied > 0) {
           return { success: true, mode: 'edits', applied: b.applied, failed: b.failed, content: b.result, attempts: attempt };
+        }
+        // 空便签兜底（protocol v3）：空便签没有原文可匹配，模型误用 A 时把全部 REPLACE 段拼成新全文（视同 B），不进入重试
+        if (!String(opts.content || '').trim()) {
+          var rebuilt = '';
+          var reRep = /<<<REPLACE>>>\s*\n([\s\S]*?)\n?<<<END>>>/ig;
+          var rm;
+          while ((rm = reRep.exec(text)) !== null) {
+            var part = rm[1].replace(/\r\n/g, '\n').replace(/\n+$/, '');
+            if (part.trim()) rebuilt += (rebuilt ? '\n\n' : '') + part;
+          }
+          if (rebuilt.trim()) return { success: true, mode: 'full', content: rebuilt, attempts: attempt };
         }
         // 全部匹配失败：带上下文重试
         if (attempt < maxAttempts) {
