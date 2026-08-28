@@ -8,10 +8,15 @@
   'use strict';
 
   var API_BASE = 'api/notes.php';
+  var FOLDER_API = 'api/folders.php';
   var notesGrid = document.getElementById('notesGrid');
   var toast = document.getElementById('toast');
   var toastTimer = null;
   var notesById = {};
+
+  // 文件夹状态（多层嵌套）
+  var foldersById = {};          // id → folder 对象
+  var currentFolderId = null;    // null = 主页（根层级）
 
   // ============== Toast ==============
   function showToast(message, type) {
@@ -42,7 +47,72 @@
     return result;
   }
 
+  // 便签/文件夹数据引用给 ai-direct.js 的 TOOL 块（浏览器端执行同逻辑）
+  try {
+    window.__pixelNotesById = notesById;
+    window.__pixelFoldersById = foldersById;
+    window.__pixelFolderChain = folderChain;
+  } catch (e) { /* 忽略 */ }
+
   // ============== 加载 ==============
+  async function loadFolders() {
+    try {
+      var resp = await fetch(FOLDER_API, { credentials: 'include', cache: 'no-store' });
+      var result = await resp.json();
+      if (result.success && Array.isArray(result.folders)) {
+        foldersById = {};
+        result.folders.forEach(function (f) {
+          foldersById[f.id] = {
+            id: f.id,
+            parent_id: f.parent_id,
+            name: f.name,
+            sort_order: parseInt(f.sort_order) || 0,
+            note_count: parseInt(f.note_count) || 0
+          };
+        });
+        renderBreadcrumb();
+      }
+    } catch (e) { /* 文件夹加载失败不阻塞便签 */ }
+  }
+
+  // 面包屑路径：从 currentFolderId 回溯到根
+  function folderChain(fid) {
+    var chain = [];
+    var cur = fid, guard = 0;
+    while (cur !== null && cur !== undefined && foldersById[cur] && guard++ < 50) {
+      chain.unshift(foldersById[cur]);
+      cur = foldersById[cur].parent_id;
+    }
+    return chain;
+  }
+
+  function renderBreadcrumb() {
+    var bar = document.getElementById('folderCrumb');
+    if (!bar) return;
+    bar.innerHTML = '';
+    var home = mkEl('a', 'crumb', '🏠 主页');
+    home.addEventListener('click', function () { switchFolder(null); });
+    bar.appendChild(home);
+    var chain = folderChain(currentFolderId);
+    chain.forEach(function (f, i) {
+      bar.appendChild(mkEl('span', 'crumb-sep', '/'));
+      var isLast = (i === chain.length - 1);
+      var link = mkEl('a', 'crumb' + (isLast ? ' current' : ''), '📁 ' + f.name);
+      if (!isLast) {
+        var fid = f.id;
+        link.addEventListener('click', function () { switchFolder(fid); });
+      }
+      bar.appendChild(link);
+    });
+  }
+
+  function switchFolder(fid) {
+    currentFolderId = fid === null ? null : fid;
+    if (window.PixelSelection) window.PixelSelection.reset();   // 切目录清选择（剪贴板保留）
+    renderBreadcrumb();
+    refreshView();
+  }
+
   async function loadNotes() {
     try {
       notesGrid.innerHTML = '<div class="loading">加载中...</div>';
@@ -59,17 +129,21 @@
     }
   }
 
+  // 全量重载（便签+文件夹），视图状态保持
+  function refreshView() {
+    var fidAtCall = currentFolderId;
+    api('GET').then(function (result) {
+      if (!result.success) return;
+      renderNotes(result.notes);
+    }).catch(function () {});
+  }
+
   function renderNotes(notes) {
-    if (!notes || notes.length === 0) {
-      notesGrid.innerHTML = ''
-        + '<div class="empty-state">'
-        + '  <div class="icon">📜</div>'
-        + '  <p>还没有便签<br>点击「＋ 新建便签」开始吧！</p>'
-        + '</div>';
-      return;
-    }
-    notesGrid.innerHTML = '';
-    notes.forEach(function (note) {
+    // 更新内存索引（folder_id 由后端返回）
+    notesById = {};
+    var allNotes = [];
+    (notes || []).forEach(function (note) {
+      var rawFid = (note.folder_id === null || note.folder_id === undefined) ? null : parseInt(note.folder_id);
       var n = {
         id: parseInt(note.id),
         title: note.title || '',
@@ -77,17 +151,42 @@
         color: note.color || 'yellow',
         pinned: parseInt(note.pinned) || 0,
         sort_order: parseInt(note.sort_order) || 0,
+        folder_id: (rawFid === null || isNaN(rawFid)) ? null : rawFid,
         updated_at: note.updated_at || '',
         share_token: note.share_token || '',
         share_until: parseInt(note.share_until) || 0,
         share_url: note.share_url || ''
       };
       notesById[n.id] = n;
-      var card = createNoteCard(n);
-      notesGrid.appendChild(card);
-      checkClamp(card);
+      allNotes.push(n);
     });
+    notesGrid.innerHTML = '';
+
+    // 当前层级下的子文件夹卡片（排在便签前面）
+    var childFolders = Object.keys(foldersById).map(function (k) { return foldersById[k]; })
+      .filter(function (f) { return (f.parent_id || null) === currentFolderId; })
+      .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; });
+    childFolders.forEach(function (f) {
+      notesGrid.appendChild(createFolderCard(f));
+    });
+
+    var viewNotes = allNotes.filter(function (n) { return n.folder_id === currentFolderId; });
+    if (viewNotes.length === 0 && childFolders.length === 0) {
+      var isHome = currentFolderId === null;
+      notesGrid.innerHTML = ''
+        + '<div class="empty-state">'
+        + '  <div class="icon">' + (isHome ? '📜' : '📂') + '</div>'
+        + '  <p>' + (isHome ? '还没有便签<br>点击「＋ 新建便签」开始吧！' : '这个文件夹还是空的<br>拖拽便签到此处，或在此处新建') + '</p>'
+        + '</div>';
+    } else {
+      viewNotes.forEach(function (n) {
+        var card = createNoteCard(n);
+        notesGrid.appendChild(card);
+        checkClamp(card);
+      });
+    }
     initDragSort();
+    if (window.PixelSelection) window.PixelSelection.syncUI();   // 视图重建后恢复选中高亮
   }
 
   // ============== 工具 ==============
@@ -104,6 +203,214 @@
     b.textContent = label;
     if (title) b.title = title;
     return b;
+  }
+
+  // ============== 文件夹 API ==============
+  async function folderApi(method, body) {
+    var resp = await fetch(FOLDER_API, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'include',
+      cache: 'no-store'
+    });
+    if (resp.status === 401) { window.location.href = 'login.php'; throw new Error('未登录'); }
+    var result = await resp.json();
+    return result;
+  }
+
+  // ============== 文件夹卡片 ==============
+  function createFolderCard(folder) {
+    var card = mkEl('div', 'folder-card');
+    card.setAttribute('data-folder-id', folder.id);
+    var icon = mkEl('div', 'folder-icon', '📁');
+    var name = mkEl('div', 'folder-name', folder.name);
+    var count = mkEl('div', 'folder-count', folder.note_count + ' 条便签');
+    card.appendChild(icon);
+    card.appendChild(name);
+    card.appendChild(count);
+
+    card.addEventListener('click', function () {
+      if (window.PixelSelection && window.PixelSelection.isActive()) return;   // 选择模式：点击由全局选择逻辑接管
+      switchFolder(folder.id);
+    });
+
+    // 小菜单：改名 / 移动 / 删除
+    var menuBtn = mkBtn('⋮', '文件夹操作');
+    menuBtn.className = 'folder-menu-btn';
+    menuBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      openFolderMenu(folder, menuBtn);
+    });
+    card.appendChild(menuBtn);
+    return card;
+  }
+
+  // 文件夹操作菜单（悬停浮层）
+  var folderMenuEl = null;
+  function closeFolderMenu() {
+    if (folderMenuEl) { folderMenuEl.remove(); folderMenuEl = null; }
+  }
+  function openFolderMenu(folder, anchor) {
+    closeFolderMenu();
+    var menu = mkEl('div', 'folder-menu');
+    var r = anchor.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.left = (r.right - 140) + 'px';
+    menu.style.top = (r.bottom + 4) + 'px';
+
+    function addItem(label, icon, fn) {
+      var item = mkEl('div', 'folder-menu-item');
+      item.appendChild(mkEl('span', null, icon + ' ' + label));
+      item.addEventListener('click', function (e) { e.stopPropagation(); closeFolderMenu(); fn(); });
+      menu.appendChild(item);
+    }
+
+    addItem('在里面新建子文件夹', '📂+', function () { promptNewFolder(folder.id); });
+    addItem('改名', '✏️', function () { promptRenameFolder(folder); });
+    addItem('移动到…', '↪️', function () { promptMoveFolder(folder); });
+    addItem('删除（内容上移）', '🗑', function () { promptDeleteFolder(folder); });
+
+    document.body.appendChild(menu);
+    folderMenuEl = menu;
+    document.addEventListener('pointerdown', function h(e) {
+      if (folderMenuEl && !folderMenuEl.contains(e.target)) {
+        closeFolderMenu(); document.removeEventListener('pointerdown', h, true);
+      }
+    }, true);
+  }
+
+  async function promptNewFolder(parentId) {
+    var name = prompt(parentId ? '新子文件夹名：' : '新根文件夹名：');
+    if (name === null) return;
+    name = name.trim();
+    if (!name) { showToast('❌ 文件夹名不能为空', 'error'); return; }
+    try {
+      var r = await folderApi('POST', { name: name, parent_id: parentId });
+      if (r.success) { showToast('✅ 文件夹已创建', 'success'); await loadFolders(); refreshView(); }
+      else showToast('❌ ' + (r.message || '创建失败'), 'error');
+    } catch (e) { showToast('❌ 创建失败', 'error'); }
+  }
+
+  async function promptRenameFolder(folder) {
+    var name = prompt('新的文件夹名：', folder.name);
+    if (name === null) return;
+    name = name.trim();
+    if (!name) { showToast('❌ 名称不能为空', 'error'); return; }
+    try {
+      var r = await folderApi('PUT', { id: folder.id, name: name });
+      if (r.success) { showToast('✅ 已改名', 'success'); await loadFolders(); refreshView(); }
+      else showToast('❌ ' + (r.message || '改名失败'), 'error');
+    } catch (e) { showToast('❌ 改名失败', 'error'); }
+  }
+
+  // 目录选择器：把某文件夹/便签移到目标父级（含虚拟根）
+  function promptMoveFolder(folder) {
+    var options = [{ id: null, label: '🏠 主页（根层级）', depth: -1 }];
+    // 排除自己及后代
+    var descendantIds = {};
+    function mark(fid) {
+      Object.keys(foldersById).forEach(function (k) {
+        if (foldersById[k].parent_id === fid) { descendantIds[k] = true; mark(parseInt(k)); }
+      });
+    }
+    mark(folder.id);
+    descendantIds[folder.id] = true;
+
+    var lines = [];
+    function walk(parentId, depth) {
+      Object.keys(foldersById).map(function (k) { return foldersById[k]; })
+        .filter(function (f) { return (f.parent_id || null) === parentId; })
+        .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; })
+        .forEach(function (f) {
+          if (descendantIds[f.id]) return;
+          lines.push(new Array(depth + 1).join('  ') + '└ ' + f.name + '（按 ' + lines.length + '）');
+          walk(f.id, depth + 1);
+        });
+    }
+    walk(null, 0);
+    var sel = prompt('移动到：\n0) 主页（根层级）\n' + lines.join('\n'));
+    if (sel === null) return;
+    var targetId = null;
+    if (sel.trim() !== '0') {
+      var idx = parseInt(sel.trim()) - 1;
+      var allKeys = [];
+      function collect(parentId) {
+        Object.keys(foldersById).map(function (k) { return foldersById[k]; })
+          .filter(function (f) { return (f.parent_id || null) === parentId; })
+          .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; })
+          .forEach(function (f) {
+            if (!descendantIds[f.id]) { allKeys.push(f.id); collect(f.id); }
+          });
+      }
+      collect(null);
+      if (isNaN(idx) || idx < 0 || idx >= allKeys.length) { showToast('❌ 无效的选择', 'error'); return; }
+      targetId = allKeys[idx];
+    }
+    moveFolderTo(folder.id, targetId);
+  }
+
+  async function moveFolderTo(folderId, parentId) {
+    try {
+      var r = await folderApi('PUT', { id: folderId, parent_id: parentId });
+      if (r.success) { showToast('✅ 文件夹已移动', 'success'); await loadFolders(); refreshView(); }
+      else showToast('❌ ' + (r.message || '移动失败'), 'error');
+    } catch (e) { showToast('❌ 移动失败', 'error'); }
+  }
+
+  async function promptDeleteFolder(folder) {
+    var hint = folder.note_count > 0
+      ? '该文件夹含 ' + folder.note_count + ' 条便签，删除后内容会上移到父级。确认删除「' + folder.name + '」？'
+      : '确认删除空文件夹「' + folder.name + '」？';
+    if (!confirm(hint)) return;
+    try {
+      var r = await folderApi('DELETE', { id: folder.id });
+      if (r.success) {
+        showToast('🗑 已删除（内容上移）', 'success');
+        if (currentFolderId === folder.id) switchFolder(currentFolderId ? foldersById[folder.id].parent_id : null);
+        await loadFolders(); refreshView();
+      } else showToast('❌ ' + (r.message || '删除失败'), 'error');
+    } catch (e) { showToast('❌ 删除失败', 'error'); }
+  }
+
+  // 把便签移动到某文件夹（跨层移动走这个，不是拖拽）
+  function promptMoveNote(note) {
+    var chain = folderChain(note.folder_id);
+    var curLabel = chain.length ? chain.map(function (f) { return f.name; }).join(' / ') : '主页';
+    var lines = ['当前位置：' + curLabel, '0) 主页（根层级）'];
+    // 与自己所在无关，列出全部文件夹
+    function walk(parentId, depth) {
+      Object.keys(foldersById).map(function (k) { return foldersById[k]; })
+        .filter(function (f) { return (f.parent_id || null) === parentId; })
+        .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; })
+        .forEach(function (f) {
+          lines.push(new Array(depth + 1).join('  ') + '└ ' + f.name + '（按 ' + lines.length + '）');
+          walk(f.id, depth + 1);
+        });
+    }
+    walk(null, 0);
+    var sel = prompt('移动「' + (note.title || '无标题') + '」到：\n' + lines.join('\n'));
+    if (sel === null) return;
+    var targetId = null;
+    if (sel.trim() !== '0') {
+      var idx = parseInt(sel.trim()) - 1;
+      var allIds = [];
+      function collect(parentId) {
+        Object.keys(foldersById).map(function (k) { return foldersById[k]; })
+          .filter(function (f) { return (f.parent_id || null) === parentId; })
+          .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; })
+          .forEach(function (f) { allIds.push(f.id); collect(f.id); });
+      }
+      collect(null);
+      if (isNaN(idx) || idx < 0 || idx >= allIds.length) { showToast('❌ 无效的选择', 'error'); return; }
+      targetId = allIds[idx];
+    }
+    try {
+      api('PUT', { id: note.id, folder_id: targetId }).then(function (r) {
+        if (r.success) { showToast('📁 已移动', 'success'); loadFolders(); refreshView(); }
+        else showToast('❌ ' + (r.message || '移动失败'), 'error');
+      });
+    } catch (e) { showToast('❌ 移动失败', 'error'); }
   }
 
   function surround(ta, before, after) {
@@ -209,7 +516,7 @@
     var nd = mkEl('div', 'note-content md-body md-static');
     nd.innerHTML = window.PixelMD.render(note.content);
     nd.addEventListener('click', function (e) {
-      if (swapArmedId !== null) return;   // 长按对调选中态：点击不打开
+      if (window.PixelSelection && window.PixelSelection.isActive()) return;   // 选择模式：点击不打开
       if (e.target && e.target.closest && e.target.closest('a')) return;
       if (nd.classList.contains('clamped')) {
         openModal(note.id, card);       // 长文 → 弹窗阅读
@@ -240,6 +547,9 @@
     var colorBtn = mkBtn('🎨', '切换颜色');
     colorBtn.addEventListener('click', function () { cycleColor(card); });
 
+    var moveBtn = mkBtn('📁', '移动到文件夹');
+    moveBtn.addEventListener('click', function (e) { e.stopPropagation(); promptMoveNote(note); });
+
     var delBtn = mkBtn('🗑 删除', '删除便签');
     delBtn.addEventListener('click', function () { deleteNote(card); });
 
@@ -247,6 +557,7 @@
     actions.appendChild(shareBtn);
     actions.appendChild(pinBtn);
     actions.appendChild(colorBtn);
+    actions.appendChild(moveBtn);
     actions.appendChild(delBtn);
     meta.appendChild(actions);
     return meta;
@@ -263,7 +574,7 @@
         rm = mkBtn('📖 阅读全文', '点击查看完整内容');
         rm.className = 'read-more';
         rm.addEventListener('click', function () {
-          if (swapArmedId !== null) return;   // 长按对调选中态：点击不打开
+          if (window.PixelSelection && window.PixelSelection.isActive()) return;   // 选择模式：点击不打开
           openModal(parseInt(card.getAttribute('data-id')), card);
         });
         nd.insertAdjacentElement('afterend', rm);
@@ -429,7 +740,7 @@
       return;
     }
     try {
-      var r2 = await api('POST', { title: title, content: content, color: selectedColor });
+      var r2 = await api('POST', { title: title, content: content, color: selectedColor, folder_id: currentFolderId });
       if (r2.success) {
         hideEditor();
         showToast('✅ 便签已创建！', 'success');
@@ -447,7 +758,657 @@
     if (e.key === 'Escape') { e.preventDefault(); hideEditor(); }
   });
 
-  // ============== 标题快速保存（卡片上直接改） ==============
+  // ============== 搜索 + 推荐（客户端，数据全在内存） ==============
+  var searchInput = document.getElementById('searchInput');
+  var searchPanel = document.getElementById('searchPanel');
+  var searchBox = document.getElementById('searchBox');
+
+  // 子序列匹配检测：query 的每个字符依次出现在 text 中
+  function isSubsequence(q, t) {
+    var i = 0;
+    for (var j = 0; j < t.length && i < q.length; j++) {
+      if (t[j] === q[i]) i++;
+    }
+    return i === q.length;
+  }
+
+  // 模糊打分：越小越好；返回 null 表示不匹配
+  function fuzzyScore(query, note) {
+    var q = query.toLowerCase().trim();
+    if (!q) return null;
+    var title = (note.title || '').toLowerCase();
+    var content = (note.content || '').toLowerCase();
+    if (title === q) return 0;           // 标题精确
+    if (title.indexOf(q) === 0) return 5; // 标题前缀
+    if (title.indexOf(q) !== -1) return 10; // 标题子串
+    if (isSubsequence(q, title)) return 25; // 标题子序列（中文逐字匹配）
+    if (content.indexOf(q) !== -1) return 40; // 内容子串
+    if (isSubsequence(q, content)) return 60; // 内容子序列
+    return null;
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function buildSearchResults(query) {
+    var out = [];
+    var q = query.toLowerCase().trim();
+
+    // 文件夹匹配（按名称）
+    Object.keys(foldersById).forEach(function (k) {
+      var f = foldersById[k];
+      var name = (f.name || '').toLowerCase();
+      if (!q || name === q || name.indexOf(q) !== -1 || isSubsequence(q, name)) {
+        var chain = folderChain(f.id).map(function (x) { return x.name; }).join(' / ');
+        out.push({ type: 'folder', fid: f.id, label: '📁 ' + chartTrunc(f.name, 28), path: chain });
+      }
+    });
+
+    // 便签匹配
+    Object.keys(notesById).forEach(function (k) {
+      var n = notesById[k];
+      var score = fuzzyScore(q, n);
+      if (score !== null) {
+        var chain = n.folder_id ? folderChain(n.folder_id).map(function (x) { return x.name; }).join(' / ') : '';
+        out.push({ type: 'note', nid: n.id, score: score, label: chartTrunc(n.title || '无标题', 28), path: chain });
+      }
+    });
+
+    out.sort(function (a, b) {
+      var ta = a.type === 'folder' ? 0 : 1;
+      var tb = b.type === 'folder' ? 0 : 1;
+      return ta !== tb ? ta - tb : (a.score || 0) - (b.score || 0);
+    });
+    return out.slice(0, 12);
+  }
+
+  // 推荐（搜索框为空时）：当前目录的子文件夹 + 置顶/最近便签
+  function buildRecommendations() {
+    var out = [];
+    var childFolders = Object.keys(foldersById).map(function (k) { return foldersById[k]; })
+      .filter(function (f) { return (f.parent_id || null) === currentFolderId; })
+      .slice(0, 4);
+    childFolders.forEach(function (f) {
+      var chain = folderChain(f.id).map(function (x) { return x.name; }).join(' / ');
+      out.push({ type: 'folder', fid: f.id, label: '📁 ' + chartTrunc(f.name, 28), path: chain });
+    });
+    var viewNotes = Object.keys(notesById).map(function (k) { return notesById[k]; })
+      .filter(function (n) { return n.folder_id === currentFolderId; })
+      .sort(function (a, b) { return (b.pinned - a.pinned) || (b.updated_at || '').localeCompare(a.updated_at || ''); })
+      .slice(0, 4);
+    viewNotes.forEach(function (n) {
+      out.push({ type: 'note', nid: n.id, label: (n.pinned ? '📌 ' : '') + chartTrunc(n.title || '无标题', 28), path: '' });
+    });
+    return out;
+  }
+
+  function chartTrunc(s, max) {
+    return s.length > max ? s.slice(0, max - 1) + '…' : s;
+  }
+
+  function renderSearchPanel(items, isRecommend) {
+    searchPanel.innerHTML = '';
+    var head = mkEl('div', 'search-head', isRecommend ? '⇨ 本目录推荐' : '⇨ 命中结果');
+    searchPanel.appendChild(head);
+    if (items.length === 0) {
+      searchPanel.appendChild(mkEl('div', 'search-empty', '没有匹配项'));
+    } else {
+      items.forEach(function (it) {
+        var row = mkEl('div', 'search-item');
+        row.appendChild(mkEl('div', 'search-item-label', it.label));
+        if (it.path) row.appendChild(mkEl('div', 'search-item-path', it.path));
+        row.addEventListener('click', function () {
+          if (it.type === 'folder') {
+            switchFolder(it.fid);
+            searchInput.value = '';
+            hideSearchPanel();
+          } else {
+            var n = notesById[it.nid];
+            if (!n) return;
+            var targetFolder = n.folder_id;
+            if (targetFolder !== currentFolderId) switchFolder(targetFolder);
+            searchInput.value = '';
+            hideSearchPanel();
+            setTimeout(function () {
+              var card = notesGrid.querySelector('.note-card[data-id="' + it.nid + '"]');
+              if (card) {
+                card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                card.classList.add('search-flash');
+                setTimeout(function () { card.classList.remove('search-flash'); }, 1200);
+              }
+            }, 100);
+          }
+        });
+        searchPanel.appendChild(row);
+      });
+    }
+    searchPanel.style.display = 'block';
+  }
+
+  function hideSearchPanel() { searchPanel.style.display = 'none'; }
+
+  searchInput.addEventListener('input', function () {
+    var q = searchInput.value.trim();
+    if (!q) { renderSearchPanel(buildRecommendations(), true); return; }
+    renderSearchPanel(buildSearchResults(q), false);
+  });
+  searchInput.addEventListener('focus', function () {
+    if (!searchInput.value.trim()) renderSearchPanel(buildRecommendations(), true);
+    else renderSearchPanel(buildSearchResults(searchInput.value.trim()), false);
+  });
+  searchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { searchInput.value = ''; hideSearchPanel(); searchInput.blur(); }
+  });
+  document.addEventListener('pointerdown', function (e) {
+    if (searchBox && !searchBox.contains(e.target)) hideSearchPanel();
+  });
+
+  // ============== AI 整理对话框（多轮对话记忆 + 一键自动 + 追加指示） ==============
+  // 对话状态只存在 sessionStorage（关闭标签页即失效，不持久化）
+  var AI_CHATS_KEY = 'pixel_notes_ai_classify_chats';
+  var classifyOverlay = null;      // AI 整理聊天对话框
+  var classifyPreviewOverlay = null; // AI 整理方案预览面板（与聊天框是两个独立模态）
+  var aiClassifyPending = null;    // 待执行的 AI 分类方案（预览确认后使用）
+
+  function loadAiChats() {
+    try {
+      var raw = sessionStorage.getItem(AI_CHATS_KEY);
+      if (raw) { var d = JSON.parse(raw); if (Array.isArray(d)) return d; }
+    } catch (e) {}
+    return [{ role: 'assistant', content: '您好！我可以帮您把便签整理进文件夹。点击「一键自动整理」让 AI 给出方案，或在下方输入框描述您的整理思路（如「只把 Python 学习相关的放进 学习」）。' }];
+  }
+  function saveAiChats(chats) { try { sessionStorage.setItem(AI_CHATS_KEY, JSON.stringify(chats)); } catch (e) {} }
+  function clearAiChats() {
+    try { sessionStorage.removeItem(AI_CHATS_KEY); } catch (e) {}
+  }
+
+  function openClassifyDialog() {
+    if (classifyOverlay) return;
+    var overlay = mkEl('div', 'md-modal-overlay');
+    overlay.style.zIndex = '20000';
+
+    var modal = mkEl('div', 'md-modal classify-modal');
+
+    var head = mkEl('div', 'md-modal-head');
+    head.appendChild(mkEl('div', 'md-modal-title', '✨ AI 整理助手'));
+    var closeBtn = mkBtn('✕ 关闭', '关闭');
+    closeBtn.className = 'md-modal-close';
+    closeBtn.addEventListener('click', closeClassifyDialog);
+    head.appendChild(closeBtn);
+    modal.appendChild(head);
+
+    // 对话区
+    var chatLog = mkEl('div', 'classify-chat-log', '');
+    chatLog.id = 'aiChatLog';
+
+    var chats = loadAiChats();
+    chats.forEach(function (c) { renderChatBubble(chatLog, c.role, c.content); });
+
+    modal.appendChild(chatLog);
+
+    // 一键整理区
+    var oneClickWrap = mkEl('div', 'classify-oneclick');
+    var oneClickBtn = mkBtn('⚡ 一键自动整理', '让 AI 处理所有未整理的便签');
+    oneClickBtn.className = 'btn btn-primary btn-sm';
+    oneClickBtn.addEventListener('click', function () {
+      appendUserChat('[一键自动整理]（没写指令）');
+      runAiClassifyInternal(null);
+    });
+    oneClickWrap.appendChild(oneClickBtn);
+
+    // 输入行
+    var inputWrap = mkEl('div', 'classify-input-wrap');
+    var input = mkEl('input', 'classify-input');
+    input.type = 'text';
+    input.placeholder = '告诉 AI 您的整理偏好（如：只整理和 Python 相关的便签）';
+    input.maxLength = 500;
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submitChat(); }
+    });
+
+    var sendBtn = mkBtn('发送', '发送整理指示');
+    sendBtn.className = 'btn btn-outline btn-sm';
+    sendBtn.addEventListener('click', submitChat);
+
+    var clearHistBtn = mkBtn('🗑 清对话', '清空对话记录（本页重启后保留）');
+    clearHistBtn.className = 'btn btn-outline btn-sm';
+    clearHistBtn.addEventListener('click', function () { clearAiChats(); chatLog.innerHTML = ''; renderChatBubble(chatLog, 'assistant', '对话已清空。'); });
+
+    function submitChat() {
+      var text = input.value.trim();
+      if (!text) { showToast('⚠️ 先输入指令', 'error'); return; }
+      input.value = '';
+      appendUserChat(text);
+      runAiClassifyInternal(text);
+    }
+
+    function appendUserChat(text) {
+      renderChatBubble(chatLog, 'user', text);
+      var chatsNow = loadAiChats();
+      chatsNow.push({ role: 'user', content: text });
+      saveAiChats(chatsNow);
+    }
+
+    inputWrap.appendChild(input); inputWrap.appendChild(sendBtn); inputWrap.appendChild(clearHistBtn);
+    modal.appendChild(oneClickWrap); modal.appendChild(inputWrap);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    classifyOverlay = overlay;
+
+    input.focus();
+  }
+
+  function closeClassifyDialog() {
+    if (classifyOverlay) { classifyOverlay.remove(); classifyOverlay = null; }
+    currentFolderId = currentFolderId;   // keep current view
+  }
+
+  function renderChatBubble(chatLog, role, text) {
+    if (!chatLog) return;
+    var b = mkEl('div', 'chat-bubble ' + role, '');
+    b.innerHTML = '';
+    var textEl = mkEl('div', 'chat-text');
+    textEl.textContent = text;
+    b.appendChild(textEl);
+    chatLog.appendChild(b);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function runAiClassifyInternal(extraInstruction) {
+    var manifest = buildClassifyManifest();
+    if (manifest.length === 0) { showToast('⚠️ 没有便签可整理', 'error'); return; }
+
+    var chatLog = document.getElementById('aiChatLog');
+    // Agent 式气泡：实时显示思考流 / 工具调用卡片 / 最终结果
+    var agentBubble = null, thinkEl = null, toolsEl = null;
+    if (chatLog) {
+      agentBubble = mkEl('div', 'chat-bubble assistant agent');
+      var phaseEl = mkEl('div', 'agent-phase');
+      phaseEl.textContent = '🤖 开始分析…';
+      thinkEl = mkEl('div', 'chat-text agent-think');
+      toolsEl = mkEl('div', 'agent-tools');
+      agentBubble.appendChild(phaseEl);
+      agentBubble.appendChild(thinkEl);
+      agentBubble.appendChild(toolsEl);
+      chatLog.appendChild(agentBubble);
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+    function setPhase(t) { if (agentBubble) { agentBubble.querySelector('.agent-phase').textContent = t; chatLog.scrollTop = chatLog.scrollHeight; } }
+    function appendThink(t) { if (thinkEl) { thinkEl.textContent += t; chatLog.scrollTop = chatLog.scrollHeight; } }
+    function appendTool(name, args, brief) {
+      if (!toolsEl) return;
+      var card = mkEl('div', 'tool-card');
+      var head = mkEl('div', 'tool-card-head', '🔧 ' + name + (args ? '（' + args + '）' : ''));
+      card.appendChild(head);
+      if (brief) { var body = mkEl('div', 'tool-card-body'); body.textContent = brief; card.appendChild(body); }
+      toolsEl.appendChild(card);
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+    // 最终把 Agent 气泡收尾成一句总结（存进对话记忆）
+    function finalizeAgent(text) {
+      if (chatLog && agentBubble) {
+        // 移除思考过程，只留一句总结，便于回看历史
+        agentBubble.querySelector('.agent-phase').textContent = text;
+        thinkEl.remove(); toolsEl.remove();
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+    }
+
+    var folderTree = buildFolderTreeManifest();
+    var promptText = '请整理以下便签与文件夹。现有文件夹结构如下：\n' + (folderTree.length ? folderTree.join('\n') : '(无)\n');
+    promptText += '\n便签清单（id | 标题 | 内容前80字摘要 | 当前路径）：\n';
+    manifest.forEach(function (m) { promptText += m.id + ' | ' + (m.title || '(无标题)') + ' | ' + m.snippet + ' | ' + m.current_path + '\n'; });
+    promptText += '\n操作协议：{"ops":[...]}，每个 op 为 move/mkdir/rename/delete_folder/delete_note/sort_notes/color/pin 之一（详见系统说明）；path 最多5段每段1-30字符，"主页"=根层级；只在用户指令范围内操作。';
+    if (extraInstruction) promptText += '\n用户附加指令：' + extraInstruction + '（必须严格遵守）';
+    promptText += '\n';
+
+    aiApiStream({ action: 'classify', message: promptText }, {
+      onPhase: function (t) { setPhase(t); },
+      onDelta: function (t) { appendThink(t); },
+      onTool: function (d) { appendTool(d.name, d.args, null); },
+      onToolResult: function (d) {
+        // 工具结果追加到最近一张工具卡片里
+        if (!toolsEl) return;
+        var last = toolsEl.lastElementChild;
+        if (last) {
+          var body = mkEl('div', 'tool-card-body');
+          body.textContent = d.brief || '';
+          last.appendChild(body);
+          chatLog.scrollTop = chatLog.scrollHeight;
+        }
+      }
+    })
+      .then(function (result) {
+        if (!result.success) {
+          finalizeAgent('❌ ' + (result.message || 'AI 返回失败'));
+          showToast('❌ ' + (result.message || 'AI 返回失败'), 'error');
+          return;
+        }
+        var plan = result.plan;
+        var ops = plan && plan.ops ? plan.ops : [];
+        if (ops.length === 0) {
+          finalizeAgent('✅ 分析完成：无需任何操作。');
+          var chats = loadAiChats(); chats.push({ role: 'assistant', content: '无需操作' }); saveAiChats(chats); return;
+        }
+        var moveCount = ops.filter(function (o) { return o.op === 'move'; }).length;
+        var mkdirCount = ops.filter(function (o) { return o.op === 'mkdir'; }).length;
+        var renameCount = ops.filter(function (o) { return o.op === 'rename'; }).length;
+        var delFolderCount = ops.filter(function (o) { return o.op === 'delete_folder'; }).length;
+        var delNoteCount = ops.filter(function (o) { return o.op === 'delete_note'; }).length;
+        var sortCount = ops.filter(function (o) { return o.op === 'sort_notes'; }).length;
+        var colorCount = ops.filter(function (o) { return o.op === 'color'; }).length;
+        var pinCount = ops.filter(function (o) { return o.op === 'pin'; }).length;
+        var parts = [];
+        if (moveCount) parts.push('移动 ' + moveCount + ' 条便签');
+        if (mkdirCount) parts.push('新建 ' + mkdirCount + ' 个文件夹');
+        if (renameCount) parts.push('改名 ' + renameCount + ' 个文件夹');
+        if (delFolderCount) parts.push('删除 ' + delFolderCount + ' 个文件夹');
+        if (delNoteCount) parts.push('删除 ' + delNoteCount + ' 条便签');
+        if (sortCount) parts.push('排序 ' + sortCount + ' 处');
+        if (colorCount) parts.push('改色 ' + colorCount + ' 条');
+        if (pinCount) parts.push('置顶 ' + pinCount + ' 条');
+        var msg = '📦 建议：' + parts.join('，') + '。请在预览面板确认具体方案。';
+        finalizeAgent(msg);
+        var chats = loadAiChats();
+        chats.push({ role: 'assistant', content: msg }); saveAiChats(chats);
+        aiClassifyPending = ops;
+        renderClassifyPreview(ops, manifest);
+      })
+      .catch(function (err) {
+        finalizeAgent('❌ 网络错误：' + err);
+      });
+  }
+
+  function buildClassifyManifest() {
+    return Object.keys(notesById).map(function (k) {
+      var n = notesById[k];
+      var snippet = (function () {
+        var t = (n.content || '').replace(/\s+/g, ' ').trim();
+        return t.length > 80 ? t.slice(0, 77) + '...' : t;
+      })();
+      var path = n.folder_id ? folderChain(n.folder_id).map(function (f) { return f.name; }).join(' / ') : '主页';
+      return { id: n.id, title: n.title || '(无标题)', snippet: snippet, current_path: path };
+    });
+  }
+
+  function buildFolderTreeManifest() {
+    var lines = [];
+    function walk(parentId, depth) {
+      Object.keys(foldersById).map(function (k) { return foldersById[k]; })
+        .filter(function (f) { return (f.parent_id || null) === parentId; })
+        .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; })
+        .forEach(function (f) {
+          lines.push(new Array(depth + 1).join('  ') + f.name);
+          walk(f.id, depth + 1);
+        });
+    }
+    walk(null, 0);
+    return lines;
+  }
+
+  async function runAiClassify(autoMode) {
+    var manifest = buildClassifyManifest();
+    if (manifest.length === 0) { showToast('⚠️ 没有便签可整理', 'error'); return; }
+
+    showToast('✨ AI 正在分析你的便签并给出整理方案，请稍候...', 'success');
+
+    var folderTree = buildFolderTreeManifest();
+    var promptText = '请为以下便签做文件夹归类。现有文件夹结构如下（空列表表示暂无文件夹）：\n';
+    promptText += folderTree.length ? folderTree.join('\n') + '\n' : '(无)\n';
+    promptText += '\n便签清单（id | 标题 | 内容前80字摘要 | 当前路径）：\n';
+    manifest.forEach(function (m) {
+      promptText += m.id + ' | ' + (m.title || '(无标题)') + ' | ' + m.snippet + ' | ' + m.current_path + '\n';
+    });
+    promptText += '\n要求：\n'
+      + '1. 输出**仅一个** JSON 对象，无任何额外文字、解释或代码块标记；\n'
+      + '2. 格式：{"ops":[...]}，操作三选一：{"op":"move","id":123,"path":"工作/项目A"}、{"op":"mkdir","path":"新路径"}、{"op":"rename","path":"现有路径","new_name":"新名字"}；\n'
+      + '3. id 必须是上面清单中出现的便签 id；path 为完整路径（从根层级开始），回到主页填"主页"；\n'
+      + '4. 分类逻辑：看标题和内容摘要的主题归属，不要过度细分（同名/同类才放到同一文件夹）；\n'
+      + '5. 已在合适位置的便签不要移动；\n'
+      + '6. 如果现有文件夹完全合适可直接用，不够的话建议新建的路径；\n'
+      + '7. 每条路径最多5段，每段1到30个字符。';
+
+    try {
+      var resp = await fetch('api/ai.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'classify', message: promptText }),
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      if (resp.status === 401) { window.location.href = 'login.php'; return; }
+      var result = await resp.json();
+      if (!result.success) {
+        showToast('❌ ' + (result.message || 'AI 返回失败'), 'error');
+        return;
+      }
+      handleClassifyResult(result.plan, manifest);
+    } catch (e) {
+      showToast('❌ 网络错误', 'error');
+    }
+  }
+
+  function handleClassifyResult(plan, manifest) {
+    var ops = plan && plan.ops ? plan.ops : [];
+    if (ops.length === 0) {
+      showToast('✅ AI 判断：无需任何操作', 'success');
+      return;
+    }
+    aiClassifyPending = ops;
+    renderClassifyPreview(ops, manifest);
+  }
+
+  // 预览面板：分组展示 + 确认/取消
+  function closeClassifyPreview() {
+    if (classifyPreviewOverlay) { classifyPreviewOverlay.remove(); classifyPreviewOverlay = null; }
+    aiClassifyPending = null;
+  }
+  function renderClassifyPreview(ops, manifest) {
+    closeClassifyPreview();
+    var byId = {};
+    manifest.forEach(function (m) { byId[m.id] = m; });
+
+    var overlay = mkEl('div', 'md-modal-overlay');
+    overlay.style.zIndex = '20100';   // 必须高于 AI 整理聊天框（20000），否则方案预览被聊天框遮挡、视觉上“夹在中间”
+    var modal = mkEl('div', 'md-modal');
+    var head = mkEl('div', 'md-modal-head');
+    head.appendChild(mkEl('div', 'md-modal-title', '✨ AI 整理方案预览（确认后执行）'));
+    var closeBtn = mkBtn('✕ 关闭', '关闭');
+    closeBtn.className = 'md-modal-close';
+    closeBtn.addEventListener('click', closeClassifyPreview);
+    head.appendChild(closeBtn);
+
+    var body = mkEl('div', 'md-modal-body');
+
+    // 三种操作分组渲染：move 按目标路径分组；mkdir / rename 逐条列出
+    var groups = {};
+    ops.forEach(function (o) {
+      if (o.op !== 'move') return;
+      var path = o.path || '主页';
+      if (!groups[path]) groups[path] = [];
+      groups[path].push(o);
+    });
+    Object.keys(groups).forEach(function (path) {
+      var grp = mkEl('div', 'classify-group');
+      grp.appendChild(mkEl('div', 'classify-path', '📁 ' + path));
+      var ul = mkEl('ul', 'classify-notes');
+      groups[path].forEach(function (o) {
+        var it = byId[o.id];
+        if (!it) return;
+        var li = mkEl('li', null, '• ' + (it.title || '(无标题)') + '（当前：' + it.current_path + '） → ' + path);
+        ul.appendChild(li);
+      });
+      grp.appendChild(ul);
+      body.appendChild(grp);
+    });
+    var mkdirs = ops.filter(function (o) { return o.op === 'mkdir'; });
+    if (mkdirs.length) {
+      var grpM = mkEl('div', 'classify-group');
+      grpM.appendChild(mkEl('div', 'classify-path', '📂 新建文件夹'));
+      var ulM = mkEl('ul', 'classify-notes');
+      mkdirs.forEach(function (o) { ulM.appendChild(mkEl('li', null, '• ' + o.path)); });
+      grpM.appendChild(ulM);
+      body.appendChild(grpM);
+    }
+    var renames = ops.filter(function (o) { return o.op === 'rename'; });
+    if (renames.length) {
+      var grpR = mkEl('div', 'classify-group');
+      grpR.appendChild(mkEl('div', 'classify-path', '✏️ 重命名'));
+      var ulR = mkEl('ul', 'classify-notes');
+      renames.forEach(function (o) { ulR.appendChild(mkEl('li', null, '• ' + o.path + ' → ' + o.new_name)); });
+      grpR.appendChild(ulR);
+      body.appendChild(grpR);
+    }
+    var delFolders = ops.filter(function (o) { return o.op === 'delete_folder'; });
+    if (delFolders.length) {
+      var grpDF = mkEl('div', 'classify-group');
+      grpDF.appendChild(mkEl('div', 'classify-path', '🗑 删除文件夹（内容上移）'));
+      var ulDF = mkEl('ul', 'classify-notes');
+      delFolders.forEach(function (o) { ulDF.appendChild(mkEl('li', null, '• ' + o.path)); });
+      grpDF.appendChild(ulDF);
+      body.appendChild(grpDF);
+    }
+    var delNotes = ops.filter(function (o) { return o.op === 'delete_note'; });
+    if (delNotes.length) {
+      var grpDN = mkEl('div', 'classify-group');
+      grpDN.appendChild(mkEl('div', 'classify-path', '🗑 删除便签'));
+      var ulDN = mkEl('ul', 'classify-notes');
+      delNotes.forEach(function (o) {
+        var it = byId[o.id];
+        ulDN.appendChild(mkEl('li', null, '• #' + o.id + (it ? ' ' + (it.title || '(无标题)') : '')));
+      });
+      grpDN.appendChild(ulDN);
+      body.appendChild(grpDN);
+    }
+    var sorts = ops.filter(function (o) { return o.op === 'sort_notes'; });
+    if (sorts.length) {
+      var grpS = mkEl('div', 'classify-group');
+      grpS.appendChild(mkEl('div', 'classify-path', '🔢 排序'));
+      var ulS = mkEl('ul', 'classify-notes');
+      sorts.forEach(function (o) {
+        var byName = { name: '标题', title_len: '标题长度', updated: '更新时间' };
+        ulS.appendChild(mkEl('li', null, '• ' + (o.path || '主页') + '：按' + (byName[o.by] || o.by) + (o.order === 'desc' ? '降序' : '升序')));
+      });
+      grpS.appendChild(ulS);
+      body.appendChild(grpS);
+    }
+    var colors = ops.filter(function (o) { return o.op === 'color'; });
+    if (colors.length) {
+      var grpC = mkEl('div', 'classify-group');
+      grpC.appendChild(mkEl('div', 'classify-path', '🎨 修改颜色'));
+      var ulC = mkEl('ul', 'classify-notes');
+      colors.forEach(function (o) {
+        var it = byId[o.id];
+        ulC.appendChild(mkEl('li', null, '• #' + o.id + (it ? ' ' + (it.title || '(无标题)') : '') + ' → ' + o.color));
+      });
+      grpC.appendChild(ulC);
+      body.appendChild(grpC);
+    }
+    var pins = ops.filter(function (o) { return o.op === 'pin'; });
+    if (pins.length) {
+      var grpP = mkEl('div', 'classify-group');
+      grpP.appendChild(mkEl('div', 'classify-path', '📌 置顶'));
+      var ulP = mkEl('ul', 'classify-notes');
+      pins.forEach(function (o) {
+        var it = byId[o.id];
+        ulP.appendChild(mkEl('li', null, '• #' + o.id + (it ? ' ' + (it.title || '(无标题)') : '') + (o.pinned ? ' → 置顶' : ' → 取消置顶')));
+      });
+      grpP.appendChild(ulP);
+      body.appendChild(grpP);
+    }
+
+    var foot = mkEl('div', 'md-modal-foot');
+    var btnGroup = mkEl('div', 'classify-btns');
+    var btnApply = mkBtn('✅ 确认执行（共 ' + ops.length + ' 项操作）', '执行整理');
+    btnApply.className = 'btn btn-primary btn-sm';
+    btnApply.addEventListener('click', function () { applyClassify(ops); closeClassifyPreview(); });
+
+    var btnCancel = mkBtn('取消', '取消');
+    btnCancel.className = 'btn btn-outline btn-sm';
+    btnCancel.addEventListener('click', closeClassifyPreview);
+
+    btnGroup.appendChild(btnApply);
+    btnGroup.appendChild(btnCancel);
+    foot.appendChild(btnGroup);
+    body.appendChild(foot);
+
+    modal.appendChild(head);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    classifyPreviewOverlay = overlay;
+  }
+
+  async function applyClassify(ops) {
+    showToast('📦 正在执行整理...', 'success');
+    try {
+      var resp = await fetch('api/ai.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'classify_apply', ops: ops }),
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      var result = await resp.json();
+      if (!result.success) {
+        showToast('❌ ' + (result.message || '执行失败'), 'error');
+        return;
+      }
+      var parts = [];
+      if (result.moved) parts.push(result.moved + ' 条便签移动');
+      if (result.created) parts.push(result.created + ' 个文件夹新建');
+      if (result.renamed) parts.push(result.renamed + ' 个文件夹改名');
+      if (result.deleted_folders) parts.push(result.deleted_folders + ' 个文件夹删除');
+      if (result.deleted_notes) parts.push(result.deleted_notes + ' 条便签删除');
+      if (result.sorted) parts.push(result.sorted + ' 处排序');
+      if (result.colored) parts.push(result.colored + ' 条改色');
+      if (result.pinned) parts.push(result.pinned + ' 条置顶变更');
+      showToast('✅ 整理完成：' + (parts.join('，') || '无实际变更') + '（可撤销）', 'success');
+      aiClassifyPending = null;
+      await loadFolders(); refreshView();
+      document.getElementById('btnUndoAiOff').style.display = 'inline-block';
+    } catch (e) {
+      showToast('❌ 执行失败', 'error');
+    }
+  }
+
+  async function undoLastClassify() {
+    try {
+      var resp = await fetch('api/ai.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'classify_undo' }),
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      var result = await resp.json();
+      if (!result.success) {
+        showToast('❌ ' + (result.message || '无可撤销操作'), 'error');
+        return;
+      }
+      showToast('↩️ 已撤销，' + result.restored + ' 条便签已还原', 'success');
+      await loadFolders(); refreshView();
+      if (!result.still_more) document.getElementById('btnUndoAiOff').style.display = 'none';
+    } catch (e) {
+      showToast('❌ 撤销失败', 'error');
+    }
+  }
+
+  async function checkPendingClassify() {
+    try {
+      var resp = await fetch('api/ai.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'classify_status' }),
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      var result = await resp.json();
+      if (result.success && result.has_pending) {
+        document.getElementById('btnUndoAiOff').style.display = 'inline-block';
+      }
+    } catch (e) { /* 不阻塞 */ }
+  }
+
   async function saveTitle(card) {
     var id = parseInt(card.getAttribute('data-id'));
     var el = card.querySelector('[data-field="title"]');
@@ -708,6 +1669,8 @@
         if (handlers) {
           if (ev === 'delta' && typeof handlers.onDelta === 'function') handlers.onDelta(d.t || '');
           if (ev === 'phase' && typeof handlers.onPhase === 'function') handlers.onPhase(d.t || '');
+          if (ev === 'tool' && typeof handlers.onTool === 'function') handlers.onTool(d);
+          if (ev === 'tool_result' && typeof handlers.onToolResult === 'function') handlers.onToolResult(d);
         }
       }
     }
@@ -2289,122 +3252,28 @@
     });
   }
 
-  // ============== 长按对调：长按便签 500ms 选中 → 长按另一便签 500ms → 两者位置对调 ==============
-  var swapArmedId = null;
-  var lpTimer = null;
-  var LP_SELECT_MS = 500;   // 长按选中阈值（独立常量，便于单独调整）
-  var LP_SWAP_MS = 500;     // 选中后再长按对调的阈值
 
-  function clearLpTimer() {
-    if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
-  }
-  function clearSwapArmed() {
-    var prev = notesGrid.querySelector('.note-card.swap-armed');
-    if (prev) prev.classList.remove('swap-armed');
-    swapArmedId = null;
-    clearLpTimer();
-  }
-  function setSwapArmed(id, card) {
-    clearSwapArmed();
-    swapArmedId = id;
-    card.classList.add('swap-armed');
-    showToast('✅ 已选中，长按另一个便签与它对调位置（点空白处或 Esc 取消）', 'success');
-  }
-  function saveCardOrder() {
-    var cards = notesGrid.querySelectorAll('.note-card');
-    var reorder = [];
-    cards.forEach(function (card, i) {
-      reorder.push({ id: parseInt(card.getAttribute('data-id')), sort_order: i });
-    });
-    api('PUT', { reorder: reorder }).then(function () {
-      showToast('🔄 位置已对调并保存', 'success');
-    }).catch(function () {
-      showToast('❌ 位置保存失败，正在刷新', 'error');
-      loadNotes();
-    });
-  }
-  function swapCards(idA, idB) {
-    var cardA = notesGrid.querySelector('.note-card[data-id="' + idA + '"]');
-    var cardB = notesGrid.querySelector('.note-card[data-id="' + idB + '"]');
-    if (!cardA || !cardB) { clearSwapArmed(); return; }
-    var na = cardA._noteData, nb = cardB._noteData;
-    if (na && nb && (!!na.pinned) !== (!!nb.pinned)) {
-      showToast('⚠️ 置顶便签只能和置顶便签对调', 'error');
-      clearSwapArmed();
-      return;
-    }
-    // 任意两节点对调：占位节点法
-    var placeholder = document.createElement('div');
-    notesGrid.insertBefore(placeholder, cardA);
-    notesGrid.insertBefore(cardA, cardB);
-    notesGrid.insertBefore(cardB, placeholder);
-    notesGrid.removeChild(placeholder);
-    clearSwapArmed();
-    saveCardOrder();
-  }
-  function bindLongPressSwap() {
-    // 选中态下，点击任何非卡片区域取消
-    document.addEventListener('pointerdown', function (e) {
-      if (swapArmedId !== null && !(e.target.closest && e.target.closest('.note-card'))) {
-        clearSwapArmed();
-      }
-    });
-    // 触屏长按的系统菜单 / 桌面右键菜单抑制（卡片有自己的按钮，原生菜单无用）
-    notesGrid.addEventListener('contextmenu', function (e) {
-      if (e.target.closest && e.target.closest('.note-card')) e.preventDefault();
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') clearSwapArmed();
-    });
-    // 事件委托绑一次，卡片重渲染不受影响
-    notesGrid.addEventListener('pointerdown', function (e) {
-      if (e.button !== undefined && e.button !== 0) return;
-      var card = e.target.closest ? e.target.closest('.note-card') : null;
-      if (!card) return;
-      // 按钮 / 可编辑区域上不触发长按（编辑、置顶等按钮照常工作）
-      if (e.target.closest('button, a, input, textarea, .note-actions, .read-more, [contenteditable="true"]')) return;
-      var id = parseInt(card.getAttribute('data-id'));
-      if (isNaN(id)) return;
-      var sx = e.clientX, sy = e.clientY;
-      card.classList.add('lp-pressing');   // 按住期间禁文字选中
-      clearLpTimer();
-      lpTimer = setTimeout(function () {
-        lpTimer = null;
-        card.classList.remove('lp-pressing');
-        if (swapArmedId === null) {
-          setSwapArmed(id, card);
-        } else if (swapArmedId === id) {
-          clearSwapArmed();                // 再长按同一张 = 取消选中
-          showToast('已取消选中', 'success');
-        } else {
-          swapCards(swapArmedId, id);
-        }
-      }, swapArmedId === null ? LP_SELECT_MS : LP_SWAP_MS);
-      var onMove = function (ev) {
-        if (Math.abs(ev.clientX - sx) > 10 || Math.abs(ev.clientY - sy) > 10) {
-          clearLpTimer();                  // 移动超阈值视为拖拽意图，交给 Sortable
-          card.classList.remove('lp-pressing');
-          cleanup();
-        }
-      };
-      var onUp = function () {
-        clearLpTimer();
-        card.classList.remove('lp-pressing');
-        cleanup();
-      };
-      function cleanup() {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        window.removeEventListener('pointercancel', onUp);
-      }
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
-      window.addEventListener('pointercancel', onUp);
-    });
-  }
 
   // ============== 初始化 ==============
-  loadNotes();
-  bindLongPressSwap();
+  document.getElementById('btnNewFolder').addEventListener('click', function () {
+    promptNewFolder(currentFolderId);
+  });
+  document.getElementById('btnUndoAiOff').addEventListener('click', undoLastClassify);
+  document.getElementById('btnAiOrganize').addEventListener('click', function () {
+    openClassifyDialog();
+  });
+
+  loadFolders().then(function () { loadNotes(); checkPendingClassify(); });
+  PixelSelection.init({
+    notesGrid: notesGrid,
+    api: api,
+    folderApi: folderApi,
+    showToast: showToast,
+    getCurrentFolderId: function () { return currentFolderId; },
+    getNoteById: function (id) { return notesById[id]; },
+    refreshAll: async function () { await loadFolders(); refreshView(); },
+    isUiLocked: function () { return !!(document.querySelector('.md-modal-overlay')); }
+  });
+  PixelSelection.syncUI();
 
 })();

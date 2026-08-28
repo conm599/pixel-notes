@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=47">
+    <link rel="stylesheet" href="css/pixel.css?v=51">
 </head>
 <body>
     <!-- 顶部导航 -->
@@ -48,9 +48,19 @@ if (!isset($_SESSION['user_id'])) {
     <div class="main-container">
         <!-- 工具栏 -->
         <div class="toolbar">
-            <span class="toolbar-title">📝 我的便签</span>
+            <div class="toolbar-left">
+                <span class="toolbar-title" id="toolbarTitle">📝 我的便签</span>
+                <span class="folder-crumb" id="folderCrumb"></span>
+            </div>
             <div class="toolbar-actions">
+                <div class="search-box" id="searchBox">
+                    <input type="text" id="searchInput" class="search-input" placeholder="🔍 搜索便签 / 文件夹..." autocomplete="off">
+                    <div id="searchPanel" class="search-panel" style="display:none"></div>
+                </div>
+                <button id="btnAiOrganize" class="btn btn-outline btn-sm">✨ AI 整理</button>
+                <button id="btnNewFolder" class="btn btn-outline btn-sm">📁 新建文件夹</button>
                 <button id="btnNewNote" class="btn btn-primary btn-sm">＋ 新建便签</button>
+                <button id="btnUndoAiOff" class="btn btn-outline btn-sm" style="display:none">↩️ 撤销上次整理</button>
             </div>
         </div>
 
@@ -100,7 +110,8 @@ if (!isset($_SESSION['user_id'])) {
 
     <script src="js/md.js?v=35"></script>
     <script src="js/Sortable.min.js"></script>
-    <script src="js/ai-direct.js?v=11"></script>
-    <script src="js/app.js?v=58"></script>
+    <script src="js/ai-direct.js?v=13"></script>
+    <script src="js/selection.js?v=4"></script>
+    <script src="js/app.js?v=68"></script>
 </body>
 </html>

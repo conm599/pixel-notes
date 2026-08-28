@@ -52,7 +52,7 @@ try {
 
     // ================= GET =================
     if ($method === 'GET') {
-        $stmt = $pdo->prepare("SELECT id, title, content, color, pinned, sort_order, created_at, updated_at, share_token, share_until
+        $stmt = $pdo->prepare("SELECT id, title, content, color, pinned, sort_order, folder_id, created_at, updated_at, share_token, share_until
                                FROM pn_notes WHERE user_id = ?
                                ORDER BY pinned DESC, sort_order ASC, updated_at DESC");
         $stmt->execute(array($userId));
@@ -62,6 +62,7 @@ try {
         foreach ($notes as &$n) {
             if (isset($n['pinned'])) $n['pinned'] = (int)$n['pinned'];
             if (isset($n['sort_order'])) $n['sort_order'] = (int)$n['sort_order'];
+            if (array_key_exists('folder_id', $n)) $n['folder_id'] = $n['folder_id'] === null ? null : (int)$n['folder_id'];
             if (!empty($n['share_token']) && strlen($n['share_token']) === 36) {
                 $until = (int)$n['share_until'];
                 if ($until > 0 && time() > $until) { $n['share_token'] = ''; $n['share_until'] = 0; continue; }
@@ -80,21 +81,31 @@ try {
         $content = trim(isset($input['content']) ? (string)$input['content'] : '');
         $color   = isset($input['color']) ? $input['color'] : 'yellow';
         $pinned  = !empty($input['pinned']) ? 1 : 0;
+        $folderId = array_key_exists('folder_id', $input) ? $input['folder_id'] : null;
+        $folderId = ($folderId === null || $folderId === 0) ? null : (int)$folderId;
 
         if ($title === '' && $content === '') {
             jsonResponse(array('success' => false, 'message' => '标题和内容不能都为空'), 400);
         }
         $content = clipContent($content);
         if (!in_array($color, $allowedColors)) $color = 'yellow';
+        // 文件夹归属校验（防 IDOR）
+        if ($folderId !== null) {
+            $fSt = $pdo->prepare("SELECT id FROM pn_folders WHERE id = ? AND user_id = ?");
+            $fSt->execute(array($folderId, $userId));
+            if (!$fSt->fetch()) {
+                jsonResponse(array('success' => false, 'message' => '目标文件夹不存在'), 200);
+            }
+        }
 
         // 新便签排到最后：sort_order = 该用户当前最大值 + 1
         $maxStmt = $pdo->prepare("SELECT COALESCE(MAX(sort_order), -1) FROM pn_notes WHERE user_id = ?");
         $maxStmt->execute(array($userId));
         $nextOrder = ((int)$maxStmt->fetchColumn()) + 1;
 
-        $stmt = $pdo->prepare("INSERT INTO pn_notes (user_id, title, content, color, pinned, sort_order, created_at, updated_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute(array($userId, $title, $content, $color, $pinned, $nextOrder, $now, $now));
+        $stmt = $pdo->prepare("INSERT INTO pn_notes (user_id, title, content, color, pinned, sort_order, folder_id, created_at, updated_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute(array($userId, $title, $content, $color, $pinned, $nextOrder, $folderId, $now, $now));
         $noteId = (int)$pdo->lastInsertId();
 
         jsonResponse(array(
@@ -102,7 +113,7 @@ try {
             'message' => '笔记已创建',
             'note' => array(
                 'id' => $noteId, 'title' => $title, 'content' => $content,
-                'color' => $color, 'pinned' => $pinned,
+                'color' => $color, 'pinned' => $pinned, 'folder_id' => $folderId,
                 'created_at' => $now, 'updated_at' => $now
             )
         ), 201);
@@ -202,6 +213,20 @@ try {
             $fields[] = "color = ?"; $params[] = $c;
         }
         if (isset($input['pinned']))  { $fields[] = "pinned = ?";  $params[] = !empty($input['pinned']) ? 1 : 0; }
+        // 移动便签到文件夹（null=回主页），需校验目标归属（防 IDOR）
+        if (array_key_exists('folder_id', $input)) {
+            $folderId = $input['folder_id'];
+            $folderId = ($folderId === null || $folderId === 0) ? null : (int)$folderId;
+            if ($folderId !== null) {
+                $fSt = $pdo->prepare("SELECT id FROM pn_folders WHERE id = ? AND user_id = ?");
+                $fSt->execute(array($folderId, $userId));
+                if (!$fSt->fetch()) {
+                    jsonResponse(array('success' => false, 'message' => '目标文件夹不存在'), 200);
+                }
+            }
+            $fields[] = "folder_id = ?";
+            $params[] = $folderId;
+        }
 
         if (count($fields) === 0) {
             jsonResponse(array('success' => false, 'message' => '没有需要更新的字段'), 400);

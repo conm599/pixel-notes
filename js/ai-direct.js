@@ -4,7 +4,7 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
- * 实现以 protocol.md v5 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 api/ai.php 同步
+ * 实现以 protocol.md v7 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
  *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
@@ -54,7 +54,12 @@
       + '4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n'
       + '5. 便签标题不在你负责范围内，只编辑正文\n'
       + '6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n'
-      + '7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问';
+      + '【工具调用（可选）】当你需要查看便签所在文件夹或其他文件夹里有什么时，可以调用工具。输出格式：\n'
+      + '<<<TOOL>>>\n'
+      + '{"name":"list_folder","path":"工作/项目A"}  —— 查看指定路径文件夹的便签清单；查看主页根层级用 {"name":"list_folder","path":"主页"}\n'
+      + '或 {"name":"read_note","id":123}  —— 查看 id 为 123 的便签完整内容\n'
+      + '说明：工具调用是你的输出的**全部内容**；收到工具结果后你继续推理，最多可连续调用 5 次。不要调用不在白名单里的任何工具。\n'
+      + '最后输出最终编辑结果（A/B/C 格式）';
     if (style) s += '\n【用户风格偏好】在不违背上述硬性规则的前提下，尽量按以下风格完成编辑：' + style;
     if (now) s += '\n【当前时间】现在是 ' + now + '（用户本地时间）。涉及时间、日期、星期、节假日等内容的编辑请以此为准，不要虚构时间。';
     return s;
@@ -74,6 +79,54 @@
       });
     }
     return qs;
+  }
+
+  // ===== runLocalTool：用页面内存数据执行 TOOL 块（与 api/ai.php aiRunTool 逻辑一致） =====
+  function runLocalTool(call) {
+    var name = String(call.name || '');
+    var notes = (typeof window !== 'undefined' && typeof window.__pixelNotesById === 'object') ? window.__pixelNotesById : null;
+    var folders = (typeof window !== 'undefined' && typeof window.__pixelFoldersById === 'object') ? window.__pixelFoldersById : null;
+    try {
+      if (name === 'list_folder') {
+        var path = String(call.path || '').trim();
+        var targetFid = null;
+        if (path && path !== '主页') {
+          var segs = path.split('/').filter(function (s) { return s.trim() !== ''; });
+          var parentId = null;
+          for (var i = 0; i < segs.length; i++) {
+            var found = null;
+            Object.keys(folders || {}).forEach(function (k) {
+              var f = folders[k];
+              if ((f.parent_id || null) === parentId && f.name === segs[i]) found = f;
+            });
+            if (!found) return JSON.stringify({ error: 'folder_not_found', missing_segment: segs[i] });
+            parentId = found.id;
+          }
+          targetFid = parentId;
+        }
+        var subFolders = Object.keys(folders || {}).map(function (k) { return folders[k]; })
+          .filter(function (f) { return (f.parent_id || null) === targetFid; })
+          .sort(function (a, b) { return a.sort_order - b.sort_order; })
+          .slice(0, 50)
+          .map(function (f) { return { id: f.id, name: f.name }; });
+        var notesArr = Object.keys(notes || {}).map(function (k) { return notes[k]; })
+          .filter(function (n) { return (n.folder_id || null) === targetFid; })
+          .sort(function (a, b) { return (b.pinned - a.pinned) || (b.sort_order - a.sort_order); })
+          .slice(0, 100)
+          .map(function (n) { return { id: n.id, title: n.title || '', snippet: (n.content || '').slice(0, 80) }; });
+        return JSON.stringify({ path: path || '主页', subfolders: subFolders, notes: notesArr });
+      }
+      if (name === 'read_note') {
+        var nid = parseInt(call.id);
+        if (isNaN(nid) || nid <= 0) return JSON.stringify({ error: 'invalid_id' });
+        var note = (notes && notes[nid]) ? notes[nid] : null;
+        if (!note) return JSON.stringify({ error: 'note_not_found' });
+        return JSON.stringify({ id: nid, title: note.title || '', content: note.content || '' });
+      }
+      return JSON.stringify({ error: 'unknown_tool', name: name });
+    } catch (e) {
+      return JSON.stringify({ error: 'tool_failed', message: String(e) });
+    }
   }
 
   // 澄清问答历史 → 对话轮次（assistant 提问块 + user 回答）
@@ -406,9 +459,31 @@
       var fence = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i);
       if (fence) text = fence[1].trim();
 
-      // 澄清提问：拿不准时向用户提问（轮数不限）
+      // 澄清提问：拿不准就继续问，轮数不限（每轮需用户手动回答，人工熔断）
       var clarify = parseClarify(text);
       if (clarify.length) return clarifyResult(clarifyRounds, clarify);
+
+      // ===== TOOL 块（浏览器端执行，数据全在页面内存 notesById/foldersById 里） =====
+      var toolRounds = 0;
+      while (toolRounds < 5) {
+        var toolMatch = text.match(/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i);
+        if (!toolMatch) break;
+        var toolCall = null;
+        try { toolCall = JSON.parse(toolMatch[1].trim()); } catch (e) { break; }
+        if (!toolCall || !toolCall.name) break;
+        toolRounds++;
+        if (opts.onPhase) opts.onPhase('🔧 工具调用：' + toolCall.name + '...');
+        var toolResult = runLocalTool(toolCall);
+        messages.push({ role: 'assistant', content: text });
+        messages.push({ role: 'user', content: '【工具结果】' + toolCall.name + '\n' + toolResult });
+        var r2 = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta);
+        if (!r2.ok) return { success: false, message: r2.message };
+        text = (r2.text || '').trim();
+        var fence2 = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i);
+        if (fence2) text = fence2[1].trim();
+        var clarify2 = parseClarify(text);
+        if (clarify2.length) return clarifyResult(clarifyRounds, clarify2);
+      }
 
       if (!text) {
         // 空内容：带上下文重试

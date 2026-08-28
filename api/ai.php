@@ -5,7 +5,7 @@
  * action=test   : 管理员测试上游连通性
  * action=prefs  : 读取/保存用户 AI 偏好（跨端同步，用户主动勾选）
  *
- * 实现以 protocol.md v5 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 js/ai-direct.js 同步
+ * 实现以 protocol.md v7 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / 整理 Agent SSE 的唯一事实源），改动需与 js/ai-direct.js 同步
  *
  * 安全设计：
  * - 管理员的上游 Key 存于 pn_settings，永不下发浏览器
@@ -172,8 +172,66 @@ function aiApplyBlock($content, $search, $replace) {
 }
 
 /**
- * SSRF 防护：IP 是否为内网/环回/链路本地/私网（含格式非法，保守视为内部）
+ * 执行 TOOL 白名单工具（只读、只允许当前用户自己的数据），返回 JSON 字符串
+ * @param string $name     工具名
+ * @param array $args      工具参数
+ * @param PDO $pdo         数据库连接
+ * @param int $uid         当前登录用户 id
  */
+function aiRunTool($name, $args, $pdo, $uid) {
+    switch ((string)$name) {
+        case 'list_folder': {
+            $path = isset($args['path']) ? trim((string)$args['path']) : '';
+            if ($path === '' || $path === '主页') $path = null;
+            $targetId = null;
+            if ($path !== null) {
+                $segs = array_values(array_filter(explode('/', $path)));
+                if (empty($segs)) return json_encode(array('error' => 'path_invalid'), JSON_UNESCAPED_UNICODE);
+                $parentId = null;
+                foreach ($segs as $seg) {
+                    $st = $pdo->prepare("SELECT id FROM pn_folders WHERE user_id = ? AND parent_id <=> ? AND name = ?");
+                    $st->execute(array($uid, $parentId, $seg));
+                    $row = $st->fetch();
+                    if (!$row) return json_encode(array('error' => 'folder_not_found', 'missing_segment' => $seg), JSON_UNESCAPED_UNICODE);
+                    $parentId = (int)$row['id'];
+                }
+                $targetId = $parentId;
+            }
+            // 子文件夹
+            $st = $pdo->prepare("SELECT id, name FROM pn_folders WHERE user_id = ? AND parent_id <=> ? ORDER BY sort_order ASC LIMIT 50");
+            $st->execute(array($uid, $targetId));
+            $subFolders = $st->fetchAll();
+            // 便签清单（id + 标题 + 前80字摘要）
+            $st = $pdo->prepare("SELECT id, title, SUBSTRING(content, 1, 80) AS snippet FROM pn_notes WHERE user_id = ? AND folder_id <=> ? ORDER BY pinned DESC, sort_order ASC LIMIT 100");
+            $st->execute(array($uid, $targetId));
+            $notes = $st->fetchAll();
+            $foldersArr = array();
+            foreach ($subFolders as $f) $foldersArr[] = array('id' => (int)$f['id'], 'name' => $f['name']);
+            $notesArr = array();
+            foreach ($notes as $n) $notesArr[] = array('id' => (int)$n['id'], 'title' => (string)$n['title'], 'snippet' => $n['snippet'] === null ? '' : (string)$n['snippet']);
+            return json_encode(array(
+                'path' => $path !== null ? $path : '主页',
+                'subfolders' => $foldersArr,
+                'notes' => $notesArr,
+            ), JSON_UNESCAPED_UNICODE);
+        }
+        case 'read_note': {
+            $nid = isset($args['id']) ? (int)$args['id'] : 0;
+            if ($nid <= 0) return json_encode(array('error' => 'invalid_id'), JSON_UNESCAPED_UNICODE);
+            $st = $pdo->prepare("SELECT title, content FROM pn_notes WHERE id = ? AND user_id = ?");
+            $st->execute(array($nid, $uid));
+            $row = $st->fetch();
+            if (!$row) return json_encode(array('error' => 'note_not_found'), JSON_UNESCAPED_UNICODE);
+            return json_encode(array(
+                'id' => $nid,
+                'title' => (string)$row['title'],
+                'content' => (string)$row['content'],
+            ), JSON_UNESCAPED_UNICODE);
+        }
+        default:
+            return json_encode(array('error' => 'unknown_tool', 'name' => (string)$name), JSON_UNESCAPED_UNICODE);
+    }
+}
 function aiIsInternalIp($ip) {
     if (!is_string($ip) || $ip === '') return true;
     // 私网(10/8、172.16/12、192.168/16、fc00::/7) + 保留段(127.0.0.0/8、169.254.0.0/16、0.0.0.0/8、::1、fe80::/10 等)
@@ -438,6 +496,595 @@ try {
             jsonOut(array('success' => true, 'message' => '连接成功，AI 回复：' . mb_substr($r['text'], 0, 50, 'UTF-8')));
         }
         jsonOut(array('success' => false, 'message' => $r['err']));
+    }
+
+    // ================= AI 自动整理便签（清单喂法） =================
+    // action=classify：AI 只生成方案（JSON moves），不直接改数据，预览后由 classify_apply 落库
+
+    // 供 classify 内部读取用户全部便签的清单字段
+    function classifyLoadManifest($pdo, $uid) {
+        $st = $pdo->prepare("SELECT id, title, content, folder_id FROM pn_notes WHERE user_id = ? ORDER BY pinned DESC, sort_order ASC, updated_at DESC");
+        $st->execute(array($uid));
+        $rows = $st->fetchAll();
+        return is_array($rows) ? $rows : array();
+    }
+
+    // 供 classify 内部读取用户全部文件夹
+    function classifyLoadFolders($pdo, $uid) {
+        $st = $pdo->prepare("SELECT id, parent_id, name FROM pn_folders WHERE user_id = ? ORDER BY parent_id, sort_order, id");
+        $st->execute(array($uid));
+        $rows = $st->fetchAll();
+        return is_array($rows) ? $rows : array();
+    }
+
+    // 从文件夹 id 回溯完整路径段
+    function classifyFolderPath($fid, $folders) {
+        if ($fid === null || $fid === 0 || $fid === '0') return array();
+        $byId = array();
+        foreach ($folders as $f) $byId[(int)$f['id']] = $f;
+        $path = array();
+        $cur = (int)$fid;
+        $guard = 0;
+        while ($cur > 0 && isset($byId[$cur]) && $guard++ < 50) {
+            array_unshift($path, (string)$byId[$cur]['name']);
+            $cur = isset($byId[$cur]['parent_id']) ? (int)$byId[$cur]['parent_id'] : 0;
+        }
+        return $path;
+    }
+
+    if ($action === 'classify') {
+        $message = isset($input['message']) ? (string)$input['message'] : '';
+        if (trim($message) === '') jsonOut(array('success' => false, 'message' => '没有可整理的便签清单'));
+
+        $base = rtrim(trim(getSetting('ai_base_url', '')), '/');
+        $key  = trim(getSetting('ai_api_key', ''));
+        $model = trim(getSetting('ai_model', ''));
+        if ($base === '' || $key === '' || $model === '') {
+            jsonOut(array('success' => false, 'message' => '管理员尚未配置 AI 上游'));
+        }
+        $url = (substr($base, -17) === '/chat/completions') ? $base : $base . '/chat/completions';
+        $pdo = getDB();
+
+        $system = '你是便签整理助手，能力等同一个文件管理器（类似 Claude Code 的 Agent）。'
+            . '最终必须输出严格合法的 JSON 对象（{"ops":[...]}），ops 是操作数组，每个元素为以下操作之一：'
+            . '{"op":"move","id":便签id数字,"path":"目标文件夹完整路径"} —— 把便签移入文件夹（"主页"表示根层级）；'
+            . '{"op":"mkdir","path":"新文件夹完整路径"} —— 新建文件夹（可一次输出多条实现批量创建）；'
+            . '{"op":"rename","path":"现有文件夹完整路径","new_name":"新名字"} —— 重命名文件夹；'
+            . '{"op":"delete_folder","path":"现有文件夹完整路径"} —— 删除文件夹（内容自动上移一级，绝不丢便签）；'
+            . '{"op":"delete_note","id":便签id数字} —— 删除便签（危险操作，仅当用户明确要求删除时使用）；'
+            . '{"op":"sort_notes","path":"文件夹完整路径","by":"name|title_len|updated","order":"asc|desc"} —— 对该文件夹下的便签按规则排序；'
+            . '{"op":"color","id":便签id数字,"color":"yellow|pink|blue|green|purple|orange"} —— 修改便签颜色；'
+            . '{"op":"pin","id":便签id数字,"pinned":true或false} —— 置顶/取消置顶便签。'
+            . 'path 用 / 分隔层级，最多 5 段、每段 1 到 30 个字符。'
+            . '只在用户指令范围内操作，不要自作主张；已在合理位置的便签不要移动。没有任何要执行的操作时输出 {"ops":[]}。'
+            . "\n"
+            . "【工作流程（Agent 模式）】\n"
+            . "1. 每一轮你可以先用一两句话简要说明你打算怎么做（用户能看到这些话）\n"
+            . "2. 清单里便签内容只有前 80 字摘要。信息不够时不要猜——先查再看，输出工具调用块查看数据：\n"
+            . "<<<TOOL>>>\n"
+            . "{\"name\":\"list_folder\",\"path\":\"工作/项目A\"}   —— 列出该路径下的子文件夹和便签清单（主页填 \"主页\"）\n"
+            . "{\"name\":\"read_note\",\"id\":123}   —— 查看 id 为 123 的便签完整内容\n"
+            . "<<<END>>>\n"
+            . "3. 收到【工具结果】后继续判断：还需要查就再调工具（不限次数，查够为止），信息足够就输出最终 JSON 方案\n"
+            . "4. 最终 JSON 单独一轮输出，那轮不要再有多余解释";
+
+        $messages = array(
+            array('role' => 'system', 'content' => $system),
+            array('role' => 'user', 'content' => $message),
+        );
+
+        // ===== SSE Agent 流式执行（protocol v7）：思考文本 / 工具调用 / 工具结果 全程可见 =====
+        sseStart();
+        $round = 0;
+        $toolRounds = 0;
+        $jsonAttempts = 0;
+        $plan = null;
+        while (true) {
+            $round++;
+            sseSend('phase', array('t' => $round === 1 ? '🤖 开始分析…' : '🤔 第 ' . $round . ' 轮思考…'));
+
+            // 思考文本流式转发：一旦出现 '{' 或 '<<<'（最终 JSON / 工具块开头）就停止转发，避免把协议原文刷进聊天框
+            $accum = '';
+            $onDelta = function ($t) use (&$accum) {
+                $accum .= $t;
+                if (strpos($accum, '{') !== false || strpos($accum, '<<<') !== false) return;
+                sseSend('delta', array('t' => $t));
+            };
+
+            $r = aiChat($url, $key, $model, $messages, 4000, null, $onDelta);
+            if (!$r['ok']) aiOut(array('success' => false, 'message' => (string)$r['err']));
+
+            $text = trim($r['text']);
+            // 工具调用块：先于 JSON 解析处理（上限 20 次，防失控循环）
+            if ($toolRounds < 20 && preg_match('/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i', $text, $tm)) {
+                $toolCall = json_decode(trim($tm[1]), true);
+                if (is_array($toolCall) && isset($toolCall['name'])) {
+                    $toolRounds++;
+                    $argsBrief = isset($toolCall['path']) ? (string)$toolCall['path'] : (isset($toolCall['id']) ? '#' . $toolCall['id'] : '');
+                    sseSend('tool', array('name' => (string)$toolCall['name'], 'args' => $argsBrief, 'round' => $toolRounds));
+                    $toolResult = aiRunTool((string)$toolCall['name'], $toolCall, $pdo, $uid);
+                    // 结果摘要（全文可能很长，聊天框只显示前 300 字）
+                    $brief = $toolResult;
+                    if (function_exists('mb_substr')) $brief = mb_substr($toolResult, 0, 300, 'UTF-8') . (mb_strlen($toolResult, 'UTF-8') > 300 ? '…' : '');
+                    else $brief = substr($toolResult, 0, 600);
+                    sseSend('tool_result', array('name' => (string)$toolCall['name'], 'brief' => $brief));
+                    $messages[] = array('role' => 'assistant', 'content' => $text);
+                    $messages[] = array('role' => 'user', 'content' => '【工具结果】' . (string)$toolCall['name'] . "\n" . $toolResult . "\n\n请继续判断：还需要查就再调工具，信息足够就输出最终 JSON 方案。");
+                    continue;
+                }
+            }
+
+            // 提取平衡花括号的 JSON 对象（strpos 首个 { 会误抓工具参数/解释文字里的片段）
+            $stripped = trim($text);
+            $fence = "```";
+            if (substr($stripped, 0, 3) === $fence) {          // 开头围栏 ``` 或 ```json
+                $nl = strpos($stripped, "\n");
+                if ($nl !== false) $stripped = substr($stripped, $nl + 1);
+            }
+            if (substr($stripped, -3) === $fence) $stripped = substr($stripped, 0, -3);   // 结尾围栏
+            $stripped = trim($stripped);
+            $plan = null;
+            for ($ci = 0; $ci < strlen($stripped); $ci++) {
+                if ($stripped[$ci] !== '{') continue;
+                $depth = 0; $inStr = false; $esc = false;
+                for ($cj = $ci; $cj < strlen($stripped); $cj++) {
+                    $ch = $stripped[$cj];
+                    if ($esc) { $esc = false; continue; }
+                    if ($ch === '\\' && $inStr) { $esc = true; continue; }
+                    if ($ch === '"') { $inStr = !$inStr; continue; }
+                    if ($inStr) continue;
+                    if ($ch === '{') $depth++;
+                    elseif ($ch === '}') {
+                        $depth--;
+                        if ($depth === 0) {
+                            $cand = json_decode(substr($stripped, $ci, $cj - $ci + 1), true);
+                            // 只接受含 ops 或 moves 键的对象（跳过思考文字里的示例 JSON）
+                            if (is_array($cand) && (isset($cand['ops']) || isset($cand['moves']))) { $plan = $cand; break 2; }
+                            break;   // 这个 { 不匹配，找下一个
+                        }
+                    }
+                }
+            }
+            if (is_array($plan)) break;
+
+            // 没解析出方案：错误回喂重试（最多 3 轮，AI 多轮思考时偶尔某轮只输出文字不输出 JSON）
+            $jsonAttempts++;
+            if ($jsonAttempts >= 3) {
+                aiOut(array('success' => false, 'message' => 'AI 连续 3 轮未输出有效方案，请换个说法再试'));
+            }
+            sseSend('phase', array('t' => '🔁 方案格式异常，自动纠错第 ' . $jsonAttempts . ' 次…'));
+            $messages[] = array('role' => 'assistant', 'content' => $r['text']);
+            $messages[] = array('role' => 'user', 'content' => '你上一轮的输出不完整或没有 JSON（可能被截断）。现在重新输出最终方案：直接以字符 { 开头、} 结尾的 JSON 对象 {"ops":[...]}，禁止使用代码围栏，禁止任何解释文字，禁止工具调用。');
+        }
+        if (!is_array($plan)) {
+            aiOut(array('success' => false, 'message' => 'AI 返回的 JSON 结构无效'));
+        }
+
+        // 解析 + 清洗操作数组；兼容旧协议的 moves 数组
+        $validOps = array();
+        $rawOps = array();
+        if (isset($plan['ops']) && is_array($plan['ops'])) $rawOps = $plan['ops'];
+        elseif (isset($plan['moves']) && is_array($plan['moves'])) {
+            foreach ($plan['moves'] as $mv) $rawOps[] = array_merge(array('op' => 'move'), is_array($mv) ? $mv : array());
+        }
+        $colorsOk = array('yellow' => 1, 'pink' => 1, 'blue' => 1, 'green' => 1, 'purple' => 1, 'orange' => 1);
+        foreach ($rawOps as $op) {
+            if (!is_array($op) || !isset($op['op'])) continue;
+            $type = (string)$op['op'];
+            $path = isset($op['path']) && is_string($op['path']) ? trim($op['path']) : '';
+            if ($type === 'move') {
+                $id = isset($op['id']) ? (int)$op['id'] : 0;
+                if ($id > 0 && $path !== '') $validOps[] = array('op' => 'move', 'id' => $id, 'path' => $path);
+            } elseif ($type === 'mkdir') {
+                if ($path !== '' && $path !== '主页') $validOps[] = array('op' => 'mkdir', 'path' => $path);
+            } elseif ($type === 'rename') {
+                $newName = isset($op['new_name']) && is_string($op['new_name']) ? trim($op['new_name']) : '';
+                if ($path !== '' && $path !== '主页' && $newName !== '') $validOps[] = array('op' => 'rename', 'path' => $path, 'new_name' => $newName);
+            } elseif ($type === 'delete_folder') {
+                if ($path !== '' && $path !== '主页') $validOps[] = array('op' => 'delete_folder', 'path' => $path);
+            } elseif ($type === 'delete_note') {
+                $id = isset($op['id']) ? (int)$op['id'] : 0;
+                if ($id > 0) $validOps[] = array('op' => 'delete_note', 'id' => $id);
+            } elseif ($type === 'sort_notes') {
+                $by = isset($op['by']) ? (string)$op['by'] : 'name';
+                if (!in_array($by, array('name', 'title_len', 'updated'), true)) $by = 'name';
+                $order = (isset($op['order']) && $op['order'] === 'desc') ? 'desc' : 'asc';
+                $validOps[] = array('op' => 'sort_notes', 'path' => ($path === '' ? '主页' : $path), 'by' => $by, 'order' => $order);
+            } elseif ($type === 'color') {
+                $id = isset($op['id']) ? (int)$op['id'] : 0;
+                $color = isset($op['color']) ? (string)$op['color'] : '';
+                if ($id > 0 && isset($colorsOk[$color])) $validOps[] = array('op' => 'color', 'id' => $id, 'color' => $color);
+            } elseif ($type === 'pin') {
+                $id = isset($op['id']) ? (int)$op['id'] : 0;
+                if ($id > 0) $validOps[] = array('op' => 'pin', 'id' => $id, 'pinned' => !empty($op['pinned']) ? 1 : 0);
+            }
+        }
+        aiOut(array('success' => true, 'plan' => array('ops' => $validOps)));
+    }
+
+    // ================= AI 整理落库（程序校验 + 溯源日志，支持 move/mkdir/rename） =================
+    if ($action === 'classify_apply') {
+        $pdo = getDB();
+        $ops = isset($input['ops']) && is_array($input['ops']) ? $input['ops'] : array();
+        // 兼容旧前端只发 moves 的调用
+        if (empty($ops) && isset($input['moves']) && is_array($input['moves'])) {
+            foreach ($input['moves'] as $mv) $ops[] = array_merge(array('op' => 'move'), is_array($mv) ? $mv : array());
+        }
+        if (empty($ops)) jsonOut(array('success' => false, 'message' => '没有要执行的操作'));
+
+        $folders = classifyLoadFolders($pdo, $uid);
+        $notes = classifyLoadManifest($pdo, $uid);
+        $noteIds = array();
+        foreach ($notes as $n) $noteIds[(int)$n['id']] = true;
+
+        // 统一校验：路径段 1-30 字、最多 5 段、禁危险字符
+        $skipped = array();
+        $validSegs = function ($path) use (&$skipped) {
+            $segments = array_values(array_filter(array_map('trim', explode('/', (string)$path))));
+            if (count($segments) < 1 || count($segments) > 5) return null;
+            foreach ($segments as $seg) {
+                $len = function_exists('mb_strlen') ? mb_strlen($seg, 'UTF-8') : strlen($seg);
+                if ($len < 1 || $len > 30) return null;
+                if (preg_match('/[<>"\'\\\\]|^\\s|\\s$/', $seg)) return null;
+            }
+            return $segments;
+        };
+
+        $cleanOps = array();
+        foreach ($ops as $op) {
+            if (!is_array($op) || !isset($op['op'])) { $skipped[] = array('reason' => 'malformed'); continue; }
+            $type = (string)$op['op'];
+            if ($type === 'move') {
+                $nid = isset($op['id']) ? (int)$op['id'] : 0;
+                if ($nid <= 0 || !isset($noteIds[$nid])) { $skipped[] = array('op' => 'move', 'reason' => 'note_not_found'); continue; }
+                $path = ($op['path'] === '主页') ? '' : (string)$op['path'];
+                $segments = ($path === '') ? array() : $validSegs($path);
+                if ($segments === null) { $skipped[] = array('op' => 'move', 'id' => $nid, 'reason' => 'path_invalid'); continue; }
+                $cleanOps[] = array('op' => 'move', 'id' => $nid, 'segments' => $segments);
+            } elseif ($type === 'mkdir') {
+                $segments = $validSegs(isset($op['path']) ? $op['path'] : '');
+                if ($segments === null) { $skipped[] = array('op' => 'mkdir', 'reason' => 'path_invalid'); continue; }
+                $cleanOps[] = array('op' => 'mkdir', 'segments' => $segments);
+            } elseif ($type === 'rename') {
+                $segments = $validSegs(isset($op['path']) ? $op['path'] : '');
+                $newName = isset($op['new_name']) && is_string($op['new_name']) ? trim($op['new_name']) : '';
+                $nameLen = function_exists('mb_strlen') ? mb_strlen($newName, 'UTF-8') : strlen($newName);
+                if ($segments === null) { $skipped[] = array('op' => 'rename', 'reason' => 'path_invalid'); continue; }
+                if ($nameLen < 1 || $nameLen > 30 || preg_match('/[<>"\'\\\\/]|^\\s|\\s$/', $newName)) {
+                    $skipped[] = array('op' => 'rename', 'reason' => 'name_invalid'); continue;
+                }
+                $cleanOps[] = array('op' => 'rename', 'segments' => $segments, 'new_name' => $newName);
+            } elseif ($type === 'delete_folder') {
+                $segments = $validSegs(isset($op['path']) ? $op['path'] : '');
+                if ($segments === null) { $skipped[] = array('op' => 'delete_folder', 'reason' => 'path_invalid'); continue; }
+                $cleanOps[] = array('op' => 'delete_folder', 'segments' => $segments);
+            } elseif ($type === 'delete_note') {
+                $nid = isset($op['id']) ? (int)$op['id'] : 0;
+                if ($nid <= 0 || !isset($noteIds[$nid])) { $skipped[] = array('op' => 'delete_note', 'reason' => 'note_not_found'); continue; }
+                $cleanOps[] = array('op' => 'delete_note', 'id' => $nid);
+            } elseif ($type === 'sort_notes') {
+                $path = isset($op['path']) && is_string($op['path']) ? trim($op['path']) : '主页';
+                $segments = ($path === '' || $path === '主页') ? array() : $validSegs($path);
+                if ($segments === null) { $skipped[] = array('op' => 'sort_notes', 'reason' => 'path_invalid'); continue; }
+                $by = isset($op['by']) ? (string)$op['by'] : 'name';
+                if (!in_array($by, array('name', 'title_len', 'updated'), true)) $by = 'name';
+                $order = (isset($op['order']) && $op['order'] === 'desc') ? 'desc' : 'asc';
+                $cleanOps[] = array('op' => 'sort_notes', 'segments' => $segments, 'by' => $by, 'order' => $order);
+            } elseif ($type === 'color') {
+                $nid = isset($op['id']) ? (int)$op['id'] : 0;
+                $color = isset($op['color']) ? (string)$op['color'] : '';
+                if ($nid <= 0 || !isset($noteIds[$nid])) { $skipped[] = array('op' => 'color', 'reason' => 'note_not_found'); continue; }
+                if (!in_array($color, array('yellow', 'pink', 'blue', 'green', 'purple', 'orange'), true)) {
+                    $skipped[] = array('op' => 'color', 'reason' => 'color_invalid'); continue;
+                }
+                $cleanOps[] = array('op' => 'color', 'id' => $nid, 'color' => $color);
+            } elseif ($type === 'pin') {
+                $nid = isset($op['id']) ? (int)$op['id'] : 0;
+                if ($nid <= 0 || !isset($noteIds[$nid])) { $skipped[] = array('op' => 'pin', 'reason' => 'note_not_found'); continue; }
+                $cleanOps[] = array('op' => 'pin', 'id' => $nid, 'pinned' => !empty($op['pinned']) ? 1 : 0);
+            } else {
+                $skipped[] = array('reason' => 'unknown_op');
+            }
+        }
+
+        if (empty($cleanOps)) jsonOut(array('success' => false, 'message' => '所有操作项均未通过校验', 'skipped' => $skipped));
+
+        $pdo->beginTransaction();
+        try {
+            // path -> id 映射（随创建动态刷新）
+            $refreshMap = function () use ($pdo, $uid) {
+                $fs = classifyLoadFolders($pdo, $uid);
+                $map = array();
+                foreach ($fs as $f) { $map[implode('/', classifyFolderPath((int)$f['id'], $fs))] = (int)$f['id']; }
+                return $map;
+            };
+            $folderMap = $refreshMap();
+
+            $now = date('Y-m-d H:i:s');
+            $undo = array();   // 撤销动作序列：move 记 from；mkdir 记新建 id；rename 记旧名
+            $moved = 0; $created = 0; $renamed = 0; $deletedF = 0; $deletedN = 0; $sorted = 0; $colored = 0; $pinned = 0;
+
+            // 逐段确保路径存在，返回末段 folder_id（用于 move 与 mkdir 的父级创建）
+            $ensurePath = function ($segments) use (&$folderMap, $refreshMap, $pdo, $uid, $now, &$created, &$undo) {
+                $parentId = null;
+                $cur = array();
+                foreach ($segments as $seg) {
+                    $cur[] = $seg;
+                    $curPath = implode('/', $cur);
+                    if (isset($folderMap[$curPath])) { $parentId = $folderMap[$curPath]; continue; }
+                    $st = $pdo->prepare("INSERT INTO pn_folders (user_id, parent_id, name, sort_order, created_at) VALUES (?, ?, ?, 0, ?)");
+                    $st->execute(array($uid, $parentId, $seg, $now));
+                    $newId = (int)$pdo->lastInsertId();
+                    $undo[] = array('undo' => 'rmdir', 'folder_id' => $newId);
+                    $folderMap = $refreshMap();
+                    $created++;
+                    $parentId = $newId;
+                }
+                return $parentId;
+            };
+
+            foreach ($cleanOps as $op) {
+                if ($op['op'] === 'move') {
+                    $targetFid = $op['segments'] ? $ensurePath($op['segments']) : null;   // 空段 = 移回主页
+                    $st = $pdo->prepare("SELECT folder_id FROM pn_notes WHERE id = ? AND user_id = ?");
+                    $st->execute(array($op['id'], $uid));
+                    $fromFid = $st->fetchColumn();
+                    $fromFid = ($fromFid === false || $fromFid === null) ? null : (int)$fromFid;
+                    if ($fromFid === $targetFid) continue;
+                    $st = $pdo->prepare("UPDATE pn_notes SET folder_id = ?, updated_at = ? WHERE id = ? AND user_id = ?");
+                    $st->execute(array($targetFid, $now, $op['id'], $uid));
+                    $undo[] = array('undo' => 'move', 'note_id' => $op['id'], 'from_folder_id' => $fromFid);
+                    $moved++;
+                } elseif ($op['op'] === 'mkdir') {
+                    $ensurePath($op['segments']);   // 已存在的路径直接跳过，缺的逐段创建
+                } elseif ($op['op'] === 'rename') {
+                    $pathStr = implode('/', $op['segments']);
+                    if (!isset($folderMap[$pathStr])) { $skipped[] = array('op' => 'rename', 'path' => $pathStr, 'reason' => 'folder_not_found'); continue; }
+                    $fid = $folderMap[$pathStr];
+                    $st = $pdo->prepare("SELECT name FROM pn_folders WHERE id = ? AND user_id = ?");
+                    $st->execute(array($fid, $uid));
+                    $oldName = $st->fetchColumn();
+                    if ($oldName === false || $oldName === $op['new_name']) continue;
+                    $st = $pdo->prepare("UPDATE pn_folders SET name = ? WHERE id = ? AND user_id = ?");
+                    $st->execute(array($op['new_name'], $fid, $uid));
+                    $undo[] = array('undo' => 'rename', 'folder_id' => $fid, 'old_name' => (string)$oldName);
+                    $renamed++;
+                } elseif ($op['op'] === 'delete_folder') {
+                    // 删除文件夹：内容上移一级（环安全由 folders.php 同款逻辑保证——只上移到 parent）
+                    $pathStr = implode('/', $op['segments']);
+                    if (!isset($folderMap[$pathStr])) { $skipped[] = array('op' => 'delete_folder', 'path' => $pathStr, 'reason' => 'folder_not_found'); continue; }
+                    $fid = $folderMap[$pathStr];
+                    $st = $pdo->prepare("SELECT parent_id FROM pn_folders WHERE id = ? AND user_id = ?");
+                    $st->execute(array($fid, $uid));
+                    $parentId = $st->fetchColumn();
+                    if ($parentId === false) continue;
+                    $parentId = ($parentId === null) ? null : (int)$parentId;
+                    // 记录该文件夹全部内容快照用于撤销（还原结构）
+                    $st = $pdo->prepare("SELECT id, name, parent_id, sort_order FROM pn_folders WHERE user_id = ? AND (id = ? OR parent_id <=> ?)");
+                    $st->execute(array($uid, $fid, $fid));
+                    $subTree = $st->fetchAll();
+                    $st = $pdo->prepare("SELECT id, folder_id, sort_order FROM pn_notes WHERE user_id = ? AND folder_id <=> ?");
+                    $st->execute(array($uid, $fid));
+                    $subNotes = $st->fetchAll();
+                    // 先收集整个子树（含多级嵌套）——用递归收集 id 集
+                    $allFolderIds = array($fid);
+                    $frontier = array($fid);
+                    while (!empty($frontier)) {
+                        $ph = implode(',', array_fill(0, count($frontier), '?'));
+                        $st = $pdo->prepare("SELECT id FROM pn_folders WHERE user_id = ? AND parent_id IN ($ph)");
+                        $st->execute(array_merge(array($uid), $frontier));
+                        $next = $st->fetchAll(PDO::FETCH_COLUMN);
+                        $frontier = array_map('intval', $next);
+                        $allFolderIds = array_merge($allFolderIds, $frontier);
+                    }
+                    $phAll = implode(',', array_fill(0, count($allFolderIds), '?'));
+                    $st = $pdo->prepare("SELECT id, folder_id, sort_order FROM pn_notes WHERE user_id = ? AND folder_id IN ($phAll)");
+                    $st->execute(array_merge(array($uid), $allFolderIds));
+                    $subNotes = $st->fetchAll();
+                    // 执行删除：内容上移到被删文件夹的父级
+                    $pdo->prepare("UPDATE pn_notes SET folder_id = ? WHERE user_id = ? AND folder_id IN ($phAll)")
+                        ->execute(array_merge(array($parentId, $uid), $allFolderIds));
+                    $pdo->prepare("UPDATE pn_folders SET parent_id = ? WHERE user_id = ? AND parent_id IN ($phAll) AND id NOT IN ($phAll)")
+                        ->execute(array_merge(array($parentId, $uid), $allFolderIds, $allFolderIds));
+                    $pdo->prepare("DELETE FROM pn_folders WHERE user_id = ? AND id IN ($phAll)")
+                        ->execute(array_merge(array($uid), $allFolderIds));
+                    $undo[] = array('undo' => 'delete_folder', 'folders' => array(), 'notes' => array(),
+                                    'note_moves' => array_map(function ($r) { return array('id' => (int)$r['id'], 'folder_id' => $r['folder_id'] === null ? null : (int)$r['folder_id']); }, $subNotes));
+                    // 撤销还原需要重建的文件夹结构（逆序重建）——记录完整子树
+                    $undo[count($undo) - 1]['folders'] = array_map(function ($r) { return array('id' => (int)$r['id'], 'name' => (string)$r['name'], 'parent_id' => $r['parent_id'] === null ? null : (int)$r['parent_id'], 'sort_order' => (int)$r['sort_order']); }, array_reverse($subTree));
+                    $folderMap = $refreshMap();
+                    $deletedF++;
+                } elseif ($op['op'] === 'delete_note') {
+                    // 删除便签：记完整快照用于撤销
+                    $st = $pdo->prepare("SELECT id, title, content, color, pinned, folder_id, sort_order FROM pn_notes WHERE id = ? AND user_id = ?");
+                    $st->execute(array($op['id'], $uid));
+                    $row = $st->fetch();
+                    if (!$row) continue;
+                    $pdo->prepare("DELETE FROM pn_notes WHERE id = ? AND user_id = ?")->execute(array($op['id'], $uid));
+                    $undo[] = array('undo' => 'create_note', 'note' => array(
+                        'id' => (int)$row['id'], 'title' => (string)$row['title'], 'content' => (string)$row['content'],
+                        'color' => (string)$row['color'], 'pinned' => (int)$row['pinned'],
+                        'folder_id' => $row['folder_id'] === null ? null : (int)$row['folder_id'], 'sort_order' => (int)$row['sort_order']
+                    ));
+                    unset($noteIds[(int)$op['id']]);   // 后续操作不再认这条便签
+                    $deletedN++;
+                } elseif ($op['op'] === 'sort_notes') {
+                    // 对目标文件夹下的直接子便签重排（按标题/标题长度/更新时间）
+                    $targetFid = $op['segments'] ? $folderMap[implode('/', $op['segments'])] : null;
+                    if ($op['segments'] && !isset($folderMap[implode('/', $op['segments'])])) {
+                        $skipped[] = array('op' => 'sort_notes', 'reason' => 'folder_not_found'); continue;
+                    }
+                    $st = $pdo->prepare("SELECT id, title, sort_order, updated_at FROM pn_notes WHERE user_id = ? AND folder_id <=> ? ORDER BY pinned DESC, sort_order, id");
+                    $st->execute(array($uid, $targetFid));
+                    $rows = $st->fetchAll();
+                    $oldOrder = array();
+                    foreach ($rows as $r) $oldOrder[] = array('id' => (int)$r['id'], 'sort_order' => (int)$r['sort_order']);
+                    $keyFunc = null;
+                    if ($op['by'] === 'title_len') {
+                        $keyFunc = function ($r) { $l = function_exists('mb_strlen') ? mb_strlen((string)$r['title'], 'UTF-8') : strlen((string)$r['title']); return array($l, (int)$r['id']); };
+                    } elseif ($op['by'] === 'updated') {
+                        $keyFunc = function ($r) { return array($r['updated_at'], (int)$r['id']); };
+                    } else {
+                        $keyFunc = function ($r) { return array((string)$r['title'], (int)$r['id']); };
+                    }
+                    $keys = array();
+                    foreach ($rows as $r) $keys[] = $keyFunc($r);
+                                        // 按 key 排（array_multisort 对字符串 key 用自然序）
+                    array_multisort($keys, SORT_NATURAL, $rows);
+                    if ($op['order'] === 'desc') $rows = array_reverse($rows);
+                    $i = 0;
+                    $upd = $pdo->prepare("UPDATE pn_notes SET sort_order = ? WHERE id = ? AND user_id = ?");
+                    foreach ($rows as $r) { $upd->execute(array($i++, (int)$r['id'], $uid)); }
+                    $undo[] = array('undo' => 'sort_notes', 'order' => $oldOrder);
+                    $sorted++;
+                } elseif ($op['op'] === 'color') {
+                    $st = $pdo->prepare("SELECT color FROM pn_notes WHERE id = ? AND user_id = ?");
+                    $st->execute(array($op['id'], $uid));
+                    $oldColor = $st->fetchColumn();
+                    if ($oldColor === false || $oldColor === $op['color']) continue;
+                    $pdo->prepare("UPDATE pn_notes SET color = ? WHERE id = ? AND user_id = ?")->execute(array($op['color'], $op['id'], $uid));
+                    $undo[] = array('undo' => 'color', 'note_id' => $op['id'], 'old_color' => (string)$oldColor);
+                    $colored++;
+                } elseif ($op['op'] === 'pin') {
+                    $st = $pdo->prepare("SELECT pinned FROM pn_notes WHERE id = ? AND user_id = ?");
+                    $st->execute(array($op['id'], $uid));
+                    $oldPin = $st->fetchColumn();
+                    $newPin = $op['pinned'] ? 1 : 0;
+                    if ($oldPin === false || (int)$oldPin === $newPin) continue;
+                    $pdo->prepare("UPDATE pn_notes SET pinned = ? WHERE id = ? AND user_id = ?")->execute(array($newPin, $op['id'], $uid));
+                    $undo[] = array('undo' => 'pin', 'note_id' => $op['id'], 'old_pinned' => (int)$oldPin);
+                    $pinned++;
+                }
+            }
+
+            // 溯源日志（undo 序列即可完整还原本批操作）
+            $logDetail = json_encode(array('ops' => $cleanOps, 'undo' => $undo, 'skipped' => $skipped), JSON_UNESCAPED_UNICODE);
+            $st = $pdo->prepare("INSERT INTO pn_ai_actions (user_id, action, detail, created_at) VALUES (?, 'classify', ?, ?)");
+            $st->execute(array($uid, $logDetail !== false ? $logDetail : json_encode(array('error' => 'log_encode_failed')), $now));
+
+            $pdo->commit();
+            jsonOut(array('success' => true, 'moved' => $moved, 'created' => $created, 'renamed' => $renamed, 'deleted_folders' => $deletedF, 'deleted_notes' => $deletedN, 'sorted' => $sorted, 'colored' => $colored, 'pinned' => $pinned, 'skipped' => $skipped));
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            jsonOut(array('success' => false, 'message' => '执行失败，未做任何改动'), 500);
+        }
+    }
+
+    // ================= AI 整理撤销（最近一批，支持 move/mkdir/rename） =================
+    if ($action === 'classify_undo') {
+        $pdo = getDB();
+        $st = $pdo->prepare("SELECT id, detail FROM pn_ai_actions WHERE user_id = ? AND action = 'classify' ORDER BY id DESC LIMIT 1");
+        $st->execute(array($uid));
+        $log = $st->fetch();
+        if (!$log) jsonOut(array('success' => false, 'message' => '没有可撤销的 AI 整理操作'));
+
+        $detail = json_decode((string)$log['detail'], true);
+        // 新协议：undo 序列；旧协议：restored 序列
+        $undoList = array();
+        if (is_array($detail) && isset($detail['undo']) && is_array($detail['undo'])) $undoList = $detail['undo'];
+        elseif (is_array($detail) && isset($detail['restored']) && is_array($detail['restored'])) {
+            foreach ($detail['restored'] as $r) {
+                if (is_array($r)) $undoList[] = array('undo' => 'move', 'note_id' => isset($r['note_id']) ? $r['note_id'] : 0, 'from_folder_id' => isset($r['from_folder_id']) ? $r['from_folder_id'] : null);
+            }
+        }
+        if (empty($undoList)) jsonOut(array('success' => false, 'message' => '该批操作没有可还原的条目'));
+
+        $pdo->beginTransaction();
+        try {
+            $restoredCount = 0;
+            // 逆序还原（undo 序列是执行顺序，倒着回滚才能正确处理嵌套创建）
+            for ($i = count($undoList) - 1; $i >= 0; $i--) {
+                $u = $undoList[$i];
+                if (!is_array($u) || !isset($u['undo'])) continue;
+                if ($u['undo'] === 'move') {
+                    $nid = (int)$u['note_id'];
+                    $fromFid = ($u['from_folder_id'] === null || !isset($u['from_folder_id'])) ? null : (int)$u['from_folder_id'];
+                    if ($nid <= 0) continue;
+                    $st = $pdo->prepare("SELECT id FROM pn_notes WHERE id = ? AND user_id = ?");
+                    $st->execute(array($nid, $uid));
+                    if (!$st->fetch()) continue;
+                    $st = $pdo->prepare("UPDATE pn_notes SET folder_id = ?, updated_at = NOW() WHERE id = ? AND user_id = ?");
+                    $st->execute(array($fromFid, $nid, $uid));
+                    $restoredCount++;
+                } elseif ($u['undo'] === 'rename') {
+                    $fid = (int)$u['folder_id'];
+                    $st = $pdo->prepare("UPDATE pn_folders SET name = ? WHERE id = ? AND user_id = ?");
+                    $st->execute(array((string)$u['old_name'], $fid, $uid));
+                    $restoredCount++;
+                } elseif ($u['undo'] === 'rmdir') {
+                    // 删除本批新建的文件夹：内容上移一级（与手动删文件夹一致，绝不丢便签）
+                    $fid = (int)$u['folder_id'];
+                    $st = $pdo->prepare("SELECT parent_id FROM pn_folders WHERE id = ? AND user_id = ?");
+                    $st->execute(array($fid, $uid));
+                    $parentId = $st->fetchColumn();
+                    if ($parentId === false) continue;   // 已被手动删除
+                    $parentId = ($parentId === null) ? null : (int)$parentId;
+                    $pdo->prepare("UPDATE pn_notes SET folder_id = ? WHERE folder_id = ? AND user_id = ?")->execute(array($parentId, $fid, $uid));
+                    $pdo->prepare("UPDATE pn_folders SET parent_id = ? WHERE parent_id = ? AND user_id = ?")->execute(array($parentId, $fid, $uid));
+                    $pdo->prepare("DELETE FROM pn_folders WHERE id = ? AND user_id = ?")->execute(array($fid, $uid));
+                    $restoredCount++;
+                } elseif ($u['undo'] === 'delete_folder') {
+                    // 重建被删的整个子树（folders 快照已按逆序排列：父级先重建），再还原便签归属
+                    if (!empty($u['folders']) && is_array($u['folders'])) {
+                        $ins = $pdo->prepare("INSERT INTO pn_folders (id, user_id, parent_id, name, sort_order, created_at) VALUES (?, ?, ?, ?, ?, NOW())
+                                              ON DUPLICATE KEY UPDATE name = VALUES(name), parent_id = VALUES(parent_id)");
+                        foreach ($u['folders'] as $f) {
+                            $ins->execute(array((int)$f['id'], $uid, $f['parent_id'], (string)$f['name'], (int)$f['sort_order']));
+                        }
+                    }
+                    if (!empty($u['note_moves']) && is_array($u['note_moves'])) {
+                        $upd = $pdo->prepare("UPDATE pn_notes SET folder_id = ? WHERE id = ? AND user_id = ?");
+                        foreach ($u['note_moves'] as $nm) {
+                            $upd->execute(array($nm['folder_id'], (int)$nm['id'], $uid));
+                        }
+                    }
+                    $restoredCount++;
+                } elseif ($u['undo'] === 'create_note') {
+                    // 重建被删便签（保留原 id）
+                    $n = $u['note'];
+                    $pdo->prepare("INSERT INTO pn_notes (id, user_id, title, content, color, pinned, folder_id, sort_order, created_at, updated_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                                   ON DUPLICATE KEY UPDATE title = VALUES(title)")
+                        ->execute(array((int)$n['id'], $uid, (string)$n['title'], (string)$n['content'], (string)$n['color'], (int)$n['pinned'], $n['folder_id'], (int)$n['sort_order']));
+                    $restoredCount++;
+                } elseif ($u['undo'] === 'sort_notes') {
+                    $upd = $pdo->prepare("UPDATE pn_notes SET sort_order = ? WHERE id = ? AND user_id = ?");
+                    foreach ($u['order'] as $o2) { $upd->execute(array((int)$o2['sort_order'], (int)$o2['id'], $uid)); }
+                    $restoredCount++;
+                } elseif ($u['undo'] === 'color') {
+                    $pdo->prepare("UPDATE pn_notes SET color = ? WHERE id = ? AND user_id = ?")
+                        ->execute(array((string)$u['old_color'], (int)$u['note_id'], $uid));
+                    $restoredCount++;
+                } elseif ($u['undo'] === 'pin') {
+                    $pdo->prepare("UPDATE pn_notes SET pinned = ? WHERE id = ? AND user_id = ?")
+                        ->execute(array((int)$u['old_pinned'], (int)$u['note_id'], $uid));
+                    $restoredCount++;
+                }
+            }
+            // 删除这条溯源日志
+            $st = $pdo->prepare("DELETE FROM pn_ai_actions WHERE id = ?");
+            $st->execute(array((int)$log['id']));
+            $pdo->commit();
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            jsonOut(array('success' => false, 'message' => '撤销执行失败'), 500);
+        }
+
+        // 是否还有同用户的可撤销记录
+        $st = $pdo->prepare("SELECT COUNT(*) FROM pn_ai_actions WHERE user_id = ? AND action = 'classify'");
+        $st->execute(array($uid));
+        $still = (int)$st->fetchColumn() > 0;
+
+        jsonOut(array('success' => true, 'restored' => $restoredCount, 'still_more' => $still));
+    }
+
+    // ================= AI 整理状态（是否有待撤销） =================
+    if ($action === 'classify_status') {
+        $pdo = getDB();
+        $st = $pdo->prepare("SELECT COUNT(*) FROM pn_ai_actions WHERE user_id = ? AND action = 'classify'");
+        $st->execute(array($uid));
+        $has = (int)$st->fetchColumn() > 0;
+        jsonOut(array('success' => true, 'has_pending' => $has));
     }
 
     // ================= 用户偏好：读取 / 保存 =================
@@ -707,7 +1354,13 @@ try {
             . "4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n"
             . "5. 便签标题不在你负责范围内，只编辑正文\n"
             . "6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n"
-            . "7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问";
+            . "7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问\n"
+            . "【工具调用（可选，仅限需要查看其他便签或文件夹内容时）】\n"
+            . "你可以调用工具查看文件夹结构或某条便签的内容（只读），调用格式：\n"
+            . "<<<TOOL>>>\n"
+            . "{\"name\":\"list_folder\",\"path\":\"工作/项目A\"}   —— 列出该路径下的子文件夹和便签清单（主页填 \"主页\"）\n"
+            . "{\"name\":\"read_note\",\"id\":123}   —— 查看 id 为 123 的便签完整内容\n"
+            . "注意：工具调用的那一轮输出必须是全部内容；收到结果后最多还需要连续调用 4 次，最后必须产出 A/B/C 编辑结果。没有需要查看的内容时不要调用工具。";
         if ($style !== '') {
             $system .= "\n【用户风格偏好】在不违背上述硬性规则的前提下，尽量按以下风格完成编辑：" . $style;
         }
@@ -844,6 +1497,7 @@ try {
         $maxAttempts = 3;
         $lastErrText = '';
         $result = null;
+        $toolRounds = 0;   // 本轮工具调用次数（上限 5）
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             sseSend('phase', array('t' => $attempt > 1 ? '🔁 自动纠错第 ' . ($attempt - 1) . ' 次…' : '🤖 正在生成…'));
             $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta);
@@ -858,6 +1512,21 @@ try {
             $text = trim($r['text']);
             if (preg_match('/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i', $text, $m)) {
                 $text = trim($m[1]);
+            }
+            // ===== 工具调用块：<<<TOOL>>>{json}<<<END>>> =====
+            if ($toolRounds < 5 && preg_match('/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i', $text, $tm)) {
+                $toolJson = trim($tm[1]);
+                $toolCall = json_decode($toolJson, true);
+                if (is_array($toolCall) && isset($toolCall['name'])) {
+                    $toolRounds++;
+                    sseSend('phase', array('t' => '🔧 工具调用：' . (string)$toolCall['name'] . '...'));
+                    $toolResult = aiRunTool((string)$toolCall['name'], $toolCall, $pdo, $uid);
+                    // 工具结果回喂
+                    $messages[] = array('role' => 'assistant', 'content' => $text);
+                    $messages[] = array('role' => 'user', 'content' => '【工具结果】' . (string)$toolCall['name'] . "\n" . $toolResult);
+                    continue;   // 工具回复后让 AI 继续生成
+                }
+                // JSON 解析失败：当作普通文本继续处理
             }
             // 澄清提问：拿不准就继续问，轮数不限（每轮需用户手动回答，人工熔断）
             $clarify = aiParseClarify($text);

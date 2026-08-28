@@ -1,14 +1,15 @@
-﻿<?php
+<?php
 /**
  * 数据库连接配置 + 自愈式建表
  * Pixel Notes - 像素便签系统
  */
 
-define('DB_HOST', 'localhost');
-define('DB_PORT', '3306');
-define('DB_NAME', 'pixel_notes');
-define('DB_USER', 'pixel_notes');
-define('DB_PASS', 'CHANGE_ME');
+// 优先读环境变量（本地便携环境用），未设置则走生产常量——生产行为零变化
+define('DB_HOST', getenv('PIXEL_DB_HOST') !== false ? getenv('PIXEL_DB_HOST') : 'localhost');
+define('DB_PORT', getenv('PIXEL_DB_PORT') !== false ? getenv('PIXEL_DB_PORT') : '3306');
+define('DB_NAME', getenv('PIXEL_DB_NAME') !== false ? getenv('PIXEL_DB_NAME') : 'CHANGE_ME');
+define('DB_USER', getenv('PIXEL_DB_USER') !== false ? getenv('PIXEL_DB_USER') : 'CHANGE_ME');
+define('DB_PASS', getenv('PIXEL_DB_PASS') !== false ? getenv('PIXEL_DB_PASS') : 'CHANGE_ME');
 
 function getDB() {
     static $pdo = null;
@@ -59,6 +60,7 @@ function ensureTables(&$error = null) {
             `color` VARCHAR(20) NOT NULL DEFAULT 'yellow',
             `pinned` TINYINT(1) NOT NULL DEFAULT 0,
             `sort_order` INT NOT NULL DEFAULT 0,
+            `folder_id` INT UNSIGNED NULL DEFAULT NULL,
             `share_token` VARCHAR(36) NOT NULL DEFAULT '',
             `share_until` INT UNSIGNED NOT NULL DEFAULT 0,
             `created_at` DATETIME NOT NULL,
@@ -139,6 +141,29 @@ function ensureTables(&$error = null) {
             KEY `idx_created` (`created_at`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
+        // 便签文件夹（支持多层嵌套，parent_id NULL = 根层级）
+        $sqlFolders = "CREATE TABLE IF NOT EXISTS `pn_folders` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `user_id` INT UNSIGNED NOT NULL,
+            `parent_id` INT UNSIGNED NULL DEFAULT NULL,
+            `name` VARCHAR(100) NOT NULL,
+            `sort_order` INT NOT NULL DEFAULT 0,
+            `created_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_user_parent` (`user_id`, `parent_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
+        // AI 操作溯源日志（自动分类等，detail 为 JSON 明细，支持撤销）
+        $sqlAiActions = "CREATE TABLE IF NOT EXISTS `pn_ai_actions` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `user_id` INT UNSIGNED NOT NULL,
+            `action` VARCHAR(30) NOT NULL,
+            `detail` TEXT NOT NULL,
+            `created_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_user` (`user_id`, `created_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
         // 自愈：给已有 pn_notes 表补充 sort_order / share 列（兼容旧表）
         // 使用临时静默模式，不抛出任何异常
         $oldMode = $pdo->getAttribute(PDO::ATTR_ERRMODE);
@@ -161,6 +186,9 @@ function ensureTables(&$error = null) {
         $pdo->exec("ALTER TABLE `pn_user_ai_prefs` ADD COLUMN `own_body_enabled` TINYINT(1) NOT NULL DEFAULT 0");
         $pdo->exec("ALTER TABLE `pn_user_ai_prefs` ADD COLUMN `own_body_key` VARCHAR(64) NOT NULL DEFAULT ''");
         $pdo->exec("ALTER TABLE `pn_user_ai_prefs` ADD COLUMN `own_body_json` VARCHAR(500) NOT NULL DEFAULT ''");
+        // 自愈：便签文件夹（folder_id NULL = 主页）
+        $pdo->exec("ALTER TABLE `pn_notes` ADD COLUMN `folder_id` INT UNSIGNED NULL DEFAULT NULL");
+        $pdo->exec("ALTER TABLE `pn_notes` ADD INDEX `idx_folder` (`user_id`, `folder_id`)");
         $pdo->setAttribute(PDO::ATTR_ERRMODE, $oldMode);
 
         try {
@@ -178,6 +206,8 @@ function ensureTables(&$error = null) {
             $pdo->exec($sqlAiKeys);
             $pdo->exec($sqlAiPrefs);
             $pdo->exec($sqlEmailCodes);
+            $pdo->exec($sqlFolders);
+            $pdo->exec($sqlAiActions);
         } catch (PDOException $e) {
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlUsers));
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlNotes));
@@ -186,6 +216,8 @@ function ensureTables(&$error = null) {
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlAiKeys));
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlAiPrefs));
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlEmailCodes));
+            $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlFolders));
+            $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlAiActions));
         }
 
         $done = true;
