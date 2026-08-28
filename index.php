@@ -101,6 +101,6 @@ if (!isset($_SESSION['user_id'])) {
     <script src="js/md.js?v=35"></script>
     <script src="js/Sortable.min.js"></script>
     <script src="js/ai-direct.js?v=7"></script>
-    <script src="js/app.js?v=53"></script>
+    <script src="js/app.js?v=54"></script>
 </body>
 </html>

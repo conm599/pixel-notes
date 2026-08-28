@@ -1200,6 +1200,10 @@
     var status = mkEl('div', 'ai-status');
     status.style.display = 'none';
 
+    // ---- 澄清提问态：AI 拿不准时逐题回答，可多轮 ----
+    var clarifyWrap = mkEl('div', 'ai-clarify');
+    clarifyWrap.style.display = 'none';
+
     // ---- 结果确认态 ----
     var aiResult = null;
     var resultWrap = mkEl('div', 'ai-result');
@@ -1349,12 +1353,76 @@
       regenBtn.style.display = 'none';
     }
 
-    runBtn.addEventListener('click', async function () {
-      if (runBtn.disabled) return;
+    // 澄清提问态：AI 拿不准时逐题展示输入框，回答后带历史继续（最多 2 轮）
+    function showClarifyMode(questions, existingRounds) {
+      hideClarify();
+      hint.style.display = 'none';
+      ta.style.display = 'none';
+      ta.disabled = true;
+      status.style.display = 'none';
+      resultWrap.style.display = 'none';
+      runBtn.style.display = 'none';
+      acceptBtn.style.display = 'none';
+      regenBtn.style.display = 'none';
+      var clarifyMax = 2;
+      var roundNo = (existingRounds.length + 1);
+      var tip = mkEl('div', 'ai-clarify-tip');
+      tip.textContent = '🤔 AI 说它还拿不准，需要先向你确认 ' + questions.length + ' 个问题（第 ' + roundNo + '/' + clarifyMax + ' 轮）。回答后继续生成。';
+      clarifyWrap.appendChild(tip);
+      var inputs = [];
+      questions.forEach(function (q, i) {
+        var lab = mkEl('label', 'ai-clarify-q', (i + 1) + '. ' + q);
+        var inp = document.createElement('textarea');
+        inp.className = 'ai-instruction ai-clarify-answer';
+        inp.placeholder = '输入你的回答…';
+        inp.setAttribute('maxlength', '500');
+        clarifyWrap.appendChild(lab);
+        clarifyWrap.appendChild(inp);
+        inputs.push({ q: q, inp: inp });
+      });
+      var bRow = mkEl('div', 'ai-clarify-btns');
+      var submit = mkBtn('✅ 提交回答，继续生成');
+      submit.className = 'btn btn-primary btn-xs';
+      var abort = mkBtn('取消');
+      abort.className = 'btn btn-outline btn-xs';
+      bRow.appendChild(submit);
+      bRow.appendChild(abort);
+      clarifyWrap.appendChild(bRow);
+      clarifyWrap.style.display = '';
+      submit.addEventListener('click', function () {
+        var next = existingRounds.slice();
+        var hasEmpty = false;
+        inputs.forEach(function (it) {
+          var a = it.inp.value.trim();
+          if (!a) hasEmpty = true;
+          next.push({ q: it.q, a: a });
+        });
+        if (hasEmpty) {
+          showToast('⚠️ 请回答全部问题后再提交', 'error');
+          return;
+        }
+        hideClarify();
+        runAiFlow(next);
+      });
+      abort.addEventListener('click', function () {
+        hideClarify();
+        showInputMode();
+      });
+      setTimeout(function () { if (inputs[0]) inputs[0].inp.focus(); }, 30);
+    }
+
+    function hideClarify() {
+      clarifyWrap.innerHTML = '';
+      clarifyWrap.style.display = 'none';
+    }
+
+    // 主流程：可携带澄清历史多轮执行
+    async function runAiFlow(clarifyRounds) {
       var instruction = ta.value.trim();
       if (!instruction) {
         showToast('⚠️ 请先描述你想让 AI 做什么', 'error');
         ta.focus();
+        runBtn.disabled = false;
         return;
       }
       if (needPolicy()) {
@@ -1363,7 +1431,9 @@
       }
       var prefs = loadAiPrefs();
       runBtn.disabled = true;
+      runBtn.style.display = '';
       ta.disabled = true;
+      ta.style.display = '';
       runBtn.textContent = 'AI 编辑中';
       var dots = 0;
       var dotTimer = setInterval(function () {
@@ -1372,6 +1442,22 @@
       }, 400);
       status.style.display = 'none';
       var ok = false;
+      function clearUp() {
+        clearInterval(dotTimer);
+        if (!ok && !document.querySelector('.policy-modal')) {
+          runBtn.disabled = false;
+          ta.disabled = false;
+          runBtn.textContent = '🤖 开始编辑';
+        }
+      }
+      // 澄清响应：需要用户回答时转入澄清态（本次请求不计配额）
+      function handleClarify(r) {
+        if (r && r.need_clarify && Array.isArray(r.questions) && r.questions.length) {
+          showClarifyMode(r.questions, r.clarifyRounds || clarifyRounds);
+          return true;
+        }
+        return false;
+      }
       // 自有代理直连模式：请求完全不经过平台服务器（独立模块 ai-direct.js 处理）
       if (prefs.mode === 'own' && prefs.ownProxy && window.AIDirect) {
         try {
@@ -1388,8 +1474,11 @@
             deepThink: prefs.ownDeepThink,
             bodyEnabled: prefs.ownBodyEnabled,
             bodyKey: prefs.ownBodyKey,
-            bodyJson: prefs.ownBodyJson
+            bodyJson: prefs.ownBodyJson,
+            clarifyRounds: clarifyRounds
           });
+          clearUp();
+          if (handleClarify(r)) return;
           if (r.success && typeof r.content === 'string') {
             aiResult = {
               original: newContent.value,
@@ -1410,14 +1499,9 @@
             showToast('❌ ' + (r.message || 'AI 编辑失败'), 'error');
           }
         } catch (e) {
+          clearUp();
           status.textContent = '❌ ' + String(e.message || '直连失败');
           status.style.display = 'block';
-        }
-        clearInterval(dotTimer);
-        if (!ok) {
-          runBtn.disabled = false;
-          ta.disabled = false;
-          runBtn.textContent = '🤖 开始编辑';
         }
         return;
       }
@@ -1428,6 +1512,7 @@
           content: newContent.value,
           instruction: instruction,
           policyVersion: AI_POLICY_VERSION,
+          clarifyRounds: clarifyRounds,
           prefs: {
             mode: prefs.mode,
             platformKey: prefs.platformKey,
@@ -1442,8 +1527,11 @@
             bodyJson: prefs.ownBodyJson
           }
         });
+        clearUp();
         if (r.need_policy) {
           openPolicyDialog(function () { runBtn.click(); });
+        } else if (handleClarify(r)) {
+          return;
         } else if (r.success && typeof r.content === 'string') {
           aiResult = {
             original: newContent.value,
@@ -1466,18 +1554,15 @@
           showToast('❌ ' + (r.message || 'AI 编辑失败'), 'error');
         }
       } catch (e) {
+        clearUp();
         var msg = String(e.message || '网络错误');
         status.textContent = '❌ ' + msg;
         status.style.display = 'block';
         if (msg.indexOf('未登录') === -1) showToast('❌ ' + msg, 'error');
       }
-      clearInterval(dotTimer);
-      if (!ok && !document.querySelector('.policy-modal')) {
-        runBtn.disabled = false;
-        ta.disabled = false;
-        runBtn.textContent = '🤖 开始编辑';
-      }
-    });
+    }
+
+    runBtn.addEventListener('click', function () { runAiFlow([]); });
 
     acceptBtn.addEventListener('click', function () {
       if (!aiResult) return;
@@ -1516,6 +1601,7 @@
     body.appendChild(usageBar);
     body.appendChild(ta);
     body.appendChild(status);
+    body.appendChild(clarifyWrap);
     body.appendChild(resultWrap);
     modal.appendChild(body);
     modal.appendChild(foot);
