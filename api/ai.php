@@ -5,7 +5,7 @@
  * action=test   : 管理员测试上游连通性
  * action=prefs  : 读取/保存用户 AI 偏好（跨端同步，用户主动勾选）
  *
- * 实现以 protocol.md v1 为准（分段参数 / prompt 模板 / 纠错话术的唯一事实源），改动需与 js/ai-direct.js 同步
+ * 实现以 protocol.md v2 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 js/ai-direct.js 同步
  *
  * 安全设计：
  * - 管理员的上游 Key 存于 pn_settings，永不下发浏览器
@@ -56,6 +56,27 @@ function aiChunkText($text) {
 }
 define('AI_POLICY_VERSION', 1);
 define('AI_OWN_DAILY_LIMIT', 500);
+define('AI_CLARIFY_MAX_ROUNDS', 2);
+define('AI_CLARIFY_MAX_QUESTIONS', 3);
+
+/**
+ * 解析 AI 输出中的澄清提问块 <<<CLARIFY>>>...<<<END>>>，返回问题数组（无则空数组）
+ */
+function aiParseClarify($text) {
+    $questions = array();
+    if (is_string($text) && preg_match('/<<<CLARIFY>>>\s*\n([\s\S]*?)\n?<<<END>>>/i', $text, $m)) {
+        foreach (explode("\n", trim($m[1])) as $line) {
+            $line = trim($line);
+            if ($line === '') continue;
+            $line = preg_replace('/^\s*[\d\-*.#)・•]+[.\s]*/', '', $line); // 去列表序号
+            $line = trim($line);
+            if ($line !== '' && mb_strlen($line, 'UTF-8') > 200) $line = mb_substr($line, 0, 200, 'UTF-8');
+            if (count($questions) >= AI_CLARIFY_MAX_QUESTIONS) break;
+            if ($line !== '') $questions[] = $line;
+        }
+    }
+    return $questions;
+}
 
 function jsonOut($data, $code = 200) {
     http_response_code($code);
@@ -120,6 +141,18 @@ function aiEndpointHostSafe($url) {
         if (aiIsInternalIp($ip)) return false;
     }
     return true;
+}
+
+/**
+ * 把澄清问答历史注入对话（assistant 提问块 + user 回答），使 AI 见过前文
+ */
+function aiClarifyContext($rounds) {
+    $msgs = array();
+    foreach ($rounds as $r) {
+        $msgs[] = array('role' => 'assistant', 'content' => "<<<CLARIFY>>>\n" . $r['q'] . "\n<<<END>>>");
+        $msgs[] = array('role' => 'user', 'content' => '回答：' . $r['a']);
+    }
+    return $msgs;
 }
 
 /**
@@ -392,6 +425,20 @@ try {
         $title = isset($input['title']) ? trim((string)$input['title']) : '';
         $content = isset($input['content']) ? (string)$input['content'] : '';
         $instruction = isset($input['instruction']) ? trim((string)$input['instruction']) : '';
+        // 澄清问答历史：[{q, a}, ...]，最多 AI_CLARIFY_MAX_ROUNDS 轮，每轮 q/a 限长
+        $clarifyRounds = array();
+        $cr = (isset($input['clarifyRounds']) && is_array($input['clarifyRounds'])) ? $input['clarifyRounds'] : array();
+        foreach ($cr as $round) {
+            if (!is_array($round)) continue;
+            $q = isset($round['q']) ? trim((string)$round['q']) : '';
+            $a = isset($round['a']) ? trim((string)$round['a']) : '';
+            if ($q !== '') {
+                $q = function_exists('mb_substr') ? mb_substr($q, 0, 200, 'UTF-8') : substr($q, 0, 400);
+                $a = function_exists('mb_substr') ? mb_substr($a, 0, 500, 'UTF-8') : substr($a, 0, 1000);
+                $clarifyRounds[] = array('q' => $q, 'a' => $a);
+            }
+            if (count($clarifyRounds) >= AI_CLARIFY_MAX_ROUNDS) break;
+        }
         $prefs = isset($input['prefs']) && is_array($input['prefs']) ? $input['prefs'] : array();
         $style = isset($prefs['style']) ? trim((string)$prefs['style']) : '';
         // 时间感知：前端传用户浏览器当前时间（服务器不做任何时区假设）
@@ -411,9 +458,7 @@ try {
         if ($clen > AI_MAX_CONTENT) {
             jsonOut(array('success' => false, 'message' => '便签内容太长，AI 无法处理'));
         }
-        if ($title === '' && trim($content) === '' && strpos($instruction, '写') === false && strpos($instruction, '生成') === false) {
-            jsonOut(array('success' => false, 'message' => '便签是空的，请先写点内容，或让 AI「生成/写」点东西'));
-        }
+        // 空便签不拦截：创作类指令由 B 格式直接创作；编辑类指令拿不准时由澄清提问确认（protocol.md v2）
 
         // ===== 选择上游：平台密钥 or 用户自有 Key =====
         $mode = (isset($prefs['mode']) && $prefs['mode'] === 'own') ? 'own' : 'platform';
@@ -504,7 +549,7 @@ try {
         }
 
         $system = "你是一个便签编辑代理。用户会给你一篇 Markdown 便签（可能为空）和一条编辑指令，你要精准地完成编辑。\n"
-            . "【输出格式（二选一）】\n"
+            . "【输出格式（三选一）】\n"
             . "A. 局部修改（默认首选）：只改动需要改的地方。每个改动输出一个替换块，格式严格如下：\n"
             . "<<<SEARCH>>>\n"
             . "（便签原文中要被修改的那段文字，必须与原文逐字一致，包括空格、换行、标点）\n"
@@ -513,13 +558,18 @@ try {
             . "<<<END>>>\n"
             . "可以有多个替换块，按顺序排列。SEARCH 段尽量短且在全文中唯一。\n"
             . "B. 全文重写：仅当指令要求整体重构、全文翻译、全文总结、从零创作时，才直接输出完整的新便签全文。\n"
+            . "C. 澄清提问（当且仅当指令有歧义、缺关键信息或者你拿不准用户到底要改成什么样时使用，优先级最高，出现时必须只输出这个）：\n"
+            . "<<<CLARIFY>>>\n"
+            . "（一个问题一行，最多 3 个，简洁具体；不要重复已经问过的问题）\n"
+            . "<<<END>>>\n"
+            . "拿不准就必须提问澄清，绝对不能猜、不能编造，直到用户回答后信息足够再执行 A 或 B。\n"
             . "【硬性规则】\n"
             . "1. 绝对禁止删除、改写、移动用户已有的链接、URL、HTML 标签、图片/音频/视频/iframe 嵌入和代码块，除非指令明确要求处理它们\n"
             . "2. 用户没让改的部分必须一字不动，只做最小限度的必要修改，禁止顺手润色或重排\n"
             . "3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出\n"
             . "4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n"
             . "5. 便签标题不在你负责范围内，只编辑正文\n"
-            . "6. 便签内容为空且指令是创作类时，用 B 格式直接创作";
+            . "6. 便签内容为空时：指令是创作新内容就直接用 B 格式创作；指令像是要编辑已有内容但你无从下手时，用 C 澄清提问确认用户想要什么";
         if ($style !== '') {
             $system .= "\n【用户风格偏好】在不违背上述硬性规则的前提下，尽量按以下风格完成编辑：" . $style;
         }
@@ -555,6 +605,10 @@ try {
                         . "【本段内容】\n" . ($ck !== '' ? $ck : '(空)') . "\n\n"
                         . "【编辑指令】" . $instruction),
                 );
+                // 注入澄清问答历史（若有），AI 见过前文不再重复提问
+                if (!empty($clarifyRounds)) {
+                    foreach (aiClarifyContext($clarifyRounds) as $m) $segMsgs[] = $m;
+                }
                 for ($att = 1; $att <= 2; $att++) {
                     $r = aiChat($url, $key, $model, $segMsgs, 16000, $extra);
                     if (!$r['ok']) {
@@ -564,6 +618,16 @@ try {
 
                     $text = trim($r['text']);
                     if (preg_match('/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i', $text, $m)) $text = trim($m[1]);
+                    // 澄清提问：拿不准时向用户提问，最多 AI_CLARIFY_MAX_ROUNDS 轮
+                    $clarify = aiParseClarify($text);
+                    if (!empty($clarify)) {
+                        if (count($clarifyRounds) >= AI_CLARIFY_MAX_ROUNDS) {
+                            jsonOut(array('success' => false, 'message' => 'AI 仍在追问，已达到最大澄清轮数（' . AI_CLARIFY_MAX_ROUNDS . ' 轮）。请直接补充细节后重新发起编辑', 'usage' => $usage));
+                        }
+                        jsonOut(array('success' => false, 'need_clarify' => true, 'questions' => $clarify,
+                                      'clarifyRounds' => $clarifyRounds, 'clarifyMax' => AI_CLARIFY_MAX_ROUNDS,
+                                      'usage' => $usage));
+                    }
                     if ($text === '') {
                         if ($att < 2) {
                             $segMsgs[] = array('role' => 'assistant', 'content' => '（上一轮返回为空）');
@@ -631,6 +695,10 @@ try {
             array('role' => 'system', 'content' => $system),
             array('role' => 'user', 'content' => $userMsg),
         );
+        // 注入澄清问答历史（若有），AI 见过前文不再重复提问
+        if (!empty($clarifyRounds)) {
+            foreach (aiClarifyContext($clarifyRounds) as $m) $messages[] = $m;
+        }
 
         // 自纠错循环：SEARCH 块匹配失败时，带上上下文告诉 AI 哪里错了，最多 3 轮
         $maxAttempts = 3;
@@ -649,6 +717,16 @@ try {
             $text = trim($r['text']);
             if (preg_match('/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i', $text, $m)) {
                 $text = trim($m[1]);
+            }
+            // 澄清提问：拿不准时向用户提问，最多 AI_CLARIFY_MAX_ROUNDS 轮
+            $clarify = aiParseClarify($text);
+            if (!empty($clarify)) {
+                if (count($clarifyRounds) >= AI_CLARIFY_MAX_ROUNDS) {
+                    jsonOut(array('success' => false, 'message' => 'AI 仍在追问，已达到最大澄清轮数（' . AI_CLARIFY_MAX_ROUNDS . ' 轮）。请直接补充细节后重新发起编辑', 'usage' => $usage));
+                }
+                jsonOut(array('success' => false, 'need_clarify' => true, 'questions' => $clarify,
+                              'clarifyRounds' => $clarifyRounds, 'clarifyMax' => AI_CLARIFY_MAX_ROUNDS,
+                              'usage' => $usage));
             }
             if ($text === '') {
                 $lastErrText = 'AI 返回了空内容';
