@@ -578,6 +578,16 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
   background: rgba(255, 68, 102, 0.08); word-break: break-all;
 }
 
+/* 长按对调（v6.8） */
+.note-card { -webkit-touch-callout: none; }
+.note-card.lp-pressing { user-select: none; -webkit-user-select: none; }
+.note-card.swap-armed {
+  outline: 3px dashed var(--accent);
+  outline-offset: 2px;
+  animation: swap-pulse 1s steps(2) infinite;
+}
+@keyframes swap-pulse { 50% { outline-color: var(--accent2); } }
+
 /* AI 流式生成预览（protocol v5） */
 .ai-stream {
   margin-top: 10px; max-height: 240px; overflow-y: auto;

@@ -209,6 +209,7 @@
     var nd = mkEl('div', 'note-content md-body md-static');
     nd.innerHTML = window.PixelMD.render(note.content);
     nd.addEventListener('click', function (e) {
+      if (swapArmedId !== null) return;   // 长按对调选中态：点击不打开
       if (e.target && e.target.closest && e.target.closest('a')) return;
       if (nd.classList.contains('clamped')) {
         openModal(note.id, card);       // 长文 → 弹窗阅读
@@ -262,6 +263,7 @@
         rm = mkBtn('📖 阅读全文', '点击查看完整内容');
         rm.className = 'read-more';
         rm.addEventListener('click', function () {
+          if (swapArmedId !== null) return;   // 长按对调选中态：点击不打开
           openModal(parseInt(card.getAttribute('data-id')), card);
         });
         nd.insertAdjacentElement('afterend', rm);
@@ -2287,7 +2289,120 @@
     });
   }
 
+  // ============== 长按对调：长按便签 1.5s 选中 → 长按另一便签 1s → 两者位置对调 ==============
+  var swapArmedId = null;
+  var lpTimer = null;
+
+  function clearLpTimer() {
+    if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  }
+  function clearSwapArmed() {
+    var prev = notesGrid.querySelector('.note-card.swap-armed');
+    if (prev) prev.classList.remove('swap-armed');
+    swapArmedId = null;
+    clearLpTimer();
+  }
+  function setSwapArmed(id, card) {
+    clearSwapArmed();
+    swapArmedId = id;
+    card.classList.add('swap-armed');
+    showToast('✅ 已选中，长按另一个便签与它对调位置（点空白处或 Esc 取消）', 'success');
+  }
+  function saveCardOrder() {
+    var cards = notesGrid.querySelectorAll('.note-card');
+    var reorder = [];
+    cards.forEach(function (card, i) {
+      reorder.push({ id: parseInt(card.getAttribute('data-id')), sort_order: i });
+    });
+    api('PUT', { reorder: reorder }).then(function () {
+      showToast('🔄 位置已对调并保存', 'success');
+    }).catch(function () {
+      showToast('❌ 位置保存失败，正在刷新', 'error');
+      loadNotes();
+    });
+  }
+  function swapCards(idA, idB) {
+    var cardA = notesGrid.querySelector('.note-card[data-id="' + idA + '"]');
+    var cardB = notesGrid.querySelector('.note-card[data-id="' + idB + '"]');
+    if (!cardA || !cardB) { clearSwapArmed(); return; }
+    var na = cardA._noteData, nb = cardB._noteData;
+    if (na && nb && (!!na.pinned) !== (!!nb.pinned)) {
+      showToast('⚠️ 置顶便签只能和置顶便签对调', 'error');
+      clearSwapArmed();
+      return;
+    }
+    // 任意两节点对调：占位节点法
+    var placeholder = document.createElement('div');
+    notesGrid.insertBefore(placeholder, cardA);
+    notesGrid.insertBefore(cardA, cardB);
+    notesGrid.insertBefore(cardB, placeholder);
+    notesGrid.removeChild(placeholder);
+    clearSwapArmed();
+    saveCardOrder();
+  }
+  function bindLongPressSwap() {
+    // 选中态下，点击任何非卡片区域取消
+    document.addEventListener('pointerdown', function (e) {
+      if (swapArmedId !== null && !(e.target.closest && e.target.closest('.note-card'))) {
+        clearSwapArmed();
+      }
+    });
+    // 触屏长按的系统菜单 / 桌面右键菜单抑制（卡片有自己的按钮，原生菜单无用）
+    notesGrid.addEventListener('contextmenu', function (e) {
+      if (e.target.closest && e.target.closest('.note-card')) e.preventDefault();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') clearSwapArmed();
+    });
+    // 事件委托绑一次，卡片重渲染不受影响
+    notesGrid.addEventListener('pointerdown', function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      var card = e.target.closest ? e.target.closest('.note-card') : null;
+      if (!card) return;
+      // 按钮 / 可编辑区域上不触发长按（编辑、置顶等按钮照常工作）
+      if (e.target.closest('button, a, input, textarea, .note-actions, .read-more, [contenteditable="true"]')) return;
+      var id = parseInt(card.getAttribute('data-id'));
+      if (isNaN(id)) return;
+      var sx = e.clientX, sy = e.clientY;
+      card.classList.add('lp-pressing');   // 按住期间禁文字选中
+      clearLpTimer();
+      lpTimer = setTimeout(function () {
+        lpTimer = null;
+        card.classList.remove('lp-pressing');
+        if (swapArmedId === null) {
+          setSwapArmed(id, card);
+        } else if (swapArmedId === id) {
+          clearSwapArmed();                // 再长按同一张 = 取消选中
+          showToast('已取消选中', 'success');
+        } else {
+          swapCards(swapArmedId, id);
+        }
+      }, swapArmedId === null ? 1500 : 1000);
+      var onMove = function (ev) {
+        if (Math.abs(ev.clientX - sx) > 10 || Math.abs(ev.clientY - sy) > 10) {
+          clearLpTimer();                  // 移动超阈值视为拖拽意图，交给 Sortable
+          card.classList.remove('lp-pressing');
+          cleanup();
+        }
+      };
+      var onUp = function () {
+        clearLpTimer();
+        card.classList.remove('lp-pressing');
+        cleanup();
+      };
+      function cleanup() {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+      }
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    });
+  }
+
   // ============== 初始化 ==============
   loadNotes();
+  bindLongPressSwap();
 
 })();
