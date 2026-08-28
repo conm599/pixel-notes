@@ -45,7 +45,7 @@
       + '<<<CLARIFY>>>\n'
       + '（一个问题一行，最多 3 个，简洁具体；不要重复已经问过的问题）\n'
       + '<<<END>>>\n'
-      + '拿不准就必须提问澄清，绝对不能猜、不能编造，直到用户回答后信息足够再执行 A 或 B。\n'
+      + '存在任何疑问就必须先提问：指令有歧义、缺关键信息（主题、风格、长度、格式、语言等）、无法确定用户要改什么、或对用户意图没有把握时，一律用 C 提问，绝对不能猜、不能编造、不能自行假设，宁可多问一句，不可错改一字。直到用户回答后信息足够再执行 A 或 B。\n'
       + '【硬性规则】\n'
       + '1. 绝对禁止删除、改写、移动用户已有的链接、URL、HTML 标签、图片/音频/视频/iframe 嵌入和代码块，除非指令明确要求处理它们\n'
       + '2. 用户没让改的部分必须一字不动，只做最小限度的必要修改，禁止顺手润色或重排\n'
@@ -84,12 +84,9 @@
     return out;
   }
 
-  // 澄清结果统一出口：未超轮 → need_clarify；已超轮 → 错误
+  // 澄清结果统一出口：轮数不限（每轮需用户手动回答，人工熔断）
   function clarifyResult(rounds, questions) {
-    if (rounds.length >= 2) {
-      return { success: false, message: 'AI 仍在追问，已达到最大澄清轮数（2 轮）。请直接补充细节后重新发起编辑' };
-    }
-    return { success: false, need_clarify: true, questions: questions, clarifyRounds: rounds, clarifyMax: 2 };
+    return { success: false, need_clarify: true, questions: questions, clarifyRounds: rounds };
   }
 
   // 与服务端一致的局部修改块解析与应用
@@ -170,9 +167,9 @@
     var proxy = proxyUrl(opts.proxy);
     var apiKey = String(opts.apiKey || '').trim();
     var model = String(opts.model || '').trim();
-    // 澄清问答历史（最多 2 轮）
+    // 澄清问答历史（轮数不限，最多保留 10 轮防滥用，与服务端一致）
     var clarifyRounds = Array.isArray(opts.clarifyRounds)
-      ? opts.clarifyRounds.slice(0, 2).map(function (r) {
+      ? opts.clarifyRounds.slice(0, 10).map(function (r) {
           return { q: String(r.q || '').slice(0, 200), a: String(r.a || '').slice(0, 500) };
         })
       : [];
@@ -242,7 +239,7 @@
           var text = r.text || '';
           var fence = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i);
           if (fence) text = fence[1].trim();
-          // 澄清提问：拿不准时向用户提问（最多 2 轮）
+          // 澄清提问：拿不准时向用户提问（轮数不限）
           var clarify = parseClarify(text);
           if (clarify.length) return clarifyResult(clarifyRounds, clarify);
           if (!text) {
@@ -296,7 +293,7 @@
       var fence = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i);
       if (fence) text = fence[1].trim();
 
-      // 澄清提问：拿不准时向用户提问（最多 2 轮）
+      // 澄清提问：拿不准时向用户提问（轮数不限）
       var clarify = parseClarify(text);
       if (clarify.length) return clarifyResult(clarifyRounds, clarify);
 

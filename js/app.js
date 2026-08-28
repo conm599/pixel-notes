@@ -1353,7 +1353,7 @@
       regenBtn.style.display = 'none';
     }
 
-    // 澄清提问态：AI 拿不准时逐题展示输入框，回答后带历史继续（最多 2 轮）
+    // 澄清提问态：AI 拿不准时逐题展示输入框，回答后带历史继续（轮数不限）
     function showClarifyMode(questions, existingRounds) {
       hideClarify();
       hint.style.display = 'none';
@@ -1364,10 +1364,9 @@
       runBtn.style.display = 'none';
       acceptBtn.style.display = 'none';
       regenBtn.style.display = 'none';
-      var clarifyMax = 2;
       var roundNo = (existingRounds.length + 1);
       var tip = mkEl('div', 'ai-clarify-tip');
-      tip.textContent = '🤔 AI 说它还拿不准，需要先向你确认 ' + questions.length + ' 个问题（第 ' + roundNo + '/' + clarifyMax + ' 轮）。回答后继续生成。';
+      tip.textContent = '🤔 AI 说它还拿不准，需要先向你确认 ' + questions.length + ' 个问题（第 ' + roundNo + ' 轮问询）。回答后继续生成；不想答了可点取消。';
       clarifyWrap.appendChild(tip);
       var inputs = [];
       questions.forEach(function (q, i) {
@@ -1380,6 +1379,14 @@
         clarifyWrap.appendChild(inp);
         inputs.push({ q: q, inp: inp });
       });
+      // AI 问题之外的主动补充（可选）：并入本轮最后一问的回答注入对话
+      var extraLab = mkEl('label', 'ai-clarify-q', '💬 其他补充（可选）：除了上面的问题，还有什么想告诉 AI 的吗？');
+      var extraInp = document.createElement('textarea');
+      extraInp.className = 'ai-instruction ai-clarify-answer';
+      extraInp.placeholder = '选填。写下任何补充、纠正或额外要求，AI 会一并参考…';
+      extraInp.setAttribute('maxlength', '300');
+      clarifyWrap.appendChild(extraLab);
+      clarifyWrap.appendChild(extraInp);
       var bRow = mkEl('div', 'ai-clarify-btns');
       var submit = mkBtn('✅ 提交回答，继续生成');
       submit.className = 'btn btn-primary btn-xs';
@@ -1400,6 +1407,10 @@
         if (hasEmpty) {
           showToast('⚠️ 请回答全部问题后再提交', 'error');
           return;
+        }
+        var extra = extraInp.value.trim();
+        if (extra && next.length) {
+          next[next.length - 1].a += '\n【其他补充】' + extra;
         }
         hideClarify();
         runAiFlow(next);

@@ -56,7 +56,8 @@ function aiChunkText($text) {
 }
 define('AI_POLICY_VERSION', 1);
 define('AI_OWN_DAILY_LIMIT', 500);
-define('AI_CLARIFY_MAX_ROUNDS', 2);
+// 澄清轮数不设硬上限：每轮都需用户手动回答才会继续，人工熔断天然存在；仅保留防滥用截断（见输入解析）
+define('AI_CLARIFY_INPUT_MAX', 10);
 define('AI_CLARIFY_MAX_QUESTIONS', 3);
 
 /**
@@ -425,7 +426,7 @@ try {
         $title = isset($input['title']) ? trim((string)$input['title']) : '';
         $content = isset($input['content']) ? (string)$input['content'] : '';
         $instruction = isset($input['instruction']) ? trim((string)$input['instruction']) : '';
-        // 澄清问答历史：[{q, a}, ...]，最多 AI_CLARIFY_MAX_ROUNDS 轮，每轮 q/a 限长
+        // 澄清问答历史：[{q, a}, ...]，轮数不限（人工熔断），每轮 q/a 限长；最多保留 10 轮防滥用
         $clarifyRounds = array();
         $cr = (isset($input['clarifyRounds']) && is_array($input['clarifyRounds'])) ? $input['clarifyRounds'] : array();
         foreach ($cr as $round) {
@@ -437,7 +438,7 @@ try {
                 $a = function_exists('mb_substr') ? mb_substr($a, 0, 500, 'UTF-8') : substr($a, 0, 1000);
                 $clarifyRounds[] = array('q' => $q, 'a' => $a);
             }
-            if (count($clarifyRounds) >= AI_CLARIFY_MAX_ROUNDS) break;
+            if (count($clarifyRounds) >= AI_CLARIFY_INPUT_MAX) break;
         }
         $prefs = isset($input['prefs']) && is_array($input['prefs']) ? $input['prefs'] : array();
         $style = isset($prefs['style']) ? trim((string)$prefs['style']) : '';
@@ -558,11 +559,11 @@ try {
             . "<<<END>>>\n"
             . "可以有多个替换块，按顺序排列。SEARCH 段尽量短且在全文中唯一。\n"
             . "B. 全文重写：仅当指令要求整体重构、全文翻译、全文总结、从零创作时，才直接输出完整的新便签全文。\n"
-            . "C. 澄清提问（当且仅当指令有歧义、缺关键信息或者你拿不准用户到底要改成什么样时使用，优先级最高，出现时必须只输出这个）：\n"
+            . "C. 澄清提问（只要存在任何疑问就必须使用，优先级最高，出现时必须只输出这个）：\n"
             . "<<<CLARIFY>>>\n"
             . "（一个问题一行，最多 3 个，简洁具体；不要重复已经问过的问题）\n"
             . "<<<END>>>\n"
-            . "拿不准就必须提问澄清，绝对不能猜、不能编造，直到用户回答后信息足够再执行 A 或 B。\n"
+            . "存在任何疑问就必须先提问：指令有歧义、缺关键信息（主题、风格、长度、格式、语言等）、无法确定用户要改什么、或对用户意图没有把握时，一律用 C 提问，绝对不能猜、不能编造、不能自行假设，宁可多问一句，不可错改一字。直到用户回答后信息足够再执行 A 或 B。\n"
             . "【硬性规则】\n"
             . "1. 绝对禁止删除、改写、移动用户已有的链接、URL、HTML 标签、图片/音频/视频/iframe 嵌入和代码块，除非指令明确要求处理它们\n"
             . "2. 用户没让改的部分必须一字不动，只做最小限度的必要修改，禁止顺手润色或重排\n"
@@ -618,14 +619,11 @@ try {
 
                     $text = trim($r['text']);
                     if (preg_match('/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i', $text, $m)) $text = trim($m[1]);
-                    // 澄清提问：拿不准时向用户提问，最多 AI_CLARIFY_MAX_ROUNDS 轮
+                    // 澄清提问：拿不准就继续问，轮数不限（每轮需用户手动回答，人工熔断）
                     $clarify = aiParseClarify($text);
                     if (!empty($clarify)) {
-                        if (count($clarifyRounds) >= AI_CLARIFY_MAX_ROUNDS) {
-                            jsonOut(array('success' => false, 'message' => 'AI 仍在追问，已达到最大澄清轮数（' . AI_CLARIFY_MAX_ROUNDS . ' 轮）。请直接补充细节后重新发起编辑', 'usage' => $usage));
-                        }
                         jsonOut(array('success' => false, 'need_clarify' => true, 'questions' => $clarify,
-                                      'clarifyRounds' => $clarifyRounds, 'clarifyMax' => AI_CLARIFY_MAX_ROUNDS,
+                                      'clarifyRounds' => $clarifyRounds,
                                       'usage' => $usage));
                     }
                     if ($text === '') {
@@ -718,14 +716,11 @@ try {
             if (preg_match('/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i', $text, $m)) {
                 $text = trim($m[1]);
             }
-            // 澄清提问：拿不准时向用户提问，最多 AI_CLARIFY_MAX_ROUNDS 轮
+            // 澄清提问：拿不准就继续问，轮数不限（每轮需用户手动回答，人工熔断）
             $clarify = aiParseClarify($text);
             if (!empty($clarify)) {
-                if (count($clarifyRounds) >= AI_CLARIFY_MAX_ROUNDS) {
-                    jsonOut(array('success' => false, 'message' => 'AI 仍在追问，已达到最大澄清轮数（' . AI_CLARIFY_MAX_ROUNDS . ' 轮）。请直接补充细节后重新发起编辑', 'usage' => $usage));
-                }
                 jsonOut(array('success' => false, 'need_clarify' => true, 'questions' => $clarify,
-                              'clarifyRounds' => $clarifyRounds, 'clarifyMax' => AI_CLARIFY_MAX_ROUNDS,
+                              'clarifyRounds' => $clarifyRounds,
                               'usage' => $usage));
             }
             if ($text === '') {
