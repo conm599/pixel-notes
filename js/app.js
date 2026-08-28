@@ -665,6 +665,70 @@
     if (ov) ov.closest('.md-modal-overlay').remove();
   }
 
+  // AI 编辑流式请求（protocol v5）：解析服务端 SSE（delta/phase/done），done 返回最终结果对象
+  // 非 SSE 响应（预检失败：未登录/配额/政策等普通 JSON）直接解析返回，行为与 aiApi 一致
+  async function aiApiStream(body, handlers) {
+    var resp = await fetch('api/ai.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      credentials: 'include',
+      cache: 'no-store'
+    });
+    if (resp.status === 401) {
+      window.location.href = 'login.php';
+      throw new Error('未登录');
+    }
+    var ct = resp.headers.get('Content-Type') || '';
+    if (ct.indexOf('text/event-stream') === -1) {
+      var rawJ = await resp.text();
+      try { return JSON.parse(rawJ); }
+      catch (e) { throw new Error('服务器响应异常 (HTTP ' + resp.status + ')'); }
+    }
+    var blocks = [];
+    var sseBuf = '';
+    function feed(chunk) {
+      sseBuf += chunk.replace(/\r\n/g, '\n'); // CRLF 归一：中间层可能转换行尾，归一后统一按 \n 处理
+      var idx;
+      while ((idx = sseBuf.indexOf('\n\n')) !== -1) {
+        var blk = sseBuf.slice(0, idx);
+        sseBuf = sseBuf.slice(idx + 2);
+        var ev = '', data = '';
+        blk.split('\n').forEach(function (line) {
+          if (line.indexOf('event:') === 0) ev = line.slice(6).trim();
+          else if (line.indexOf('data:') === 0) data += line.slice(5).trim();
+        });
+        if (!ev || !data) continue;
+        var d = null;
+        try { d = JSON.parse(data); } catch (e) { d = null; }
+        if (!d) continue;
+        blocks.push({ ev: ev, d: d });
+        if (handlers) {
+          if (ev === 'delta' && typeof handlers.onDelta === 'function') handlers.onDelta(d.t || '');
+          if (ev === 'phase' && typeof handlers.onPhase === 'function') handlers.onPhase(d.t || '');
+        }
+      }
+    }
+    if (resp.body && typeof resp.body.getReader === 'function') {
+      var reader = resp.body.getReader();
+      var dec = new TextDecoder('utf-8');
+      while (true) {
+        var rd = await reader.read();
+        if (rd.done) break;
+        feed(dec.decode(rd.value, { stream: true }));
+      }
+    } else {
+      // 老浏览器无 ReadableStream：整段读回再重放事件（无实时预览，结果不变）
+      feed(await resp.text());
+    }
+    var done = null;
+    for (var i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i].ev === 'done') { done = blocks[i].d; break; }
+    }
+    if (!done) throw new Error('连接中断（未收到生成结果）');
+    return done;
+  }
+
   // ============== AI 偏好 / 政策 / 设置 ==============
   var AI_POLICY_VERSION = 1;
   var AI_PREFS_KEY = 'pn_ai_prefs';
@@ -1200,6 +1264,44 @@
     var status = mkEl('div', 'ai-status');
     status.style.display = 'none';
 
+    // ---- 流式生成预览（protocol v5）：实时显示 AI 输出（剥协议标记），结束转入结果态 ----
+    var streamBox = mkEl('div', 'ai-stream');
+    streamBox.style.display = 'none';
+    var streamPhase = mkEl('div', 'ai-stream-phase');
+    var streamText = mkEl('div', 'ai-stream-text');
+    streamBox.appendChild(streamPhase);
+    streamBox.appendChild(streamText);
+    var streamRaw = '';
+    var streamRaf = 0;
+    function stripAiMarkers(t) {
+      return String(t || '').replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '');
+    }
+    function renderStream() {
+      streamRaf = 0;
+      var shown = streamRaw;
+      if (shown.length > 12000) shown = '…（前面已省略）\n' + shown.slice(-12000);
+      streamText.textContent = stripAiMarkers(shown);
+      streamBox.scrollTop = streamBox.scrollHeight;
+    }
+    function showStream(phaseText) {
+      streamRaw = '';
+      streamText.textContent = '';
+      streamPhase.textContent = phaseText || '';
+      streamBox.style.display = '';
+      streamBox.scrollTop = 0;
+    }
+    function onStreamPhase(t) {
+      if (t) streamPhase.textContent = t;
+    }
+    function onStreamDelta(t) {
+      streamRaw += t;
+      if (!streamRaf) streamRaf = requestAnimationFrame(renderStream);
+    }
+    function hideStream() {
+      streamBox.style.display = 'none';
+      streamRaw = '';
+    }
+
     // ---- 澄清提问态：AI 拿不准时逐题回答，可多轮 ----
     var clarifyWrap = mkEl('div', 'ai-clarify');
     clarifyWrap.style.display = 'none';
@@ -1313,6 +1415,7 @@
     }
 
     function showResultMode() {
+      hideStream();
       hint.style.display = 'none';
       ta.style.display = 'none';
       status.style.display = 'none';
@@ -1455,6 +1558,7 @@
       var ok = false;
       function clearUp() {
         clearInterval(dotTimer);
+        hideStream();
         if (!ok && !document.querySelector('.policy-modal')) {
           runBtn.disabled = false;
           ta.disabled = false;
@@ -1464,6 +1568,7 @@
       // 澄清响应：需要用户回答时转入澄清态（本次请求不计配额）
       function handleClarify(r) {
         if (r && r.need_clarify && Array.isArray(r.questions) && r.questions.length) {
+          hideStream();
           showClarifyMode(r.questions, r.clarifyRounds || clarifyRounds);
           return true;
         }
@@ -1472,6 +1577,7 @@
       // 自有代理直连模式：请求完全不经过平台服务器（独立模块 ai-direct.js 处理）
       if (prefs.mode === 'own' && prefs.ownProxy && window.AIDirect) {
         try {
+          showStream('🤖 正在生成…');
           var r = await window.AIDirect.edit({
             title: newTitle.value,
             content: newContent.value,
@@ -1486,9 +1592,12 @@
             bodyEnabled: prefs.ownBodyEnabled,
             bodyKey: prefs.ownBodyKey,
             bodyJson: prefs.ownBodyJson,
-            clarifyRounds: clarifyRounds
+            clarifyRounds: clarifyRounds,
+            onPhase: onStreamPhase,
+            onDelta: onStreamDelta
           });
           clearUp();
+          hideStream();
           if (handleClarify(r)) return;
           if (r.success && typeof r.content === 'string') {
             aiResult = {
@@ -1517,7 +1626,8 @@
         return;
       }
       try {
-        var r = await aiApi({
+        showStream('🤖 正在生成…');
+        var r = await aiApiStream({
           action: 'edit',
           title: newTitle.value,
           content: newContent.value,
@@ -1537,8 +1647,9 @@
             bodyKey: prefs.ownBodyKey,
             bodyJson: prefs.ownBodyJson
           }
-        });
+        }, { onDelta: onStreamDelta, onPhase: onStreamPhase });
         clearUp();
+        hideStream();
         if (r.need_policy) {
           openPolicyDialog(function () { runBtn.click(); });
         } else if (handleClarify(r)) {
@@ -1612,6 +1723,7 @@
     body.appendChild(usageBar);
     body.appendChild(ta);
     body.appendChild(status);
+    body.appendChild(streamBox);
     body.appendChild(clarifyWrap);
     body.appendChild(resultWrap);
     modal.appendChild(body);

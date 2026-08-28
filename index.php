@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=45">
+    <link rel="stylesheet" href="css/pixel.css?v=46">
 </head>
 <body>
     <!-- 顶部导航 -->
@@ -100,7 +100,7 @@ if (!isset($_SESSION['user_id'])) {
 
     <script src="js/md.js?v=35"></script>
     <script src="js/Sortable.min.js"></script>
-    <script src="js/ai-direct.js?v=10"></script>
-    <script src="js/app.js?v=55"></script>
+    <script src="js/ai-direct.js?v=11"></script>
+    <script src="js/app.js?v=56"></script>
 </body>
 </html>

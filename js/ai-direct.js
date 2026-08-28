@@ -4,7 +4,7 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
- * 实现以 protocol.md v4 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 api/ai.php 同步
+ * 实现以 protocol.md v5 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 api/ai.php 同步
  *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
@@ -46,13 +46,15 @@
       + '（一个问题一行，最多 3 个，简洁具体；不要重复已经问过的问题）\n'
       + '<<<END>>>\n'
       + '存在任何疑问就必须先提问：指令有歧义、缺关键信息（主题、风格、长度、格式、语言等）、无法确定用户要改什么、或对用户意图没有把握时，一律用 C 提问，绝对不能猜、不能编造、不能自行假设，宁可多问一句，不可错改一字。直到用户回答后信息足够再执行 A 或 B。\n'
+      + '【先问后做，二者互斥】C 是独立的一轮输出：提问那一轮绝不能同时生成任何正文；反过来，一旦选择 A 或 B，输出里就绝不能再出现任何提问、确认、选项或结尾寒暄（如「需要哪种风格？」「有其他想法可补充」一律禁止）。拿不准就先用 C 问清楚，问完再动手，绝不许先编一版内容再附一句反问。\n'
       + '【硬性规则】\n'
       + '1. 绝对禁止删除、改写、移动用户已有的链接、URL、HTML 标签、图片/音频/视频/iframe 嵌入和代码块，除非指令明确要求处理它们\n'
       + '2. 用户没让改的部分必须一字不动，只做最小限度的必要修改，禁止顺手润色或重排\n'
       + '3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出\n'
       + '4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n'
       + '5. 便签标题不在你负责范围内，只编辑正文\n'
-      + '6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么';
+      + '6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n'
+      + '7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问';
     if (style) s += '\n【用户风格偏好】在不违背上述硬性规则的前提下，尽量按以下风格完成编辑：' + style;
     if (now) s += '\n【当前时间】现在是 ' + now + '（用户本地时间）。涉及时间、日期、星期、节假日等内容的编辑请以此为准，不要虚构时间。';
     return s;
@@ -165,7 +167,8 @@
   }
 
   // 单轮请求：返回 { ok, text, message }（ok=false 时 message 为错误说明）
-  async function callOnce(proxy, target, apiKey, model, messages, extra) {
+  // onDelta 提供时走流式（stream:true），逐 token 回调；上游不支持流式时自动降级为整段返回（结果不变）
+  async function callOnce(proxy, target, apiKey, model, messages, extra, onDelta) {
     var payload = { model: model, messages: messages, max_tokens: 16000, temperature: 0.1 };
     // 额外请求体参数：深度思考预设 + 用户自定义 Body（后者优先，同名覆盖）
     if (extra) {
@@ -173,6 +176,7 @@
         if (Object.prototype.hasOwnProperty.call(extra, k) && k !== 'model' && k !== 'messages') payload[k] = extra[k];
       }
     }
+    if (onDelta) payload.stream = true;
     var resp;
     try {
       resp = await fetch(proxy + '/' + target, {
@@ -185,6 +189,61 @@
       });
     } catch (e) {
       return { ok: false, message: '无法连接你的透明代理（检查地址是否正确、Worker 是否已部署）' };
+    }
+
+    // 流式：ReadableStream 逐块解析上游 SSE，提取 delta.content 即时回调
+    if (onDelta && resp.ok && resp.body && typeof resp.body.getReader === 'function') {
+      try {
+        var reader = resp.body.getReader();
+        var dec = new TextDecoder('utf-8');
+        var sseBuf = '';
+        var raw = '';
+        var text = '';
+        var sawDelta = false;
+        while (true) {
+          var rd = await reader.read();
+          if (rd.done) break;
+          var chunk = dec.decode(rd.value, { stream: true });
+          if (!chunk) continue;
+          raw += chunk;
+          sseBuf += chunk;
+          var nl;
+          while ((nl = sseBuf.indexOf('\n')) !== -1) {
+            var line = sseBuf.slice(0, nl);
+            sseBuf = sseBuf.slice(nl + 1);
+            line = line.replace(/\r$/, '');
+            if (line.indexOf('data:') !== 0) continue;
+            var d = line.slice(5).trim();
+            if (!d || d === '[DONE]') continue;
+            var j = null;
+            try { j = JSON.parse(d); } catch (e) { j = null; }
+            if (!j || !j.choices || !j.choices[0]) continue;
+            var delta = '';
+            if (j.choices[0].delta && typeof j.choices[0].delta.content === 'string') delta = j.choices[0].delta.content;
+            else if (typeof j.choices[0].text === 'string') delta = j.choices[0].text;
+            if (delta) { text += delta; sawDelta = true; onDelta(delta); }
+          }
+        }
+        if (sawDelta) return { ok: true, text: text };
+        // 收到 200 但没有任何 content 增量：上游不支持流式（整段 JSON），往下按整段解析
+        if (raw.indexOf('"reasoning_content"') !== -1) {
+          return { ok: false, message: '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens' };
+        }
+        var jsonFb = null;
+        try { jsonFb = JSON.parse(raw); } catch (e) { jsonFb = null; }
+        if (jsonFb && jsonFb.choices && jsonFb.choices[0]) {
+          var moFb = jsonFb.choices[0].message || {};
+          var tFb = String(moFb.content || '').trim();
+          if (!tFb && moFb.reasoning_content) {
+            return { ok: false, message: '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens' };
+          }
+          if (tFb) return { ok: true, text: tFb };
+          if (jsonFb.choices[0].text) return { ok: true, text: String(jsonFb.choices[0].text).trim() };
+        }
+        return { ok: false, message: 'AI 返回了空内容', empty: true };
+      } catch (e) {
+        return { ok: false, message: '读取流式响应失败：' + String(e.message || e) };
+      }
     }
 
     var raw = '';
@@ -273,6 +332,7 @@
         + '\n【分段模式】这是一篇长文，已分 ' + n + ' 段，你只处理「本段内容」这一个段。SEARCH 段必须逐字复制自「本段内容」。若本段完全无需修改，只输出四个字：本段无需修改。';
       var newContent = contentN, applied = 0, failed = 0;
       for (var ci = 0; ci < n; ci++) {
+        if (opts.onPhase) opts.onPhase('🧩 长文分段：第 ' + (ci + 1) + '/' + n + ' 段…');
         var segMsgs = [
           { role: 'system', content: segSystem },
           {
@@ -286,7 +346,7 @@
         // 注入澄清问答历史（若有）
         clarifyContext(clarifyRounds).forEach(function (m) { segMsgs.push(m); });
         for (var att = 1; att <= 2; att++) {
-          var r = await callOnce(proxy, target, apiKey, model, segMsgs, extra);
+          var r = await callOnce(proxy, target, apiKey, model, segMsgs, extra, opts.onDelta);
           if (!r.ok && !r.empty) return { success: false, message: '第 ' + (ci + 1) + ' 段处理失败：' + r.message };
           var text = r.text || '';
           var fence = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i);
@@ -337,7 +397,8 @@
     // 自纠错循环：SEARCH 块匹配失败时，带上上下文告诉 AI 哪里错了，最多 3 轮
     var maxAttempts = 3;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      var r = await callOnce(proxy, target, apiKey, model, messages, extra);
+      if (opts.onPhase) opts.onPhase(attempt > 1 ? '🔁 自动纠错第 ' + (attempt - 1) + ' 次…' : '🤖 正在生成…');
+      var r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta);
       if (!r.ok && !r.empty) return { success: false, message: r.message };
 
       var text = r.text || '';

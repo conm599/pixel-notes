@@ -5,7 +5,7 @@
  * action=test   : 管理员测试上游连通性
  * action=prefs  : 读取/保存用户 AI 偏好（跨端同步，用户主动勾选）
  *
- * 实现以 protocol.md v4 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 js/ai-direct.js 同步
+ * 实现以 protocol.md v5 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问的唯一事实源），改动需与 js/ai-direct.js 同步
  *
  * 安全设计：
  * - 管理员的上游 Key 存于 pn_settings，永不下发浏览器
@@ -83,6 +83,30 @@ function jsonOut($data, $code = 200) {
     http_response_code($code);
     echo json_encode($data, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0);
     exit;
+}
+
+// ===== SSE 流式输出（protocol v5）：delta=文本片段 phase=阶段进度 done=最终结果 =====
+$AI_SSE = false;
+function sseStart() {
+    global $AI_SSE;
+    $AI_SSE = true;
+    header('Content-Type: text/event-stream; charset=utf-8');
+    header('Cache-Control: no-store');
+    header('X-Accel-Buffering: no');
+    while (ob_get_level() > 0) { @ob_end_clean(); }
+}
+function sseSend($event, $data) {
+    echo 'event: ' . $event . "\n" . 'data: ' . json_encode($data, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0) . "\n\n";
+    if (ob_get_level() > 0) @ob_flush();
+    flush();
+}
+/**
+ * 统一出口：SSE 模式发 done 事件后退出，非 SSE 模式退回普通 JSON（预检失败路径仍走 JSON）
+ */
+function aiOut($payload) {
+    global $AI_SSE;
+    if (!empty($AI_SSE)) { sseSend('done', $payload); exit; }
+    jsonOut($payload);
 }
 
 /**
@@ -236,8 +260,9 @@ function ownEndpoint($baseUrl) {
 
 /**
  * 调用 OpenAI 兼容 chat/completions（url/key/model 由调用方指定）
+ * $onDelta 非空时走流式（stream:true），逐 token 回调转发；上游不支持流式则自动降级为整段返回（结果不变）
  */
-function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null) {
+function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null, $onDelta = null) {
     $payloadArr = array(
         'model' => $model,
         'messages' => $messages,
@@ -250,25 +275,55 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null)
             if ($k !== 'model' && $k !== 'messages' && is_string($k)) $payloadArr[$k] = $v;
         }
     }
+    if ($onDelta !== null) $payloadArr['stream'] = true; // 流式：逐 token 转发；上游不支持时降级为整段
     $payload = json_encode($payloadArr, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0);
 
-    $body = false; $status = 0;
+    $body = false; $status = 0; $text = '';
     if (function_exists('curl_init')) {
         $ch = curl_init($url);
-        curl_setopt_array($ch, array(
+        $opts = array(
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $payload,
             CURLOPT_HTTPHEADER     => array(
                 'Content-Type: application/json',
                 'Authorization: Bearer ' . $key,
             ),
-            CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT        => 130,
             CURLOPT_CONNECTTIMEOUT => 15,
             CURLOPT_SSL_VERIFYPEER => true,
-        ));
+        );
+        if ($onDelta !== null) {
+            // 流式：WRITEFUNCTION 逐块解析上游 SSE 的 data 行，提取 delta.content 即时回调
+            $sseBuf = ''; $raw = '';
+            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $data) use (&$sseBuf, &$text, &$raw, $onDelta) {
+                if ($data === '') return 0;
+                $raw .= $data;
+                $sseBuf .= $data;
+                while (($pos = strpos($sseBuf, "\n")) !== false) {
+                    $line = substr($sseBuf, 0, $pos);
+                    $sseBuf = substr($sseBuf, $pos + 1);
+                    $line = rtrim($line, "\r");
+                    if (strncmp($line, 'data:', 5) !== 0) continue;
+                    $chunk = trim(substr($line, 5));
+                    if ($chunk === '' || $chunk === '[DONE]') continue;
+                    $j = json_decode($chunk, true);
+                    if (!is_array($j) || !isset($j['choices'][0])) continue;
+                    $delta = '';
+                    if (isset($j['choices'][0]['delta']['content']) && is_string($j['choices'][0]['delta']['content'])) $delta = $j['choices'][0]['delta']['content'];
+                    elseif (isset($j['choices'][0]['text']) && is_string($j['choices'][0]['text'])) $delta = $j['choices'][0]['text'];
+                    if ($delta !== '') { $text .= $delta; $onDelta($delta); }
+                }
+                return strlen($data);
+            };
+        } else {
+            $opts[CURLOPT_RETURNTRANSFER] = true;
+        }
+        curl_setopt_array($ch, $opts);
         $body = curl_exec($ch);
-        if ($body !== false) $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($body !== false) {
+            $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            if ($onDelta !== null) $body = $raw; // 流式模式下 body 是原始 SSE 文本
+        }
         curl_close($ch);
     } else {
         $ctx = stream_context_create(array('http' => array(
@@ -290,6 +345,24 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null)
     if ($body === false) return array('ok' => false, 'text' => '', 'err' => '无法连接 AI 接口');
     $bodyStr = (string)$body;
     $json = json_decode($bodyStr, true);
+    // 流式：优先用已累积的增量文本（上游不支持流式时 $text 为空，自动走整段解析）
+    if ($onDelta !== null) {
+        if ($status !== 200) {
+            $msg = '';
+            if (is_array($json)) {
+                if (isset($json['error']['message'])) $msg = (string)$json['error']['message'];
+                elseif (isset($json['error'])) $msg = json_encode($json['error']);
+                elseif (isset($json['message'])) $msg = (string)$json['message'];
+            }
+            if ($msg === '') $msg = 'HTTP ' . $status;
+            return array('ok' => false, 'text' => '', 'err' => '上游错误：' . mb_substr($msg, 0, 200, 'UTF-8'));
+        }
+        if ($text !== '') return array('ok' => true, 'text' => $text, 'err' => '');
+        // 收到 200 但无任何 content 增量：要么上游不支持流式（整段 JSON，往下解析），要么只输出了思考
+        if (strpos($bodyStr, '"reasoning_content"') !== false) {
+            return array('ok' => false, 'text' => '', 'err' => '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens');
+        }
+    }
     if (!is_array($json)) {
         return array('ok' => false, 'text' => '', 'err' => 'AI 接口返回了无法解析的内容：' . mb_substr($bodyStr, 0, 150, 'UTF-8'));
     }
@@ -626,13 +699,15 @@ try {
             . "（一个问题一行，最多 3 个，简洁具体；不要重复已经问过的问题）\n"
             . "<<<END>>>\n"
             . "存在任何疑问就必须先提问：指令有歧义、缺关键信息（主题、风格、长度、格式、语言等）、无法确定用户要改什么、或对用户意图没有把握时，一律用 C 提问，绝对不能猜、不能编造、不能自行假设，宁可多问一句，不可错改一字。直到用户回答后信息足够再执行 A 或 B。\n"
+            . "【先问后做，二者互斥】C 是独立的一轮输出：提问那一轮绝不能同时生成任何正文；反过来，一旦选择 A 或 B，输出里就绝不能再出现任何提问、确认、选项或结尾寒暄（如「需要哪种风格？」「有其他想法可补充」一律禁止）。拿不准就先用 C 问清楚，问完再动手，绝不许先编一版内容再附一句反问。\n"
             . "【硬性规则】\n"
             . "1. 绝对禁止删除、改写、移动用户已有的链接、URL、HTML 标签、图片/音频/视频/iframe 嵌入和代码块，除非指令明确要求处理它们\n"
             . "2. 用户没让改的部分必须一字不动，只做最小限度的必要修改，禁止顺手润色或重排\n"
             . "3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出\n"
             . "4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n"
             . "5. 便签标题不在你负责范围内，只编辑正文\n"
-            . "6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么";
+            . "6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n"
+            . "7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问";
         if ($style !== '') {
             $system .= "\n【用户风格偏好】在不违背上述硬性规则的前提下，尽量按以下风格完成编辑：" . $style;
         }
@@ -643,6 +718,10 @@ try {
         $contentN = str_replace("\r\n", "\n", $content);
         $clenN = function_exists('mb_strlen') ? mb_strlen($contentN, 'UTF-8') : strlen($contentN);
         $result = null;
+
+        // ===== SSE 流式开始（protocol v5）：预检全部通过，进入实际 AI 调用；此后管线内统一走 aiOut =====
+        sseStart();
+        $onDelta = function ($t) { sseSend('delta', array('t' => $t)); };
 
         // ===== 长文分段 agent 模式：切块逐段下达指令（附全文结构大纲），逐段收集替换块后在全文统一应用 =====
         if ($clenN > AI_CHUNK_THRESHOLD) {
@@ -661,6 +740,7 @@ try {
             $newContent = $contentN;
             $applied = 0; $failed = 0;
             foreach ($chunks as $ci => $ck) {
+                sseSend('phase', array('t' => '🧩 长文分段：第 ' . ($ci + 1) . '/' . $n . ' 段…'));
                 $segMsgs = array(
                     array('role' => 'system', 'content' => $segSystem),
                     array('role' => 'user', 'content' => "【便签标题】" . ($title !== '' ? $title : '(无标题)') . "\n"
@@ -673,9 +753,9 @@ try {
                     foreach (aiClarifyContext($clarifyRounds) as $m) $segMsgs[] = $m;
                 }
                 for ($att = 1; $att <= 2; $att++) {
-                    $r = aiChat($url, $key, $model, $segMsgs, 16000, $extra);
+                    $r = aiChat($url, $key, $model, $segMsgs, 16000, $extra, $onDelta);
                     if (!$r['ok']) {
-                        jsonOut(array('success' => false, 'message' => '第 ' . ($ci + 1) . ' 段处理失败：' . $r['err'], 'usage' => $usage));
+                        aiOut(array('success' => false, 'message' => '第 ' . ($ci + 1) . ' 段处理失败：' . $r['err'], 'usage' => $usage));
                     }
                     $_SESSION['ai_last'] = $now;
 
@@ -684,7 +764,7 @@ try {
                     // 澄清提问：拿不准就继续问，轮数不限（每轮需用户手动回答，人工熔断）
                     $clarify = aiParseClarify($text);
                     if (!empty($clarify)) {
-                        jsonOut(array('success' => false, 'need_clarify' => true, 'questions' => $clarify,
+                        aiOut(array('success' => false, 'need_clarify' => true, 'questions' => $clarify,
                                       'clarifyRounds' => $clarifyRounds,
                                       'usage' => $usage));
                     }
@@ -765,10 +845,11 @@ try {
         $lastErrText = '';
         $result = null;
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-            $r = aiChat($url, $key, $model, $messages, 16000, $extra);
+            sseSend('phase', array('t' => $attempt > 1 ? '🔁 自动纠错第 ' . ($attempt - 1) . ' 次…' : '🤖 正在生成…'));
+            $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta);
 
             if (!$r['ok']) {
-                jsonOut(array('success' => false, 'message' => $r['err'], 'usage' => $usage));
+                aiOut(array('success' => false, 'message' => $r['err'], 'usage' => $usage));
             }
 
             $_SESSION['ai_last'] = $now;
@@ -781,7 +862,7 @@ try {
             // 澄清提问：拿不准就继续问，轮数不限（每轮需用户手动回答，人工熔断）
             $clarify = aiParseClarify($text);
             if (!empty($clarify)) {
-                jsonOut(array('success' => false, 'need_clarify' => true, 'questions' => $clarify,
+                aiOut(array('success' => false, 'need_clarify' => true, 'questions' => $clarify,
                               'clarifyRounds' => $clarifyRounds,
                               'usage' => $usage));
             }
@@ -792,7 +873,7 @@ try {
                     $messages[] = array('role' => 'user', 'content' => '你上一轮返回了空内容，请重新按格式输出编辑结果。');
                     continue;
                 }
-                jsonOut(array('success' => false, 'message' => $lastErrText, 'usage' => $usage));
+                aiOut(array('success' => false, 'message' => $lastErrText, 'usage' => $usage));
             }
 
             // ===== 局部修改协议：解析 <<<SEARCH>>>/<<<REPLACE>>>/<<<END>>> 块 =====
@@ -859,17 +940,16 @@ try {
                     $messages[] = array('role' => 'user', 'content' => $feedback);
                     continue;
                 }
-                jsonOut(array('success' => false, 'message' => $lastErrText . '，已自动重试 ' . $maxAttempts . ' 轮仍失败，请重试或换个说法', 'usage' => $usage));
+                aiOut(array('success' => false, 'message' => $lastErrText . '，已自动重试 ' . $maxAttempts . ' 轮仍失败，请重试或换个说法', 'usage' => $usage));
             }
 
             // ===== 全文重写模式 =====
             $result = array('success' => true, 'mode' => 'full', 'content' => aiCleanOutput($text), 'usage' => $usage, 'attempts' => $attempt);
-            break;
-        }
+            break;        }
         } // 结束单发模式（$result === null 分支）
 
         if ($result === null) {
-            jsonOut(array('success' => false, 'message' => $lastErrText !== '' ? $lastErrText : 'AI 编辑失败', 'usage' => $usage));
+            aiOut(array('success' => false, 'message' => $lastErrText !== '' ? $lastErrText : 'AI 编辑失败', 'usage' => $usage));
         }
 
         // 成功后才计数
@@ -886,11 +966,10 @@ try {
         }
         if ($usage) $usage['used'] = $usage['used'] + 1;
 
-        jsonOut($result);
+        aiOut($result);
     }
 
     jsonOut(array('success' => false, 'message' => '未知操作'));
-
 } catch (Exception $e) {
-    jsonOut(array('success' => false, 'message' => '服务器内部错误'));
+    aiOut(array('success' => false, 'message' => '服务器内部错误'));
 }
