@@ -48,6 +48,7 @@
 | 注销走事务、GET 登出同样销毁会话 | `api/auth.php` / `logout.php` |
 | 自愈式建表（缺列自动 ALTER，首次访问即完成部署） | `config/database.php` |
 | SSRF 防护：自有 Key 强制走管理员透明代理 + host IP/域名校验（拦内网/环回/链路本地/解析失败） | `api/ai.php` |
+| AI 澄清提问（多轮）：拿不准时先问用户，最多 2 轮、每轮 3 问，回答后继续；澄清轮不扣配额 | `api/ai.php` / `js/ai-direct.js` |
 
 ---
 
