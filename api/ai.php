@@ -94,6 +94,9 @@ function sseStart() {
     header('Cache-Control: no-store');
     header('X-Accel-Buffering: no');
     while (ob_get_level() > 0) { @ob_end_clean(); }
+    // 关键：立即释放 session 文件锁。SSE 流会持续几十秒~几分钟，
+    // 不释放会让同一账号的所有其他请求全部阻塞在 session_start() 上（同账号全站卡死，他账号不受影响）
+    session_write_close();
 }
 function sseSend($event, $data) {
     echo 'event: ' . $event . "\n" . 'data: ' . json_encode($data, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0) . "\n\n";
@@ -116,6 +119,8 @@ function aiOut($payload) {
  */
 function aiCleanOutput($text) {
     $t = preg_replace('/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/i', '', (string)$text);
+    // 剥推理模型的思考标签（<think>...</think>、<thinking>...</thinking>），含未闭合的残留头
+    $t = preg_replace('/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/i', '', $t);
     return trim((string)$t);
 }
 
@@ -1524,8 +1529,27 @@ try {
         $result = null;
 
         // ===== SSE 流式开始（protocol v5）：预检全部通过，进入实际 AI 调用；此后管线内统一走 aiOut =====
+        // sseStart 内会 session_write_close() 释放锁，节流标记必须在此之前落盘
+        $_SESSION['ai_last'] = $now;
         sseStart();
-        $onDelta = function ($t) { sseSend('delta', array('t' => $t)); };
+        // 思考标签过滤：在 <think>...</think> 内的 delta 不转发给前端预览
+        $_thinkIn = false;
+        $onDelta = function ($t) use (&$_thinkIn) {
+            while ($t !== '') {
+                if ($_thinkIn) {
+                    $end = stripos($t, '</think>');
+                    if ($end === false) return;   // 整段都在 think 里
+                    $t = substr($t, $end + 8);
+                    $_thinkIn = false;
+                } else {
+                    $start = stripos($t, '<think>');
+                    if ($start === false) { sseSend('delta', array('t' => $t)); return; }
+                    if ($start > 0) sseSend('delta', array('t' => substr($t, 0, $start)));
+                    $_thinkIn = true;
+                    $t = substr($t, $start + 7);
+                }
+            }
+        };
 
         // ===== 长文分段 agent 模式：切块逐段下达指令（附全文结构大纲），逐段收集替换块后在全文统一应用 =====
         if ($clenN > AI_CHUNK_THRESHOLD) {
