@@ -141,12 +141,11 @@
   if (registerForm) {
     registerForm.addEventListener('submit', function (e) {
       e.preventDefault();
+      // 演示站注册：仅用户名+密码（无邮箱/验证码字段）
       submitForm({
         action: 'register',
         username: document.getElementById('username').value.trim(),
-        email: document.getElementById('email').value.trim(),
-        password: document.getElementById('password').value,
-        code: document.getElementById('code').value.trim()
+        password: document.getElementById('password').value
       });
     });
   }

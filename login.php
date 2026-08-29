@@ -18,8 +18,13 @@ if (isset($_SESSION['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>登录 - Pixel Notes</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
+<style>
+.demo-banner { background: #2a2200; border-bottom: 2px solid #ffcc00; color: #ffcc00; font-size: 12px; padding: 8px 14px; text-align: center; line-height: 1.8; font-family: monospace, sans-serif; }
+.demo-banner a { color: #4af0ff; }
+</style>
 </head>
 <body>
+<div class="demo-banner">⚠️ 公开演示环境（DEMO）· 请勿投入生产使用 · 正式版请从官方渠道获取 · 所有 AI 相关功能均未配置、不可用 · 请勿填写真实隐私信息（邮箱 / API Key / 常用密码）</div>
     <div class="auth-container">
         <div class="auth-box">
             <h1>🎮<br>PIXEL NOTES</h1>
@@ -27,7 +32,6 @@ if (isset($_SESSION['user_id'])) {
 
             <div class="auth-tabs">
                 <button type="button" class="auth-tab active" data-panel="pass">🔐 密码登录</button>
-                <button type="button" class="auth-tab" data-panel="code">📧 验证码登录</button>
             </div>
 
             <div id="errorMsg" class="error-msg" style="display:none;"></div>
@@ -46,7 +50,7 @@ if (isset($_SESSION['user_id'])) {
                 <div class="form-actions">
                     <button type="submit" class="btn btn-primary">▶ 登录</button>
                 </div>
-                <p class="auth-link" style="text-align:right;"><a href="#" id="gotoReset">忘记密码？</a></p>
+                
             </form>
 
             <!-- 面板二：验证码登录 -->

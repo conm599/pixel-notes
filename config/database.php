@@ -349,7 +349,7 @@ function startSecureSession() {
     session_set_cookie_params(array(
         'lifetime' => 0,
         'path' => '/',
-        'secure' => true,      // 站点已强制 HTTPS（301）
+        'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),   // 演示站可能跑纯 HTTP：跟随当前协议
         'httponly' => true,    // JS 无法读取会话 Cookie
         'samesite' => 'Lax',   // 缓解 CSRF
     ));

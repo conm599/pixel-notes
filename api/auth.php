@@ -191,15 +191,17 @@ try {
         if ($ulen < 2 || $ulen > 30) {
             jsonResponse(array('success' => false, 'message' => '用户名需要2-30个字符'), 400);
         }
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !emailDomainAllowed($email)) {
-            jsonResponse(array('success' => false, 'message' => '邮箱无效或不被支持，请使用主流邮箱或 @naxid.top'), 400);
-        }
+        // ===== 演示站专属注册（demo 分支）：用户名+密码直接注册，无需邮箱验证码 =====
+        // 邮箱字段存确定性占位地址（不发送任何邮件）；md5 派生使同一用户名二次注册被唯一索引挡下
         if (strlen($password) < 8) {
             jsonResponse(array('success' => false, 'message' => '密码至少需要8个字符'), 400);
         }
-        if (!verifyEmailCode($pdo, $email, 'register', $code)) {
-            jsonResponse(array('success' => false, 'message' => '验证码错误或已过期'), 400);
+        $stmt = $pdo->prepare("SELECT id FROM pn_users WHERE username = ? LIMIT 1");
+        $stmt->execute(array($username));
+        if ($stmt->fetch()) {
+            jsonResponse(array('success' => false, 'message' => '该用户名已被注册（演示站用户名不可重复）'), 409);
         }
+        $email = 'user-' . md5('pn-demo:' . $username) . '@demo.local';
 
         $stmt = $pdo->prepare("INSERT INTO pn_login_attempts (username, ip, action, success, attempted_at)
                                VALUES (?, ?, 'register', 1, NOW())");
@@ -255,6 +257,12 @@ try {
         $stmt = $pdo->prepare("SELECT id, username, password_hash, email_verified FROM pn_users WHERE email = ?");
         $stmt->execute(array($login));
         $user = $stmt->fetch();
+        // 演示站支持用户名登录（用户注册时没有真实邮箱）
+        if (!$user) {
+            $stmt = $pdo->prepare("SELECT id, username, password_hash, email_verified FROM pn_users WHERE username = ? LIMIT 1");
+            $stmt->execute(array($login));
+            $user = $stmt->fetch();
+        }
 
         $ok = $user && password_verify($password, $user['password_hash']);
         if (!$ok) {

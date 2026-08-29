@@ -18,8 +18,13 @@ if (!isset($_SESSION['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
+<style>
+.demo-banner { background: #2a2200; border-bottom: 2px solid #ffcc00; color: #ffcc00; font-size: 12px; padding: 8px 14px; text-align: center; line-height: 1.8; font-family: monospace, sans-serif; }
+.demo-banner a { color: #4af0ff; }
+</style>
 </head>
 <body>
+<div class="demo-banner">⚠️ 公开演示环境（DEMO）· 请勿投入生产使用 · 正式版请从官方渠道获取 · 所有 AI 相关功能均未配置、不可用 · 请勿填写真实隐私信息（邮箱 / API Key / 常用密码）</div>
     <!-- 顶部导航 -->
     <nav class="navbar">
         <a href="index.php" class="navbar-brand">
@@ -115,5 +120,22 @@ if (!isset($_SESSION['user_id'])) {
     <script src="js/ai-direct.js?v=14"></script>
     <script src="js/selection.js?v=5"></script>
     <script src="js/app.js?v=74"></script>
+    <script>
+    // 演示站：每次进入弹一次提示（DEMO 分支专属）
+    (function () {
+        var d = document.createElement('div');
+        d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);max-width:560px;width:calc(100vw - 32px);z-index:99999;background:#1a1a2e;border:3px solid #ffcc00;box-shadow:4px 4px 0 #000;padding:14px 18px;color:#e8e8f5;font-size:13px;line-height:1.9;';
+        d.innerHTML = '<b style="color:#ffcc00;">⚠️ 演示页面，请勿投入生产使用</b><br>'
+            + '这是公开演示环境：注册 / 登录门槛已降低，所有 AI 相关功能均未配置、不可用。<br>'
+            + '请勿填写真实邮箱、API Key 或常用密码等任何隐私信息。<br>'
+            + '生产部署请使用 main 分支';
+        var x = document.createElement('button');
+        x.textContent = '知道了';
+        x.style.cssText = 'margin-top:10px;padding:6px 16px;background:#ffcc00;color:#000;border:0;font-weight:bold;cursor:pointer;font-family:inherit;';
+        x.onclick = function () { d.remove(); };
+        d.appendChild(x);
+        document.body.appendChild(d);
+    })();
+    </script>
 </body>
 </html>
