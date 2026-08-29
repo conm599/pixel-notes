@@ -106,7 +106,8 @@ try {
         }
 
         $nodes = array();
-        $base = 'https://' . $_SERVER['HTTP_HOST'];
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $base = $scheme . '://' . $_SERVER['HTTP_HOST'];
         foreach ($folders as $f) {
             $fid = (int)$f['id'];
             $token = (string)$f['share_token'];
@@ -225,7 +226,7 @@ try {
                 'message' => $hours > 0 ? '分享已创建（' . $hours . '小时后过期）' : '分享已创建（永久）',
                 'token' => $token,
                 'until' => $until,
-                'url' => 'https://' . $_SERVER['HTTP_HOST'] . '/share.php?f=' . $token
+                'url' => $scheme . '://' . $_SERVER['HTTP_HOST'] . '/share.php?f=' . $token
             ));
         }
 

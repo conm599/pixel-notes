@@ -161,12 +161,13 @@ try {
             $stmt = $pdo->prepare("UPDATE pn_notes SET share_token = ?, share_until = ? WHERE id = ? AND user_id = ?");
             $stmt->execute(array($token, $until, $noteId, $userId));
 
+            $schemeN = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
             jsonResponse(array(
                 'success' => true,
                 'message' => $hours > 0 ? '分享已创建（' . $hours . '小时后过期）' : '分享已创建（永久）',
                 'token' => $token,
                 'until' => $until,
-                'url' => 'https://' . $_SERVER['HTTP_HOST'] . '/share.php?t=' . $token
+                'url' => $schemeN . '://' . $_SERVER['HTTP_HOST'] . '/share.php?t=' . $token
             ));
         }
 
