@@ -1230,3 +1230,19 @@ body.marquee-selecting .note-card, body.marquee-selecting .folder-card { cursor:
 .classify-input-wrap { display: flex; gap: 8px; margin-top: 4px; }
 .classify-input { flex: 1; padding: 9px 10px; font-size: 13px; background: #1a1a2e; color: #fff; border: 2px solid #3a3a5a; border-radius: 0; outline: none; }
 .classify-input:focus { border-color: var(--accent2); }
+
+/* ===== 新手教程弹窗 ===== */
+.tutorial-modal { max-width: 720px; width: calc(100vw - 32px); }
+.tutorial-modal .md-modal-body { max-height: 65vh; overflow-y: auto; padding: 18px 22px; }
+.tut-sec { margin-bottom: 18px; }
+.tut-sec:last-child { margin-bottom: 0; }
+.tut-sec-title { font-size: 15px; font-weight: bold; color: var(--accent2, #4af0ff); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 2px solid #2a2a45; }
+.tut-list { list-style: none; margin: 0; padding: 0; }
+.tut-list li { font-size: 13px; line-height: 1.8; color: #c8c8e0; padding: 3px 0 3px 16px; position: relative; }
+.tut-list li::before { content: '▸'; position: absolute; left: 0; color: var(--accent2, #4af0ff); }
+.tut-list b { color: #fff; }
+@media (max-width: 480px) {
+  .tutorial-modal .md-modal-body { max-height: 72vh; padding: 14px; }
+  .tut-sec-title { font-size: 14px; }
+  .tut-list li { font-size: 12.5px; line-height: 1.7; }
+}

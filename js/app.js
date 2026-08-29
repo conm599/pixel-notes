@@ -3059,6 +3059,90 @@
     });
   }
 
+  // ============== 新手教程（设置菜单入口，详细版） ==============
+  function openTutorial() {
+    var isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    var overlay = mkEl('div', 'md-modal-overlay');
+    overlay.style.zIndex = '21000';
+
+    var modal = mkEl('div', 'md-modal tutorial-modal');
+    var head = mkEl('div', 'md-modal-head');
+    head.appendChild(mkEl('div', 'md-modal-title', '📖 新手教程 · 从零玩转 Pixel Notes'));
+    var closeBtn = mkBtn('✕ 关闭', '关闭教程');
+    closeBtn.className = 'md-modal-close';
+    closeBtn.addEventListener('click', function () { document.body.removeChild(overlay); });
+    head.appendChild(closeBtn);
+    modal.appendChild(head);
+
+    var body = mkEl('div', 'md-modal-body');
+
+    // 教程内容：按章节组织，行内小标签高亮操作名
+    function sec(icon, title, rows) {
+      var s = mkEl('div', 'tut-sec');
+      s.appendChild(mkEl('div', 'tut-sec-title', icon + ' ' + title));
+      var ul = mkEl('ul', 'tut-list');
+      rows.forEach(function (r) { var li = mkEl('li', null, ''); li.innerHTML = r; ul.appendChild(li); });
+      s.appendChild(ul);
+      return s;
+    }
+
+    body.appendChild(sec('🗂️', '文件夹', [
+      '顶部「📁 新建文件夹」在当前层级建夹；点文件夹卡进入，左上角面包屑（🏠 主页 / 📁 工作）随时跳回任意层级。',
+      '卡片右上角「⋮」：改名、移动、删除（删除只删夹本身，里面的便签和子文件夹全部上移一级，<b>永远不会丢便签</b>）、建子文件夹。',
+      '顶部搜索框能搜便签也能搜文件夹，结果里直接显示所在路径，点击直达。'
+    ]));
+
+    body.appendChild(sec('👆', '选中与对调' + (isTouch ? '（手机）' : '（鼠标）'), isTouch ? [
+      '<b>按住卡片不动约 0.7 秒</b>：进入选择模式（卡片出现勾选高亮），再点其他卡片可加选/减选。',
+      '已选中 1 张时，<b>按住另一张不动</b>：两张卡片位置直接对调（便签和便签、文件夹和文件夹、便签和文件夹之间都行）。',
+      '选中恰好 2 张时，底部操作栏出现「⇄ 对调」按钮，点它效果相同。',
+      '点空白处或按「✕ 取消选择」退出选择模式。'
+    ] : [
+      '<b>长按卡片 0.5 秒</b>：进入选择模式（卡片出现勾选高亮），点击其他卡片加选/减选，点空白清空选择。',
+      '已选中 1 张时，<b>长按另一张</b>：两张卡片位置直接对调（便签和便签、文件夹和文件夹、便签和文件夹之间都行）。',
+      '选中恰好 2 张时，底部操作栏出现「⇄ 对调」按钮，点它效果相同。',
+      '<b>空白处按住拖动</b>：拉出粉色框选矩形，框住的卡片全部选中；按住 Ctrl 再拉 = 在已选基础上追加。'
+    ]));
+
+    body.appendChild(sec('⌨️', '快捷键' + (isTouch ? '（外接键盘时可用）' : ''), [
+      '<b>Ctrl+X / Ctrl+C / Ctrl+V</b>：剪切 / 复制 / 粘贴选中的便签（可跨文件夹移动；复制可反复粘贴，剪切粘贴一次后清空）。',
+      '<b>Ctrl+A</b>：全选当前目录的便签和文件夹；<b>Esc</b>：退出选择模式 / 关闭弹窗。',
+      '剪贴板独立于选择存在：取消选择后剪贴板内容仍在，底部迷你栏常驻「📥 粘贴」，到目标文件夹点它即可。'
+    ]));
+
+    body.appendChild(sec('↕️', '排序', isTouch ? [
+      '<b>按住卡片约 0.25 秒后拖动</b>：进入排序拖拽，松手保存新顺序。',
+      '直接滑动（按住立刻就划）不会触发拖拽——页面正常滚动，这是防误触设计。',
+      '置顶便签排在最前，只能和置顶便签调换位置。'
+    ] : [
+      '直接按住卡片<b>拖动</b>即可排序（便签、文件夹各自独立排序互不干扰），松手自动保存。',
+      '便签卡上<b>长按 0.5 秒选中、再长按另一张 0.5 秒</b>=两张对调（第 6 节手势的选择模式捷径）。',
+      '置顶便签排在最前，只能和置顶便签调换位置。'
+    ]));
+
+    body.appendChild(sec('🤖', 'AI 功能', [
+      '便签编辑器里的「🤖 AI」：写指令（如"把第 3 条改成…"）让 AI 局部修改。AI 只改你指定的部分，改完先给你看<b>差异对比</b>，点「✅ 采纳覆盖」才真正生效，不满意直接取消。',
+      '拿不准时 AI 会先<b>提问</b>（"需要哪种风格？"），回答后它继续；提问不消耗配额。',
+      '顶部「✨ AI 整理」：像 Claude Code 一样的透明 Agent——你能实时看到它在想什么、查了哪些便签，最后给出整理方案（移动/建夹/改名/排序/颜色/置顶…），预览确认才执行，且<b>可一键撤销</b>（本次会话内）。',
+      '长文也没问题：超过 4500 字自动分段处理，每段独立校对。'
+    ]));
+
+    body.appendChild(sec('✨', '更多', [
+      '卡片下方「📌」置顶、「🎨」换色（六色）、「🔗」生成公开分享链接（只读、可设有效期）。',
+      '便签支持 Markdown：标题/加粗/列表/任务清单/代码块，可内嵌图片、音频、视频和B站链接。',
+      '「🔊 朗读」把便签转语音，逐词卡拉 OK 字幕跟读。',
+      '设置里可以改密码、注销账号（注销需邮箱验证码二次确认）。'
+    ]));
+
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) document.body.removeChild(overlay); });
+    document.body.appendChild(overlay);
+  }
+
+  var btnTutorial = document.getElementById('btnTutorial');
+  if (btnTutorial) btnTutorial.addEventListener('click', openTutorial);
+
   // ============== 阅读弹窗 ==============
   var modalEscHandler = null;
   // 媒体元素领养：弹窗复用卡片里已加载的 <audio>/<video>，避免重新加载
@@ -3267,6 +3351,10 @@
       dragClass: 'drag-ghost',
       filter: '.note-title, .note-actions, .read-more, a, button',
       preventOnFilter: false,
+      // 手机端防误触：触屏需按住 250ms 才进入拖拽，滑动超 10px 自动取消还给页面滚动；鼠标不受影响
+      delay: 250,
+      delayOnTouchOnly: true,
+      touchStartThreshold: 10,
       onEnd: function () {
         var cards = notesGrid.querySelectorAll('.note-card');
         var reorder = [];
@@ -3291,6 +3379,10 @@
       dragClass: 'drag-ghost',
       filter: '.folder-name, .folder-count, .folder-menu-btn, a, button',
       preventOnFilter: false,
+      // 手机端防误触：与便签组同款触屏参数
+      delay: 250,
+      delayOnTouchOnly: true,
+      touchStartThreshold: 10,
       onEnd: function () {
         var cards = notesGrid.querySelectorAll('.folder-card');
         var reorder = [];

@@ -11,7 +11,8 @@
 (function () {
   'use strict';
 
-  var SEL_MS = 500;           // 长按进入选择模式阈值
+  var SEL_MS = 500;           // 长按进入选择模式阈值（鼠标）
+  var SEL_MS_TOUCH = 700;     // 触屏阈值：比 Sortable 触屏拖拽延迟（250ms）长，按住不动=选择、按住后拖动=排序，两不误
   var DRAG_THRESHOLD = 4;     // 框选拖动生效阈值（像素）
   var MOVE_CANCEL = 10;       // 长按位移超过此值判定为拖动，取消长按
 
@@ -86,8 +87,9 @@
 
     if (full) {
       bar.querySelector('.sel-count').textContent = '已选中 ' + n + ' 项';
-      var twoNotes = Object.keys(selectedNotes).length === 2 && Object.keys(selectedFolders).length === 0;
-      bar.querySelector('.sel-swap').style.display = twoNotes ? '' : 'none';
+      // 恰好选中 2 项（便签/文件夹/混合）时出对调按钮
+      var two = n === 2;
+      bar.querySelector('.sel-swap').style.display = two ? '' : 'none';
     }
     if (hasClip) {
       var typ = clipboard.type === 'cut' ? '剪切' : '复制';
@@ -185,9 +187,17 @@
   }
 
   function selSwap() {
-    var ids = Object.keys(selectedNotes);
-    if (ids.length !== 2) return;
-    swapCardsById(ids[0], ids[1]);
+    // 便签对、文件夹对、便签+文件夹混合（同网格混排）都可对调
+    var noteIds = Object.keys(selectedNotes);
+    var folderIds = Object.keys(selectedFolders);
+    if (noteIds.length + folderIds.length !== 2) return;
+    if (noteIds.length === 2) {
+      swapCardsById(noteIds[0], noteIds[1]);
+    } else if (folderIds.length === 2) {
+      swapFolderCardsById(folderIds[0], folderIds[1]);
+    } else {
+      swapMixedCards(noteIds[0], folderIds[0]);
+    }
   }
 
   async function selDelete() {
@@ -245,13 +255,53 @@
       ctx.showToast('⚠️ 置顶便签只能和置顶便签对调', 'error');
       return;
     }
+    swapDomCards(cardA, cardB);
+    exitSelection();
+    saveCardOrder();
+  }
+
+  // ===== 文件夹对调（与便签对调同款体验）=====
+  function swapFolderCardsById(idA, idB) {
+    var cardA = notesGrid.querySelector('.folder-card[data-folder-id="' + idA + '"]');
+    var cardB = notesGrid.querySelector('.folder-card[data-folder-id="' + idB + '"]');
+    if (!cardA || !cardB) return;
+    swapDomCards(cardA, cardB);
+    exitSelection();
+    saveFolderOrder();
+  }
+
+  // 便签 ↔ 文件夹混合对调：两者各自的顺序序列里交换对应槽位
+  function swapMixedCards(noteId, folderId) {
+    var nc = notesGrid.querySelector('.note-card[data-id="' + noteId + '"]');
+    var fc = notesGrid.querySelector('.folder-card[data-folder-id="' + folderId + '"]');
+    if (!nc || !fc) return;
+    swapDomCards(nc, fc);
+    exitSelection();
+    saveCardOrder();
+    saveFolderOrder();
+  }
+
+  // DOM 层互换两张卡片的位置（纯视觉），持久化由调用方各自负责
+  function swapDomCards(cardA, cardB) {
     var placeholder = document.createElement('div');
     notesGrid.insertBefore(placeholder, cardA);
     notesGrid.insertBefore(cardA, cardB);
     notesGrid.insertBefore(cardB, placeholder);
     notesGrid.removeChild(placeholder);
-    exitSelection();
-    saveCardOrder();
+  }
+
+  function saveFolderOrder() {
+    var cards = notesGrid.querySelectorAll('.folder-card');
+    var reorder = [];
+    cards.forEach(function (card, i) {
+      reorder.push({ id: parseInt(card.getAttribute('data-folder-id')), sort_order: i });
+    });
+    ctx.folderApi('PUT', { reorder: reorder }).then(function () {
+      ctx.showToast('📁 文件夹位置已对调并保存', 'success');
+    }).catch(function () {
+      ctx.showToast('❌ 位置保存失败，正在刷新', 'error');
+      ctx.refreshAll();
+    });
   }
 
   // ===== 长按 =====
@@ -279,18 +329,38 @@
 
       var sx = e.clientX, sy = e.clientY;
       clearLpTimer();
+      var lpMs = e.pointerType === 'touch' ? SEL_MS_TOUCH : SEL_MS;
       lpTimer = setTimeout(function () {
         lpTimer = null;
-        // 兼容 v6.8 长按对调手势：已选中 1 张便签时，长按另一张便签立即对调
+        // 兼容 v6.8 长按对调手势：已选中 1 项时，长按另一张卡片立即对调（便签/文件夹/混合都行）
         var selNoteIds = Object.keys(selectedNotes);
-        if (kind === 'note' && selNoteIds.length === 1 && String(id) !== selNoteIds[0]) {
-          swapCardsById(Number(selNoteIds[0]), parseInt(id));
-          armClickSuppression();
-          return;
+        var selFolderIds = Object.keys(selectedFolders);
+        if ((selNoteIds.length + selFolderIds.length) === 1) {
+          if (kind === 'note' && String(id) !== selNoteIds[0] && selFolderIds.length === 0) {
+            swapCardsById(Number(selNoteIds[0]), id);
+            armClickSuppression();
+            return;
+          }
+          if (kind === 'folder' && String(id) !== selFolderIds[0] && selNoteIds.length === 0) {
+            swapFolderCardsById(Number(selFolderIds[0]), id);
+            armClickSuppression();
+            return;
+          }
+          // 已选便签 → 长按文件夹 / 已选文件夹 → 长按便签：混合对调
+          if (kind === 'folder' && selNoteIds.length === 1) {
+            swapMixedCards(Number(selNoteIds[0]), id);
+            armClickSuppression();
+            return;
+          }
+          if (kind === 'note' && selFolderIds.length === 1) {
+            swapMixedCards(id, Number(selFolderIds[0]));
+            armClickSuppression();
+            return;
+          }
         }
         toggleSelect(kind, id);
         armClickSuppression();
-      }, SEL_MS);
+      }, lpMs);
       var onMove = function (ev) {
         if (Math.abs(ev.clientX - sx) > MOVE_CANCEL || Math.abs(ev.clientY - sy) > MOVE_CANCEL) { clearLpTimer(); cleanup(); }
       };

@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=51">
+    <link rel="stylesheet" href="css/pixel.css?v=52">
 </head>
 <body>
     <!-- 顶部导航 -->
@@ -34,6 +34,7 @@ if (!isset($_SESSION['user_id'])) {
             <div class="nav-settings-wrap">
                 <button type="button" id="btnSettings" class="btn btn-outline btn-xs" title="设置">⚙️ 设置</button>
                 <div id="settingsMenu" class="settings-menu" style="display:none;">
+                    <button type="button" id="btnTutorial" class="settings-menu-item">📖 新手教程</button>
                     <button type="button" id="btnChangePass" class="settings-menu-item">🔑 更改密码</button>
                     <button type="button" id="btnDeleteAccount" class="settings-menu-item settings-menu-danger">🗑 注销账号</button>
                 </div>
@@ -110,7 +111,7 @@ if (!isset($_SESSION['user_id'])) {
     <script src="js/md.js?v=35"></script>
     <script src="js/Sortable.min.js"></script>
     <script src="js/ai-direct.js?v=14"></script>
-    <script src="js/selection.js?v=4"></script>
-    <script src="js/app.js?v=70"></script>
+    <script src="js/selection.js?v=5"></script>
+    <script src="js/app.js?v=71"></script>
 </body>
 </html>
