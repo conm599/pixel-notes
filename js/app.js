@@ -945,7 +945,7 @@
 
     modal.appendChild(chatLog);
 
-    // 一键整理区
+    // 一键整理区（撤销按钮也收进这里——它只对 AI 整理生效，放工具栏占地方）
     var oneClickWrap = mkEl('div', 'classify-oneclick');
     var oneClickBtn = mkBtn('⚡ 一键自动整理', '让 AI 处理所有未整理的便签');
     oneClickBtn.className = 'btn btn-primary btn-sm';
@@ -954,6 +954,13 @@
       runAiClassifyInternal(null);
     });
     oneClickWrap.appendChild(oneClickBtn);
+
+    var undoBtn = mkBtn('↩️ 撤销上次整理', '撤销本会话最近一次 AI 整理（仅限本次浏览器会话）');
+    undoBtn.id = 'btnUndoAiOff';
+    undoBtn.className = 'btn btn-outline btn-sm';
+    undoBtn.disabled = true;   // 常驻但禁用态起步：无日志时灰显"无可撤销"，有日志时点亮
+    undoBtn.addEventListener('click', function () { if (!undoBtn.disabled) undoLastClassify(); });
+    oneClickWrap.appendChild(undoBtn);
 
     // 输入行
     var inputWrap = mkEl('div', 'classify-input-wrap');
@@ -995,6 +1002,7 @@
     classifyOverlay = overlay;
 
     input.focus();
+    checkPendingClassify();   // 打开拟态框即刷新撤销按钮（按钮已收进本框）
   }
 
   function closeClassifyDialog() {
@@ -1365,7 +1373,7 @@
       showToast('✅ 整理完成：' + (parts.join('，') || '无实际变更') + '（可撤销）', 'success');
       aiClassifyPending = null;
       await loadFolders(); refreshView();
-      document.getElementById('btnUndoAiOff').style.display = 'inline-block';
+      document.getElementById('btnUndoAiOff').disabled = false;
     } catch (e) {
       showToast('❌ 执行失败', 'error');
     }
@@ -1385,9 +1393,11 @@
         showToast('❌ ' + (result.message || '无可撤销操作'), 'error');
         return;
       }
-      showToast('↩️ 已撤销，' + result.restored + ' 条便签已还原', 'success');
+      var chatLog = document.getElementById('aiChatLog');
+      if (chatLog) renderChatBubble(chatLog, 'assistant', '↩️ 已撤销上次整理，' + result.restored + ' 项操作已还原。');
+      showToast('↩️ 已撤销，' + result.restored + ' 项操作已还原', 'success');
       await loadFolders(); refreshView();
-      if (!result.still_more) document.getElementById('btnUndoAiOff').style.display = 'none';
+      if (!result.still_more) document.getElementById('btnUndoAiOff').disabled = true;
     } catch (e) {
       showToast('❌ 撤销失败', 'error');
     }
@@ -1404,7 +1414,7 @@
       });
       var result = await resp.json();
       if (result.success && result.has_pending) {
-        document.getElementById('btnUndoAiOff').style.display = 'inline-block';
+        document.getElementById('btnUndoAiOff').disabled = false;
       }
     } catch (e) { /* 不阻塞 */ }
   }
@@ -2395,7 +2405,26 @@
         info = '';
       }
       if (aiResult.mode === 'edits') {
-        info += '📑 局部修改：应用了 ' + aiResult.applied + ' 处改动';
+        // 块数 ≠ 实际改动量：一个替换块可能塞进大量新增行（AI 润色时常见），按 diff 行数提示更符合直觉
+        var diffLines = 0;
+        var diffReady = false;
+        if (typeof aiResult.original === 'string' && typeof aiResult.content === 'string'
+            && aiResult.original.split('\n').length * aiResult.content.split('\n').length <= 4000000) {   // LCS O(m×n)，400万格以内才算（约 2000×2000 行）
+          var oldL = aiResult.original.split('\n');
+          var newL = aiResult.content.split('\n');
+          // 简单 LCS 行级差异统计
+          var m = oldL.length, n = newL.length;
+          var dp = new Array(m + 1);
+          for (var i2 = 0; i2 <= m; i2++) dp[i2] = new Array(n + 1).fill(0);
+          for (var i2 = m - 1; i2 >= 0; i2--) {
+            for (var j2 = n - 1; j2 >= 0; j2--) {
+              dp[i2][j2] = (oldL[i2] === newL[j2]) ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
+            }
+          }
+          diffLines = (m - dp[0][0]) + (n - dp[0][0]);   // 删除行 + 新增行
+          diffReady = true;
+        }
+        info += '📑 局部修改：应用了 ' + aiResult.applied + ' 个替换块' + (diffReady ? '，实际改动 ' + diffLines + ' 行' : '');
         if (aiResult.failed) info += '，另有 ' + aiResult.failed + ' 处位置未匹配被跳过';
       } else {
         info += '📝 全文重写：AI 返回了整篇内容，请仔细核对差异';
@@ -3219,6 +3248,7 @@
 
   // ============== 拖拽排序 (SortableJS) ==============
   var sortableInstance = null;
+  var sortableFolderInstance = null;   // 文件夹排序（与便签排序分开：两组互不混拖）
 
   function initDragSort() {
     if (typeof Sortable === 'undefined') {
@@ -3227,6 +3257,7 @@
       return;
     }
     if (sortableInstance) sortableInstance.destroy();
+    if (sortableFolderInstance) sortableFolderInstance.destroy();
 
     sortableInstance = Sortable.create(notesGrid, {
       animation: 350,
@@ -3250,6 +3281,31 @@
         });
       }
     });
+
+    // 文件夹互拖排序：同一网格但 draggable 只认 folder-card，与便签组天然隔离
+    sortableFolderInstance = Sortable.create(notesGrid, {
+      animation: 350,
+      draggable: '.folder-card',
+      ghostClass: 'dragging',
+      chosenClass: 'drag-chosen',
+      dragClass: 'drag-ghost',
+      filter: '.folder-name, .folder-count, .folder-menu-btn, a, button',
+      preventOnFilter: false,
+      onEnd: function () {
+        var cards = notesGrid.querySelectorAll('.folder-card');
+        var reorder = [];
+        cards.forEach(function (card, i) {
+          var id = parseInt(card.getAttribute('data-folder-id'));
+          reorder.push({ id: id, sort_order: i });
+        });
+        folderApi('PUT', { reorder: reorder }).then(function () {
+          showToast('📁 文件夹顺序已保存', 'success');
+          loadFolders().then(refreshView);   // 计数不变，但顺序刷新要重渲染
+        }).catch(function () {
+          showToast('❌ 文件夹排序保存失败', 'error');
+        });
+      }
+    });
   }
 
 
@@ -3258,7 +3314,6 @@
   document.getElementById('btnNewFolder').addEventListener('click', function () {
     promptNewFolder(currentFolderId);
   });
-  document.getElementById('btnUndoAiOff').addEventListener('click', undoLastClassify);
   document.getElementById('btnAiOrganize').addEventListener('click', function () {
     openClassifyDialog();
   });

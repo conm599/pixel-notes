@@ -164,6 +164,7 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
         <a href="index.php" class="navbar-brand"><span class="icon">🎮</span> PIXEL NOTES</a>
         <div class="navbar-user">
             <span>👤 <?= htmlspecialchars($_SESSION['username']) ?> · 管理员</span>
+            <a href="backup.php" class="btn btn-outline btn-xs">📦 数据备份与迁移</a>
             <a href="index.php" class="btn btn-outline btn-xs">← 返回便签</a>
             <form method="post" action="logout.php" style="display:inline;margin:0;">
                 <button type="submit" class="btn btn-outline btn-xs">退出</button>

@@ -4,7 +4,7 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
- * 实现以 protocol.md v7 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
+ * 实现以 protocol.md v8 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
  *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
@@ -160,16 +160,38 @@
     return s.replace(/[ \t\u3000]+$/g, '');
   }
 
-  // 三级宽容匹配替换（protocol v4，与 api/ai.php aiApplyBlock 逐字一致）：
-  // 1. 精确子串；2. 行尾空白归一；3. 全空白折叠归一。第 2/3 级按行滑窗、全文唯一命中才应用，
-  // 内层归一化长度超过 SEARCH 归一化长度即提前终止。成功返回新内容，失败返回 null。
-  function matchAndApply(content, search, replace) {
+  function rangeOverlap(a, b) {
+    return a[0] < b[1] && b[0] < a[1];
+  }
+
+  // 三级宽容匹配替换（protocol v8，与 api/ai.php aiApplyBlock 逐字一致）：
+  // 1. 精确子串；2. 行尾空白归一；3. 全空白折叠。
+  // v8 加固：① 三级全部要求「全文唯一有效命中」才应用（精确级不再取首次出现）；
+  // ② 块隔离——doneRanges 是前序块 REPLACE 已覆盖区间，命中与之相交即无效。
+  // 成功返回 { c: 新内容, old: [起,止), new: [起,止) }，失败返回 null。
+  function matchAndApply(content, search, replace, doneRanges) {
     if (!search) return null;
-    var idx = content.indexOf(search);
-    if (idx !== -1) {
-      return content.slice(0, idx) + replace + content.slice(idx + search.length);
+    doneRanges = doneRanges || [];
+    // 精确级：收集全部出现位置，过滤已替换区间，唯一才应用
+    var exact = [];
+    var p = content.indexOf(search);
+    while (p !== -1) { exact.push(p); p = content.indexOf(search, p + 1); }
+    var valid = [];
+    for (var ei = 0; ei < exact.length; ei++) {
+      var rng = [exact[ei], exact[ei] + search.length];
+      var blocked = false;
+      for (var di = 0; di < doneRanges.length; di++) { if (rangeOverlap(rng, doneRanges[di])) { blocked = true; break; } }
+      if (!blocked) valid.push(rng);
+    }
+    if (valid.length === 1) {
+      var a = valid[0][0], b = valid[0][1];
+      return { c: content.slice(0, a) + replace + content.slice(b), old: [a, b], new: [a, a + replace.length] };
     }
     var lines = content.split('\n');
+    // 行号 → 偏移前缀和（滑窗命中换算回字符区间，用于块隔离过滤）
+    var lineOff = [];
+    var off = 0;
+    for (var li = 0; li < lines.length; li++) { lineOff[li] = off; off += lines[li].length + 1; }
     var keyFns = [
       function (s) { return s.split('\n').map(rtrimLine).join('\n'); },
       function (s) { return foldWs(s).replace(/^ | $/g, ''); }
@@ -184,19 +206,30 @@
         for (var j = i; j < lines.length; j++) {
           acc += (j > i ? '\n' : '') + lines[j];
           var k = kf(acc);
-          if (k === needleKey) { hits.push([i, j]); break; }
+          if (k === needleKey) {
+            var rng2 = [lineOff[i], j + 1 < lines.length ? lineOff[j + 1] : content.length];
+            var blocked2 = false;
+            for (var dj = 0; dj < doneRanges.length; dj++) { if (rangeOverlap(rng2, doneRanges[dj])) { blocked2 = true; break; } }
+            if (!blocked2) hits.push([i, j, rng2]);
+            break;
+          }
           if (k.length > needleKey.length) break;
         }
       }
       if (hits.length === 1) {
-        var seg = lines.slice(0, hits[0][0]);
+        var h = hits[0];
+        var seg = lines.slice(0, h[0]);
         seg.push(replace);
-        return seg.concat(lines.slice(hits[0][1] + 1)).join('\n');
+        var newC = seg.concat(lines.slice(h[1] + 1)).join('\n');
+        return { c: newC, old: h[2], new: [h[2][0], h[2][0] + replace.length] };
       }
     }
     return null;
   }
 
+  // 顺序应用多个替换块（protocol v8 块隔离）：
+  // 维护已替换区间列表，每次替换后把位于替换点之后的旧区间按长度差平移，
+  // 后续块的 SEARCH 只在「未被前序块改动的原文区域」定位。
   function applyBlocks(text, originalContent) {
     var re = /<<<SEARCH>>>\s*\n([\s\S]*?)\n?<<<REPLACE>>>\s*\n([\s\S]*?)\n?<<<END>>>/ig;
     var m = null;
@@ -204,12 +237,18 @@
     var failed = 0;
     var bad = [];
     var result = originalContent.replace(/\r\n/g, '\n');
+    var done = [];
     while ((m = re.exec(text)) !== null) {
       var search = m[1].replace(/\r\n/g, '\n').replace(/\n+$/, '');
       var replace = m[2].replace(/\r\n/g, '\n').replace(/\n+$/, '');
-      var nc = matchAndApply(result, search, replace);
-      if (nc !== null) {
-        result = nc;
+      var res = matchAndApply(result, search, replace, done);
+      if (res !== null) {
+        result = res.c;
+        var delta = (res.new[1] - res.new[0]) - (res.old[1] - res.old[0]);
+        for (var ri = 0; ri < done.length; ri++) {
+          if (done[ri][0] >= res.old[1]) { done[ri][0] += delta; done[ri][1] += delta; }
+        }
+        done.push(res.new);
         applied++;
       } else {
         failed++;

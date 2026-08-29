@@ -5,7 +5,7 @@
  * action=test   : 管理员测试上游连通性
  * action=prefs  : 读取/保存用户 AI 偏好（跨端同步，用户主动勾选）
  *
- * 实现以 protocol.md v7 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / 整理 Agent SSE 的唯一事实源），改动需与 js/ai-direct.js 同步
+ * 实现以 protocol.md v8 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / 整理 Agent SSE 的唯一事实源），改动需与 js/ai-direct.js 同步
  *
  * 安全设计：
  * - 管理员的上游 Key 存于 pn_settings，永不下发浏览器
@@ -131,19 +131,48 @@ function aiRtrimLine($s) {
 }
 
 /**
- * 三级宽容匹配替换（protocol v4，与 js/ai-direct.js matchAndApply 逐字一致）：
- * 1. 精确子串匹配；2. 行尾空白归一匹配；3. 全空白折叠归一匹配。
- * 第 2/3 级按行滑窗、全文唯一命中才应用（0 处或多处均失败，避免错改）；
- * 内层归一化长度超过 SEARCH 归一化长度即提前终止（随行数单调不减）。
- * 成功返回替换后的新内容，失败返回 null。
+ * 区间重叠判定（块隔离用）：[s1,e1) 与 [s2,e2) 是否相交
  */
-function aiApplyBlock($content, $search, $replace) {
+function aiRangeOverlap($a, $b) {
+    return $a[0] < $b[1] && $b[0] < $a[1];
+}
+
+/**
+ * 三级宽容匹配替换（protocol v8，与 js/ai-direct.js matchAndApply 逐字一致）：
+ * 1. 精确子串匹配；2. 行尾空白归一匹配；3. 全空白折叠归一匹配。
+ * v8 加固：① 三级全部要求「全文唯一有效命中」才应用（精确级不再取首次出现；
+ *   多处出现视为歧义，与第 2/3 级同标准，杜绝重复句式文本中替换错位置）；
+ * ② 块隔离——$doneRanges 是前序块 REPLACE 已覆盖的字符区间（相对 $content），
+ *   命中位置与之相交即无效（后块不得改写前块刚输出的新文本）。
+ * 第 2/3 级按行滑窗，内层归一化长度超过 SEARCH 归一化长度即提前终止（随行数单调不减）。
+ * 成功返回 array('c'=>新内容, 'old'=>array(旧区间), 'new'=>array(新区间))，失败返回 null。
+ */
+function aiApplyBlock($content, $search, $replace, $doneRanges = array()) {
     if (!is_string($content) || $search === '') return null;
-    $pos = strpos($content, $search);
-    if ($pos !== false) {
-        return substr_replace($content, $replace, $pos, strlen($search));
+    // 精确级：收集全部出现位置，过滤掉与已替换区间相交的，唯一才应用
+    $pos = 0;
+    $exact = array();
+    while (($p = strpos($content, $search, $pos)) !== false) {
+        $exact[] = $p;
+        $pos = $p + 1;
+    }
+    $valid = array();
+    foreach ($exact as $p) {
+        $rng = array($p, $p + strlen($search));
+        $blocked = false;
+        foreach ($doneRanges as $dr) { if (aiRangeOverlap($rng, $dr)) { $blocked = true; break; } }
+        if (!$blocked) $valid[] = $rng;
+    }
+    if (count($valid) === 1) {
+        list($a, $b) = $valid[0];
+        $newC = substr_replace($content, $replace, $a, $b - $a);
+        return array('c' => $newC, 'old' => array($a, $b), 'new' => array($a, $a + strlen($replace)));
     }
     $lines = explode("\n", $content);
+    // 行号 → 字符偏移前缀和（滑窗命中换算回字符区间，用于块隔离过滤）
+    $lineOff = array();
+    $off = 0;
+    foreach ($lines as $li => $ln) { $lineOff[$li] = $off; $off += strlen($ln) + 1; }
     $keyFns = array(
         function ($s) { return implode("\n", array_map('aiRtrimLine', explode("\n", $s))); },
         function ($s) { return trim(aiFoldWs($s), ' '); },
@@ -158,17 +187,51 @@ function aiApplyBlock($content, $search, $replace) {
             for ($j = $i; $j < $n; $j++) {
                 $acc .= ($j > $i ? "\n" : '') . $lines[$j];
                 $k = $kf($acc);
-                if ($k === $needleKey) { $hits[] = array($i, $j); break; }
+                if ($k === $needleKey) {
+                    // 命中区间换算成字符偏移，与已替换区间相交则无效
+                    $rng = array($lineOff[$i], $j + 1 < $n ? $lineOff[$j + 1] : strlen($content));
+                    $blocked = false;
+                    foreach ($doneRanges as $dr) { if (aiRangeOverlap($rng, $dr)) { $blocked = true; break; } }
+                    if (!$blocked) $hits[] = array($i, $j, $rng);
+                    break;
+                }
                 if (strlen($k) > strlen($needleKey)) break;
             }
         }
         if (count($hits) === 1) {
-            list($i, $j) = $hits[0];
+            list($i, $j, $rng) = $hits[0];
             $newLines = array_merge(array_slice($lines, 0, $i), array($replace), array_slice($lines, $j + 1));
-            return implode("\n", $newLines);
+            $newC = implode("\n", $newLines);
+            $newRng = array($rng[0], $rng[0] + strlen($replace));
+            return array('c' => $newC, 'old' => $rng, 'new' => $newRng);
         }
     }
     return null;
+}
+
+/**
+ * 顺序应用多个替换块（protocol v8 块隔离）：
+ * 维护已替换区间列表；每次替换后把位于替换点之后的旧区间按长度差平移，
+ * 保证后续块的 SEARCH 永远只在「未被前序块改动的原文区域」定位。
+ * 返回 array('content'=>, 'applied'=>, 'failed'=>, 'bad'=>)
+ */
+function aiApplyBlocksSeq($content, $blocks) {
+    $done = array();
+    $applied = 0; $failed = 0; $bad = array();
+    foreach ($blocks as $blk) {
+        $search = $blk[0]; $replace = $blk[1];
+        $res = aiApplyBlock($content, $search, $replace, $done);
+        if ($res === null) { $failed++; $bad[] = $search; continue; }
+        $content = $res['c'];
+        $delta = ($res['new'][1] - $res['new'][0]) - ($res['old'][1] - $res['old'][0]);
+        foreach ($done as &$r) {
+            if ($r[0] >= $res['old'][1]) { $r[0] += $delta; $r[1] += $delta; }
+        }
+        unset($r);
+        $done[] = $res['new'];
+        $applied++;
+    }
+    return array('content' => $content, 'applied' => $applied, 'failed' => $failed, 'bad' => $bad);
 }
 
 /**
@@ -958,6 +1021,12 @@ try {
             }
 
             // 溯源日志（undo 序列即可完整还原本批操作）
+            // 会话制：日志只属于当前浏览器会话；旧会话的日志写入前先清掉（撤销资格不跨会话，服务器不留历史堆积）
+            $sessKey = 'pn_classify_sess';
+            if (!isset($_SESSION[$sessKey])) {
+                $pdo->prepare("DELETE FROM pn_ai_actions WHERE user_id = ? AND action = 'classify'")->execute(array($uid));
+                $_SESSION[$sessKey] = 1;
+            }
             $logDetail = json_encode(array('ops' => $cleanOps, 'undo' => $undo, 'skipped' => $skipped), JSON_UNESCAPED_UNICODE);
             $st = $pdo->prepare("INSERT INTO pn_ai_actions (user_id, action, detail, created_at) VALUES (?, 'classify', ?, ?)");
             $st->execute(array($uid, $logDetail !== false ? $logDetail : json_encode(array('error' => 'log_encode_failed')), $now));
@@ -970,9 +1039,13 @@ try {
         }
     }
 
-    // ================= AI 整理撤销（最近一批，支持 move/mkdir/rename） =================
+    // ================= AI 整理撤销（最近一批，支持 move/mkdir/rename；仅限当前会话的日志） =================
     if ($action === 'classify_undo') {
         $pdo = getDB();
+        // 会话制：本会话没做过任何整理就没有撤销资格（旧会话日志在 status 检查时已清）
+        if (empty($_SESSION['pn_classify_sess'])) {
+            jsonOut(array('success' => false, 'message' => '本次会话没有可撤销的整理操作'));
+        }
         $st = $pdo->prepare("SELECT id, detail FROM pn_ai_actions WHERE user_id = ? AND action = 'classify' ORDER BY id DESC LIMIT 1");
         $st->execute(array($uid));
         $log = $st->fetch();
@@ -1078,12 +1151,19 @@ try {
         jsonOut(array('success' => true, 'restored' => $restoredCount, 'still_more' => $still));
     }
 
-    // ================= AI 整理状态（是否有待撤销） =================
+    // ================= AI 整理状态（是否有待撤销；新会话首次查询即清理旧会话日志） =================
     if ($action === 'classify_status') {
         $pdo = getDB();
-        $st = $pdo->prepare("SELECT COUNT(*) FROM pn_ai_actions WHERE user_id = ? AND action = 'classify'");
-        $st->execute(array($uid));
-        $has = (int)$st->fetchColumn() > 0;
+        $sessKey = 'pn_classify_sess';
+        if (!isset($_SESSION[$sessKey])) {
+            // 新浏览器会话：旧会话的撤销资格作废，日志直接清掉（不占服务器存储）
+            $pdo->prepare("DELETE FROM pn_ai_actions WHERE user_id = ? AND action = 'classify'")->execute(array($uid));
+            $has = false;
+        } else {
+            $st = $pdo->prepare("SELECT COUNT(*) FROM pn_ai_actions WHERE user_id = ? AND action = 'classify'");
+            $st->execute(array($uid));
+            $has = (int)$st->fetchColumn() > 0;
+        }
         jsonOut(array('success' => true, 'has_pending' => $has));
     }
 
@@ -1435,18 +1515,18 @@ try {
                         break;
                     }
                     if (preg_match_all('/<<<SEARCH>>>\s*\n([\s\S]*?)\n?<<<REPLACE>>>\s*\n([\s\S]*?)\n?<<<END>>>/i', $text, $mm, PREG_SET_ORDER)) {
-                        $cApplied = 0;
+                        $pairs = array();
                         foreach ($mm as $b) {
-                            $search = str_replace("\r\n", "\n", rtrim($b[1], "\n"));
-                            $replace = str_replace("\r\n", "\n", rtrim($b[2], "\n"));
-                            $newC = aiApplyBlock($newContent, $search, $replace);
-                            if ($newC !== null) {
-                                $newContent = $newC;
-                                $cApplied++; $applied++;
-                            } else {
-                                $failed++;
-                            }
+                            $pairs[] = array(
+                                str_replace("\r\n", "\n", rtrim($b[1], "\n")),
+                                str_replace("\r\n", "\n", rtrim($b[2], "\n")),
+                            );
                         }
+                        $seq = aiApplyBlocksSeq($newContent, $pairs);
+                        $newContent = $seq['content'];
+                        $cApplied = $seq['applied'];
+                        $applied += $seq['applied'];
+                        $failed += $seq['failed'];
                         if ($cApplied > 0) break;
                         if ($att < 2) {
                             $segMsgs[] = array('role' => 'assistant', 'content' => $text);
@@ -1548,21 +1628,19 @@ try {
             // ===== 局部修改协议：解析 <<<SEARCH>>>/<<<REPLACE>>>/<<<END>>> 块 =====
             $contentN = str_replace("\r\n", "\n", $content);
             if (preg_match_all('/<<<SEARCH>>>\s*\n([\s\S]*?)\n?<<<REPLACE>>>\s*\n([\s\S]*?)\n?<<<END>>>/i', $text, $mm, PREG_SET_ORDER)) {
-                $applied = 0; $failed = 0;
                 $newContent = $contentN;
-                $badSearches = array();
+                $pairs = array();
                 foreach ($mm as $b) {
-                    $search = str_replace("\r\n", "\n", rtrim($b[1], "\n"));
-                    $replace = str_replace("\r\n", "\n", rtrim($b[2], "\n"));
-                    $newC = aiApplyBlock($newContent, $search, $replace);
-                    if ($newC !== null) {
-                        $newContent = $newC;
-                        $applied++;
-                    } else {
-                        $failed++;
-                        $badSearches[] = $search;
-                    }
+                    $pairs[] = array(
+                        str_replace("\r\n", "\n", rtrim($b[1], "\n")),
+                        str_replace("\r\n", "\n", rtrim($b[2], "\n")),
+                    );
                 }
+                $seq = aiApplyBlocksSeq($newContent, $pairs);
+                $newContent = $seq['content'];
+                $applied = $seq['applied'];
+                $failed = $seq['failed'];
+                $badSearches = $seq['bad'];
                 if ($applied > 0) {
                     $result = array(
                         'success' => true,

@@ -76,7 +76,7 @@ try {
     if ($action === 'sendcode') {
         $email = strtolower(trim(isset($input['email']) ? $input['email'] : ''));
         $purpose = isset($input['purpose']) ? $input['purpose'] : '';
-        if (!in_array($purpose, array('register', 'login', 'reset', 'delete'), true)) {
+        if (!in_array($purpose, array('register', 'login', 'reset', 'delete', 'backup'), true)) {
             jsonResponse(array('success' => false, 'message' => '用途参数非法'), 400);
         }
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -125,6 +125,19 @@ try {
             $st->execute(array($email));
             if ($st->fetch()) {
                 jsonResponse(array('success' => false, 'message' => '该邮箱已被注册'), 409);
+            }
+        } elseif ($purpose === 'backup') {
+            // 数据备份导入：仅限已登录的管理员，且必须用自己账号绑定的邮箱
+            if (!isset($_SESSION['user_id'])) {
+                jsonResponse(array('success' => false, 'message' => '请先登录'), 401);
+            }
+            if (!isAdminUser()) {
+                jsonResponse(array('success' => false, 'message' => '需要管理员权限'), 403);
+            }
+            $st = $pdo->prepare("SELECT id FROM pn_users WHERE email = ? AND id = ?");
+            $st->execute(array($email, (int)$_SESSION['user_id']));
+            if (!$st->fetch()) {
+                jsonResponse(array('success' => false, 'message' => '邮箱与当前管理员账号不匹配'), 400);
             }
         } elseif ($purpose === 'delete') {
             // 注销：必须是已登录用户自己的邮箱
@@ -192,8 +205,8 @@ try {
                                VALUES (?, ?, 'register', 1, NOW())");
         $stmt->execute(array(substr($username, 0, 100), $ip));
 
-        $stmt = $pdo->prepare("SELECT id FROM pn_users WHERE username = ? OR email = ?");
-        $stmt->execute(array($username, $email));
+        $stmt = $pdo->prepare("SELECT id FROM pn_users WHERE email = ?");
+        $stmt->execute(array($email));
         if ($stmt->fetch()) {
             jsonResponse(array('success' => false, 'message' => '用户名或邮箱已被注册'), 409);
         }
@@ -237,8 +250,8 @@ try {
             jsonResponse(array('success' => false, 'message' => '尝试次数过多，请15分钟后再试'), 429);
         }
 
-        $stmt = $pdo->prepare("SELECT id, username, password_hash, email_verified FROM pn_users WHERE username = ? OR email = ?");
-        $stmt->execute(array($login, $login));
+        $stmt = $pdo->prepare("SELECT id, username, password_hash, email_verified FROM pn_users WHERE email = ?");
+        $stmt->execute(array($login));
         $user = $stmt->fetch();
 
         $ok = $user && password_verify($password, $user['password_hash']);
