@@ -230,9 +230,16 @@ function ensureTables(&$error = null) {
         $done = true;
         return true;
     } catch (PDOException $e) {
-        $lastError = $e->getMessage();
-        $error = $lastError;
-        return false;
+        // 多 worker 并发对空库首跑时，CREATE TABLE IF NOT EXISTS 仍可能抛 already exists/死锁；
+        // 只要核心用户表此刻真实可用即放行本次请求（不设 $done，后续请求会继续幂等补齐剩余迁移）
+        try {
+            getDB()->query("SELECT 1 FROM `pn_users` LIMIT 1");
+            return true;
+        } catch (Exception $e2) {
+            $lastError = $e->getMessage();
+            $error = $lastError;
+            return false;
+        }
     }
 }
 
