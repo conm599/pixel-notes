@@ -35,6 +35,7 @@ if (!isset($_SESSION['user_id'])) {
                 <button type="button" id="btnSettings" class="btn btn-outline btn-xs" title="设置">⚙️ 设置</button>
                 <div id="settingsMenu" class="settings-menu" style="display:none;">
                     <button type="button" id="btnTutorial" class="settings-menu-item">📖 新手教程</button>
+                    <a href="https://github.com/conm599/pixel-notes" target="_blank" rel="noopener" class="settings-menu-item">⭐ GitHub 开源地址</a>
                     <button type="button" id="btnChangePass" class="settings-menu-item">🔑 更改密码</button>
                     <button type="button" id="btnDeleteAccount" class="settings-menu-item settings-menu-danger">🗑 注销账号</button>
                 </div>
