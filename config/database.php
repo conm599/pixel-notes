@@ -149,8 +149,11 @@ function ensureTables(&$error = null) {
             `name` VARCHAR(100) NOT NULL,
             `sort_order` INT NOT NULL DEFAULT 0,
             `created_at` DATETIME NOT NULL,
+            `share_token` VARCHAR(36) NOT NULL DEFAULT '',
+            `share_until` INT UNSIGNED NOT NULL DEFAULT 0,
             PRIMARY KEY (`id`),
-            KEY `idx_user_parent` (`user_id`, `parent_id`)
+            KEY `idx_user_parent` (`user_id`, `parent_id`),
+            KEY `idx_folder_share_token` (`share_token`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
         // AI 操作溯源日志（自动分类等，detail 为 JSON 明细，支持撤销）
@@ -173,6 +176,10 @@ function ensureTables(&$error = null) {
         $pdo->exec("ALTER TABLE `pn_notes` ADD COLUMN `share_token` VARCHAR(36) NOT NULL DEFAULT ''");
         $pdo->exec("ALTER TABLE `pn_notes` ADD COLUMN `share_until` INT UNSIGNED NOT NULL DEFAULT 0");
         $pdo->exec("ALTER TABLE `pn_notes` ADD INDEX `idx_share_token` (`share_token`)");
+        // 文件夹分享列（v7.1 自愈迁移，ERRMODE_SILENT 下列已存在时报错被忽略）
+        $pdo->exec("ALTER TABLE `pn_folders` ADD COLUMN `share_token` VARCHAR(36) NOT NULL DEFAULT ''");
+        $pdo->exec("ALTER TABLE `pn_folders` ADD COLUMN `share_until` INT UNSIGNED NOT NULL DEFAULT 0");
+        $pdo->exec("ALTER TABLE `pn_folders` ADD INDEX `idx_folder_share_token` (`share_token`)");
         // 自愈：管理员标识列 + 若无任何管理员则自动提升最早注册的用户
         $pdo->exec("ALTER TABLE `pn_users` ADD COLUMN `is_admin` TINYINT(1) NOT NULL DEFAULT 0");
         // 自愈：邮箱已验证标记

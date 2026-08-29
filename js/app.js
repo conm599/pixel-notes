@@ -67,7 +67,10 @@
             parent_id: f.parent_id,
             name: f.name,
             sort_order: parseInt(f.sort_order) || 0,
-            note_count: parseInt(f.note_count) || 0
+            note_count: parseInt(f.note_count) || 0,
+            share_token: f.share_token || '',
+            share_until: parseInt(f.share_until) || 0,
+            share_url: f.share_url || ''
           };
         });
         renderBreadcrumb();
@@ -269,6 +272,7 @@
     addItem('在里面新建子文件夹', '📂+', function () { promptNewFolder(folder.id); });
     addItem('改名', '✏️', function () { promptRenameFolder(folder); });
     addItem('移动到…', '↪️', function () { promptMoveFolder(folder); });
+    addItem('分享', '🔗', function () { openShareDialog(folder.id, foldersById[folder.id] || folder, 'folder'); });
     addItem('删除（内容上移）', '🗑', function () { promptDeleteFolder(folder); });
 
     document.body.appendChild(menu);
@@ -1405,13 +1409,17 @@
   }
 
   // ============== 分享弹窗 ==============
-  function openShareDialog(id, card) {
+  // kind='note'（默认，card 为便签卡 DOM，数据在 card._noteData）
+  // kind='folder'（card 参数改传 folder 数据对象，字段 share_url/share_until/share_token）
+  function openShareDialog(id, card, kind) {
     closeShareDialog();
+    var isFolder = kind === 'folder';
+    var apiFn = isFolder ? folderApi : api;
     var overlay = mkEl('div', 'md-modal-overlay');
     var modal = mkEl('div', 'md-modal share-modal');
 
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '🔗 分享便签'));
+    head.appendChild(mkEl('div', 'md-modal-title', isFolder ? '📁 分享文件夹' : '🔗 分享便签'));
     var closeBtn = mkBtn('✖ 关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeShareDialog);
@@ -1449,7 +1457,7 @@
 
     // 未分享提示
     var noShareHint = mkEl('div', 'share-no-share');
-    noShareHint.textContent = '此便签尚未分享，选择有效期后点击下方按钮';
+    noShareHint.textContent = isFolder ? '此文件夹尚未分享，选择有效期后点击下方按钮（分享内容 = 文件夹内全部便签，含子文件夹）' : '此便签尚未分享，选择有效期后点击下方按钮';
 
     var foot = mkEl('div', 'md-modal-foot');
     var genBtn = mkBtn('⚡ 生成链接');
@@ -1477,8 +1485,8 @@
       cancelShareBtn.style.display = '';
       statusBadge.textContent = '✅ 已分享';
       statusBadge.className = 'share-status-badge shared';
-      // 同步更新卡片上的分享按钮
-      if (card) {
+      // 同步更新卡片上的分享按钮（仅便签模式；文件夹模式的 card 是纯数据对象）
+      if (card && !isFolder) {
         var sb = card.querySelector('button[title="管理公开分享"], button[title="生成公开分享链接"]');
         if (sb) { sb.textContent = '🌐 分享'; sb.title = '管理公开分享'; sb.classList.add('btn-shared'); }
       }
@@ -1500,8 +1508,8 @@
       genBtn.style.display = '';
       sel.style.display = 'flex';
       cancelShareBtn.style.display = 'none';
-      // 同步更新卡片上的分享按钮
-      if (card) {
+      // 同步更新卡片上的分享按钮（仅便签模式）
+      if (card && !isFolder) {
         var sb = card.querySelector('button[title="管理公开分享"], button[title="生成公开分享链接"]');
         if (sb) { sb.textContent = '🔗 分享'; sb.title = '生成公开分享链接'; sb.classList.remove('btn-shared'); }
       }
@@ -1512,14 +1520,19 @@
       genBtn.disabled = true;
       genBtn.textContent = '生成中...';
       try {
-        var r = await api('PUT', { action: 'share', id: id, hours: hours });
+        var r = await apiFn('PUT', { action: 'share', id: id, hours: hours });
         if (r.success && r.url) {
           showShared(r.url, r.until || 0);
           showToast('✅ 分享已创建，链接已复制', 'success');
           try { await navigator.clipboard.writeText(r.url); } catch (_) {}
-          // 同步更新卡片数据，重新打开弹窗时能正确显示已分享状态
-          if (card && card._noteData) { card._noteData.share_url = r.url; card._noteData.share_until = r.until || 0; if (r.token) card._noteData.share_token = r.token; }
-          if (notesById[id]) { notesById[id].share_url = r.url; notesById[id].share_until = r.until || 0; if (r.token) notesById[id].share_token = r.token; }
+          // 同步更新数据，重新打开弹窗时能正确显示已分享状态
+          if (isFolder) {
+            if (foldersById[id]) { foldersById[id].share_url = r.url; foldersById[id].share_until = r.until || 0; foldersById[id].share_token = r.token || ''; }
+            if (card) { card.share_url = r.url; card.share_until = r.until || 0; card.share_token = r.token || ''; }
+          } else {
+            if (card && card._noteData) { card._noteData.share_url = r.url; card._noteData.share_until = r.until || 0; if (r.token) card._noteData.share_token = r.token; }
+            if (notesById[id]) { notesById[id].share_url = r.url; notesById[id].share_until = r.until || 0; if (r.token) notesById[id].share_token = r.token; }
+          }
         } else {
           showToast('❌ ' + (r.message || '分享失败'), 'error');
         }
@@ -1532,21 +1545,27 @@
 
     cancelShareBtn.addEventListener('click', async function () {
       try {
-        var r = await api('PUT', { action: 'share', id: id, hours: -1 });
+        var r = await apiFn('PUT', { action: 'share', id: id, hours: -1 });
         if (r.success) {
           showToast('🚫 已取消分享，链接即刻失效', 'success');
           showNotShared();
-          if (card && card._noteData) { card._noteData.share_url = ''; card._noteData.share_until = 0; card._noteData.share_token = ''; }
-          if (notesById[id]) { notesById[id].share_url = ''; notesById[id].share_until = 0; notesById[id].share_token = ''; }
+          if (isFolder) {
+            if (foldersById[id]) { foldersById[id].share_url = ''; foldersById[id].share_until = 0; foldersById[id].share_token = ''; }
+            if (card) { card.share_url = ''; card.share_until = 0; card.share_token = ''; }
+          } else {
+            if (card && card._noteData) { card._noteData.share_url = ''; card._noteData.share_until = 0; card._noteData.share_token = ''; }
+            if (notesById[id]) { notesById[id].share_url = ''; notesById[id].share_until = 0; notesById[id].share_token = ''; }
+          }
         } else {
           showToast('❌ ' + (r.message || '操作失败'), 'error');
         }
       } catch (e) { showToast('❌ 网络错误', 'error'); }
     });
 
-    // 从卡片数据读取当前分享状态（优先 share_url，回退到 share_token 构建）
-    var note = card ? card._noteData : null;
-    var _url = note && (note.share_url || (note.share_token && String(note.share_token).length === 36 ? location.origin + '/share.php?t=' + note.share_token : ''));
+    // 从数据读取当前分享状态（优先 share_url，回退到 share_token 构建；文件夹走 ?f= 参数）
+    var note = isFolder ? card : (card ? card._noteData : null);
+    var _url = note && (note.share_url || (note.share_token && String(note.share_token).length === 36
+      ? location.origin + '/share.php?' + (isFolder ? 'f=' : 't=') + note.share_token : ''));
     if (_url) {
       showShared(_url, note.share_until || 0);
     } else {
@@ -3103,6 +3122,159 @@
 
   var btnTutorial = document.getElementById('btnTutorial');
   if (btnTutorial) btnTutorial.addEventListener('click', openTutorial);
+
+  // ============== 渲染强调色自定义（设置菜单入口，存 localStorage） ==============
+  var MD_COLORS_KEY = 'pixel_notes_md_colors';
+
+  function loadMdColors() {
+    try { var d = JSON.parse(localStorage.getItem(MD_COLORS_KEY) || '{}'); return (d && typeof d === 'object') ? d : {}; }
+    catch (e) { return {}; }
+  }
+  // 把用户自定义色写到 CSS 变量；空 = 清除自定义、回落到主题默认
+  var MD_COLOR_KEYS = ['strong', 'em', 'del', 'heading', 'link', 'quote', 'quoteBorder', 'check', 'inlineCode', 'code', 'codeBg', 'tableHead', 'hr'];
+  function applyMdColors(c) {
+    var root = document.documentElement;
+    MD_COLOR_KEYS.forEach(function (k) {
+      if (c && c[k]) root.style.setProperty('--md-' + k + '-color', c[k]);
+      else root.style.removeProperty('--md-' + k + '-color');
+    });
+  }
+  // 页面加载即应用（不打开弹窗也要生效）
+  applyMdColors(loadMdColors());
+
+  function openMdColors() {
+    if (document.querySelector('.md-colors-overlay')) return;
+    var overlay = mkEl('div', 'md-modal-overlay md-colors-overlay');
+    overlay.style.zIndex = '21000';
+    var modal = mkEl('div', 'md-modal md-colors-modal');
+    var head = mkEl('div', 'md-modal-head');
+    head.appendChild(mkEl('div', 'md-modal-title', '🎨 渲染颜色自定义'));
+    var closeBtn = mkBtn('✕', '关闭');
+    closeBtn.className = 'md-modal-close';
+    closeBtn.addEventListener('click', closeNoSave);
+    head.appendChild(closeBtn);
+    modal.appendChild(head);
+
+    var body = mkEl('div', 'md-modal-body');
+    body.appendChild(mkEl('p', 'md-hint', 'Markdown 渲染全部元素的颜色都可自定义，只保存在本浏览器；改色实时预览。'));
+
+    // 全部可调项（probe 用于没自定义过时读主题当前计算色作为初始值）
+    var groups = [
+      { name: '文字强调', items: [
+        { key: 'strong', label: '加粗 **粗**', probe: '<strong>x</strong>' },
+        { key: 'em', label: '斜体 *斜*', probe: '<em>x</em>' },
+        { key: 'del', label: '删除线 ~~删~~', probe: '<del>x</del>' },
+      ]},
+      { name: '结构与链接', items: [
+        { key: 'heading', label: '标题 #', probe: '<span class="md-h">x</span>' },
+        { key: 'link', label: '链接 [文字](url)', probe: '<a href="#">x</a>' },
+        { key: 'quote', label: '引用文字 >', probe: '<blockquote class="md-quote">x</blockquote>' },
+        { key: 'quoteBorder', label: '引用边框', probe: '<blockquote class="md-quote">x</blockquote>', cssProp: 'borderLeftColor' },
+        { key: 'check', label: '任务勾选 ☑', probe: '<span class="md-check">x</span>' },
+      ]},
+      { name: '代码', items: [
+        { key: 'inlineCode', label: '行内代码 `x`', probe: '<code class="md-code">x</code>' },
+        { key: 'code', label: '代码块文字', probe: '<pre class="md-pre"><code>x</code></pre>' },
+        { key: 'codeBg', label: '代码块背景', probe: '<pre class="md-pre"><code>x</code></pre>', cssProp: 'backgroundColor' },
+      ]},
+      { name: '其他', items: [
+        { key: 'tableHead', label: '表格表头', probe: '<table class="md-table"><th>x</th></table>' },
+        { key: 'hr', label: '分割线 ---', probe: '<span class="md-body">x</span>', cssProp: null, special: 'hr' },
+      ]},
+    ];
+    var savedColors = loadMdColors();
+    var rows = [];
+    groups.forEach(function (g) {
+      var gTitle = mkEl('div', 'md-color-group-title', g.name);
+      body.appendChild(gTitle);
+      g.items.forEach(function (r) { r.group = g.name; rows.push(r); });
+    });
+
+    var inputs = {};
+    rows.forEach(function (r) {
+      var wrap = mkEl('div', null, '');
+      wrap.style.cssText = 'display:flex;align-items:center;gap:12px;margin:6px 0;';
+      var lab = mkEl('label', null, r.label);
+      lab.style.cssText = 'flex:1;font-size:12.5px;color:#c8c8e0;';
+      var inp = document.createElement('input');
+      inp.type = 'color';
+      inp.className = 'md-color-input';
+      if (savedColors[r.key]) inp.value = savedColors[r.key];
+      else inp.value = computedColor(r);
+      inp.addEventListener('input', renderPreview);
+      inputs[r.key] = inp;
+      wrap.appendChild(lab); wrap.appendChild(inp);
+      body.appendChild(wrap);
+    });
+    function computedColor(r) {
+      var probe = mkEl('span', 'md-body');
+      probe.innerHTML = r.probe;
+      probe.style.display = 'none';
+      document.body.appendChild(probe);
+      var el = probe.querySelector('th') || probe.firstChild;   // 表头 probe 的目标是内层 <th>
+      // 特殊项：分割线读 CSS 变量兜底色
+      var col;
+      if (r.special === 'hr') col = getComputedStyle(document.documentElement).getPropertyValue('--border-color') || '#2a2a45';
+      else col = getComputedStyle(el)[r.cssProp || 'color'];
+      document.body.removeChild(probe);
+      var m = String(col).match(/\d+/g);
+      return (r.special === 'hr') ? rgbToHex(col) : (m ? '#' + m.slice(0, 3).map(function (n) { return ('0' + parseInt(n).toString(16)).slice(-2); }).join('') : '#ffffff');
+    }
+    function rgbToHex(v) {
+      var t = String(v).trim();
+      var m = t.match(/^#?([0-9a-fA-F]{6})$/);
+      if (m) return '#' + m[1];
+      var mm = t.match(/\d+/g);
+      return mm ? '#' + mm.slice(0, 3).map(function (n) { return ('0' + parseInt(n).toString(16)).slice(-2); }).join('') : '#2a2a45';
+    }
+    function inputsToColors() {
+      var out = {};
+      rows.forEach(function (r) { out[r.key] = inputs[r.key].value || ''; });
+      return out;
+    }
+
+    // 实时预览（改色即时写 CSS 变量；关闭不保存则还原）
+    var preview = mkEl('div', 'md-body md-color-preview');
+    function renderPreview() {
+      applyMdColors(inputsToColors());
+      preview.innerHTML = window.PixelMD.render(
+        '# 标题一\n## 标题二\n普通正文对照，**加粗强调**，*斜体*，~~删除~~，[链接](#)，行内`代码`\n- [x] 已完成任务\n- [ ] 未完成任务\n\n> 引用块：这是一段引用文字\n\n```\n代码块内容\nconst x = 1;\n```\n\n| 表头A | 表头B |\n|---|---|\n| 单元格 | 单元格 |\n\n---');
+    }
+    renderPreview();
+    body.appendChild(preview);
+
+    var btnWrap = mkEl('div', null, '');
+    btnWrap.style.cssText = 'display:flex;gap:10px;margin-top:14px;';
+    var saveBtn = mkBtn('💾 保存', '保存全部自定义颜色（仅本浏览器生效）');
+    saveBtn.className = 'btn btn-primary btn-sm';
+    saveBtn.style.flex = '1';
+    saveBtn.addEventListener('click', function () {
+      try { localStorage.setItem(MD_COLORS_KEY, JSON.stringify(inputsToColors())); } catch (e) {}
+      applyMdColors(inputsToColors());
+      showToast('🎨 渲染颜色已保存（本浏览器生效）', 'success');
+      document.body.removeChild(overlay);
+    });
+    var resetBtn = mkBtn('↩️ 全部恢复默认', '清除全部自定义，回到主题默认色');
+    resetBtn.className = 'btn btn-outline btn-sm';
+    resetBtn.style.flex = '1';
+    resetBtn.addEventListener('click', function () {
+      try { localStorage.removeItem(MD_COLORS_KEY); } catch (e) {}
+      applyMdColors(null);
+      showToast('↩️ 已恢复主题默认色', 'success');
+      document.body.removeChild(overlay);
+    });
+    btnWrap.appendChild(saveBtn); btnWrap.appendChild(resetBtn);
+    body.appendChild(btnWrap);
+
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    function closeNoSave() { applyMdColors(loadMdColors()); document.body.removeChild(overlay); }
+    overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) closeNoSave(); });
+    document.body.appendChild(overlay);
+  }
+
+  var btnMdColors = document.getElementById('btnMdColors');
+  if (btnMdColors) btnMdColors.addEventListener('click', openMdColors);
 
   // ============== 阅读弹窗 ==============
   var modalEscHandler = null;

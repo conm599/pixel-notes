@@ -75,7 +75,7 @@ try {
 
     // ================= GET：文件夹树 + 计数 =================
     if ($method === 'GET') {
-        $st = $pdo->prepare("SELECT id, parent_id, name, sort_order, created_at FROM pn_folders WHERE user_id = ? ORDER BY sort_order ASC, id ASC");
+        $st = $pdo->prepare("SELECT id, parent_id, name, sort_order, created_at, share_token, share_until FROM pn_folders WHERE user_id = ? ORDER BY sort_order ASC, id ASC");
         $st->execute(array($userId));
         $folders = $st->fetchAll();
         if (!is_array($folders)) $folders = array();
@@ -106,8 +106,13 @@ try {
         }
 
         $nodes = array();
+        $base = 'https://' . $_SERVER['HTTP_HOST'];
         foreach ($folders as $f) {
             $fid = (int)$f['id'];
+            $token = (string)$f['share_token'];
+            $until = (int)$f['share_until'];
+            // 过期 token 视为未分享
+            $shared = strlen($token) === 36 && ($until === 0 || $until > time());
             $nodes[] = array(
                 'id' => $fid,
                 'parent_id' => $f['parent_id'] === null ? null : (int)$f['parent_id'],
@@ -115,7 +120,10 @@ try {
                 'sort_order' => (int)$f['sort_order'],
                 'note_count' => isset($roll[$fid]) ? $roll[$fid] : 0,
                 'direct_count' => isset($direct[$fid]) ? $direct[$fid] : 0,
-                'created_at' => $f['created_at']
+                'created_at' => $f['created_at'],
+                'share_token' => $shared ? $token : '',
+                'share_until' => $shared ? $until : 0,
+                'share_url' => $shared ? $base . '/share.php?f=' . $token : ''
             );
         }
         jsonResponse(array('success' => true, 'folders' => $nodes));
@@ -178,6 +186,47 @@ try {
                 $pdo->rollBack();
                 jsonResponse(array('success' => false, 'message' => '排序保存失败'), 500);
             }
+        }
+
+        // 分享管理：{ action:'share', id, hours }  hours=0 永久 / -1 取消（与便签分享同款协议）
+        if (isset($input['action']) && $input['action'] === 'share') {
+            $fid = isset($input['id']) ? intval($input['id']) : 0;
+            $hours = isset($input['hours']) ? intval($input['hours']) : 0;
+            if ($fid <= 0) jsonResponse(array('success' => false, 'message' => '无效的文件夹ID'), 200);
+            if ($hours < -1 || $hours > 31536000) jsonResponse(array('success' => false, 'message' => '无效的有效期'), 200);
+
+            $st = $pdo->prepare("SELECT id FROM pn_folders WHERE id = ? AND user_id = ?");
+            $st->execute(array($fid, $userId));
+            if (!$st->fetch()) jsonResponse(array('success' => false, 'message' => '文件夹不存在'), 200);
+
+            // 取消分享：清空 token
+            if ($hours === -1) {
+                $st = $pdo->prepare("UPDATE pn_folders SET share_token = '', share_until = 0 WHERE id = ? AND user_id = ?");
+                $st->execute(array($fid, $userId));
+                jsonResponse(array('success' => true, 'message' => '已取消分享', 'cancelled' => true));
+            }
+
+            // 已有 token 则沿用（链接稳定），否则生成 UUID v4
+            $st = $pdo->prepare("SELECT share_token FROM pn_folders WHERE id = ? AND user_id = ?");
+            $st->execute(array($fid, $userId));
+            $token = (string)$st->fetchColumn();
+            if (strlen($token) !== 36) {
+                $bytes = function_exists('random_bytes') ? random_bytes(16) : openssl_random_pseudo_bytes(16);
+                $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
+                $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
+                $token = vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($bytes), 4));
+            }
+            $until = $hours > 0 ? time() + $hours * 3600 : 0;
+            $st = $pdo->prepare("UPDATE pn_folders SET share_token = ?, share_until = ? WHERE id = ? AND user_id = ?");
+            $st->execute(array($token, $until, $fid, $userId));
+
+            jsonResponse(array(
+                'success' => true,
+                'message' => $hours > 0 ? '分享已创建（' . $hours . '小时后过期）' : '分享已创建（永久）',
+                'token' => $token,
+                'until' => $until,
+                'url' => 'https://' . $_SERVER['HTTP_HOST'] . '/share.php?f=' . $token
+            ));
         }
 
         $fid = isset($input['id']) ? intval($input['id']) : 0;

@@ -216,9 +216,11 @@ try {
             jsonResponse(array('success' => false, 'message' => '系统错误，请稍后再试'), 500);
         }
         $now = date('Y-m-d H:i:s');
-        $stmt = $pdo->prepare("INSERT INTO pn_users (username, email, password_hash, created_at, email_verified)
-                               VALUES (?, ?, ?, ?, 1)");
-        $stmt->execute(array($username, $email, $hash, $now));
+        // 首个注册的用户自动成为管理员（系统没有其他授予管理员的路径；并发竞态由 ensureTables 的自愈兜底收敛）
+        $isFirst = ((int)$pdo->query("SELECT COUNT(*) FROM pn_users")->fetchColumn() === 0) ? 1 : 0;
+        $stmt = $pdo->prepare("INSERT INTO pn_users (username, email, password_hash, created_at, email_verified, is_admin)
+                               VALUES (?, ?, ?, ?, 1, ?)");
+        $stmt->execute(array($username, $email, $hash, $now, $isFirst));
 
         $userId = (int)$pdo->lastInsertId();
         session_regenerate_id(true);

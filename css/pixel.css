@@ -386,7 +386,7 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
 .md-body { font-family: var(--font-body); font-size: 14px; }
 
 .md-body .md-h {
-  color: var(--accent2); text-shadow: 1px 1px 0 #000;
+  color: var(--md-heading-color, var(--accent2)); text-shadow: 1px 1px 0 #000;
   line-height: 1.7; margin: 14px 0 10px; font-family: var(--font-main);
 }
 .md-body .md-h1 { font-size: 17px; border-bottom: 2px solid var(--border-color); padding-bottom: 6px; }
@@ -398,28 +398,28 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
 .md-body .md-p { margin: 8px 0; }
 
 .md-body code.md-code {
-  background: #000; color: var(--accent2);
+  background: #000; color: var(--md-inline-code-color, var(--accent2));
   border: 1px solid var(--border-color);
   padding: 2px 7px; font-size: 12px;
   font-family: Consolas, 'Courier New', monospace;
 }
 
 .md-body pre.md-pre {
-  background: #0a0a1a; border: 2px solid var(--border-color);
+  background: var(--md-code-bg, #0a0a1a); border: 2px solid var(--border-color);
   box-shadow: 3px 3px 0 #000; padding: 14px; margin: 12px 0;
   overflow-x: auto;
 }
 .md-body pre.md-pre code {
-  color: var(--success);
+  color: var(--md-code-color, var(--success));
   font-family: Consolas, 'Courier New', monospace;
   font-size: 12px; line-height: 1.8; white-space: pre;
 }
 
 .md-body blockquote.md-quote {
-  border-left: 4px solid var(--accent);
+  border-left: 4px solid var(--md-quote-border, var(--accent));
   background: rgba(255,107,157,0.08);
   padding: 10px 14px; margin: 12px 0;
-  color: var(--text-secondary);
+  color: var(--md-quote-color, var(--text-secondary));
 }
 
 .md-body .md-ul, .md-body .md-ol { padding-left: 26px; margin: 10px 0; }
@@ -427,7 +427,7 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
 .md-body .md-ol li { list-style: decimal; }
 .md-body .md-ul li, .md-body .md-ol li { margin: 5px 0; line-height: 1.9; }
 .md-body li.md-task { list-style: none; margin-left: -18px; }
-.md-body .md-check { color: var(--accent2); margin-right: 8px; }
+.md-body .md-check { color: var(--md-check-color, var(--accent2)); margin-right: 8px; }
 
 .md-body table.md-table {
   border-collapse: collapse; margin: 12px 0;
@@ -438,7 +438,7 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
   border: 2px solid var(--border-color);
   padding: 8px 12px; font-size: 13px; line-height: 1.7;
 }
-.md-body table.md-table th { background: var(--bg-card); color: var(--accent2); }
+.md-body table.md-table th { background: var(--bg-card); color: var(--md-table-head-color, var(--accent2)); }
 
 .md-body img.md-img {
   max-width: 100%; border: 2px solid var(--border-color);
@@ -516,7 +516,7 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
 .md-player:fullscreen { background: var(--bg-dark); }
 .md-player:fullscreen .mp-screen video { max-height: calc(100vh - 60px); }
 .md-player:fullscreen .mp-ui { border-top: 2px solid var(--border-color); }
-.md-body a { color: var(--accent2); text-decoration: underline; word-break: break-all; }
+.md-body a { color: var(--md-link-color, var(--accent2)); text-decoration: underline; word-break: break-all; }
 
 /* === 分享 === */
 .share-options { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
@@ -533,8 +533,8 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
   box-shadow: 6px 6px 0 #000; padding: 22px 26px;
 }
 /* 分享页内容不截断，可自由滚动 */
-.share-card .note-content { max-height: none !important; overflow: visible !important; }
-.share-card .note-content.clamped::after { display: none; }
+.share-card > .note-content { max-height: none !important; overflow: visible !important; }   /* 仅单便签分享页的全文容器直接子级 */
+.share-card > .note-content.clamped::after { display: none; }   /* 文件夹分享页的卡片不在此列，走默认 230px 截断 */
 .share-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .share-badge { font-family: var(--font-main); font-size: 10px; color: var(--accent); }
 .share-time { font-size: 11px; color: var(--text-dim); }
@@ -785,10 +785,10 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
 .cap-img:hover { border-color: var(--accent2); }
 .md-modal-foot .md-hint { margin-top: 0; }
 
-.md-body hr.md-hr { border: none; border-top: 2px dashed var(--border-color); margin: 14px 0; }
-.md-body strong { color: var(--warning); }
-.md-body em { color: var(--accent); font-style: normal; }
-.md-body del { color: var(--text-dim); }
+.md-body hr.md-hr { border: none; border-top: 2px dashed var(--md-hr-color, var(--border-color)); margin: 14px 0; }
+.md-body strong { color: var(--md-strong-color, var(--warning)); }
+.md-body em { color: var(--md-em-color, var(--accent)); font-style: normal; }
+.md-body del { color: var(--md-del-color, var(--text-dim)); }
 
 /* === MD 编辑器 === */
 .md-toolbar { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
@@ -1246,3 +1246,20 @@ body.marquee-selecting .note-card, body.marquee-selecting .folder-card { cursor:
   .tut-sec-title { font-size: 14px; }
   .tut-list li { font-size: 12.5px; line-height: 1.7; }
 }
+
+/* ===== 渲染颜色自定义弹窗 ===== */
+.md-colors-modal { max-width: 560px; width: calc(100vw - 32px); }
+.md-colors-modal .md-modal-body { max-height: 62vh; overflow-y: auto; }
+.md-color-group-title { font-size: 12px; font-weight: bold; color: var(--accent2); margin: 14px 0 6px; padding-bottom: 3px; border-bottom: 1px dashed #2a2a45; }
+.md-color-preview { margin-top: 12px; padding: 10px 12px; background: #12122a; border: 2px solid #2a2a45; font-size: 13px; line-height: 1.9; max-height: 260px; overflow-y: auto; }
+.md-color-input { width: 44px; height: 28px; padding: 0; border: 2px solid #3a3a5a; background: #12122a; cursor: pointer; }
+@media (max-width: 480px) { .md-colors-modal .md-modal-body { max-height: 68vh; } }
+
+/* ===== 文件夹分享页 ===== */
+.folder-share-note { background: #14142e; border: 2px solid #2a2a45; box-shadow: 3px 3px 0 #000; padding: 14px 16px; margin: 14px 0; }
+.folder-share-path { font-size: 11px; color: #6a6a92; margin-bottom: 6px; }
+.folder-share-title { font-size: 15px; font-weight: bold; color: #4af0ff; margin-bottom: 8px; font-family: var(--font-main); }
+
+/* ===== 文件夹分享页：可导航视图 ===== */
+.sf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.sf-note-wrap .folder-share-note { margin: 14px 0; }
