@@ -1069,7 +1069,20 @@
     if (extraInstruction) promptText += '\n用户附加指令：' + extraInstruction + '（必须严格遵守）';
     promptText += '\n';
 
-    aiApiStream({ action: 'classify', message: promptText }, {
+    // 携带与编辑相同的鉴权参数（政策版本 + 平台/自有 Key 双模式）
+    var classPrefs = loadAiPrefs();
+    aiApiStream({
+      action: 'classify',
+      message: promptText,
+      policyVersion: AI_POLICY_VERSION,
+      prefs: {
+        mode: classPrefs.mode,
+        platformKey: classPrefs.platformKey,
+        ownBaseUrl: classPrefs.ownBaseUrl,
+        ownApiKey: classPrefs.ownApiKey,
+        ownModel: classPrefs.ownModel
+      }
+    }, {
       onPhase: function (t) { setPhase(t); },
       onDelta: function (t) { appendThink(t); },
       onTool: function (d) { appendTool(d.name, d.args, null); },
@@ -1151,58 +1164,6 @@
     }
     walk(null, 0);
     return lines;
-  }
-
-  async function runAiClassify(autoMode) {
-    var manifest = buildClassifyManifest();
-    if (manifest.length === 0) { showToast('⚠️ 没有便签可整理', 'error'); return; }
-
-    showToast('✨ AI 正在分析你的便签并给出整理方案，请稍候...', 'success');
-
-    var folderTree = buildFolderTreeManifest();
-    var promptText = '请为以下便签做文件夹归类。现有文件夹结构如下（空列表表示暂无文件夹）：\n';
-    promptText += folderTree.length ? folderTree.join('\n') + '\n' : '(无)\n';
-    promptText += '\n便签清单（id | 标题 | 内容前80字摘要 | 当前路径）：\n';
-    manifest.forEach(function (m) {
-      promptText += m.id + ' | ' + (m.title || '(无标题)') + ' | ' + m.snippet + ' | ' + m.current_path + '\n';
-    });
-    promptText += '\n要求：\n'
-      + '1. 输出**仅一个** JSON 对象，无任何额外文字、解释或代码块标记；\n'
-      + '2. 格式：{"ops":[...]}，操作三选一：{"op":"move","id":123,"path":"工作/项目A"}、{"op":"mkdir","path":"新路径"}、{"op":"rename","path":"现有路径","new_name":"新名字"}；\n'
-      + '3. id 必须是上面清单中出现的便签 id；path 为完整路径（从根层级开始），回到主页填"主页"；\n'
-      + '4. 分类逻辑：看标题和内容摘要的主题归属，不要过度细分（同名/同类才放到同一文件夹）；\n'
-      + '5. 已在合适位置的便签不要移动；\n'
-      + '6. 如果现有文件夹完全合适可直接用，不够的话建议新建的路径；\n'
-      + '7. 每条路径最多5段，每段1到30个字符。';
-
-    try {
-      var resp = await fetch('api/ai.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'classify', message: promptText }),
-        credentials: 'include',
-        cache: 'no-store'
-      });
-      if (resp.status === 401) { window.location.href = 'login.php'; return; }
-      var result = await resp.json();
-      if (!result.success) {
-        showToast('❌ ' + (result.message || 'AI 返回失败'), 'error');
-        return;
-      }
-      handleClassifyResult(result.plan, manifest);
-    } catch (e) {
-      showToast('❌ 网络错误', 'error');
-    }
-  }
-
-  function handleClassifyResult(plan, manifest) {
-    var ops = plan && plan.ops ? plan.ops : [];
-    if (ops.length === 0) {
-      showToast('✅ AI 判断：无需任何操作', 'success');
-      return;
-    }
-    aiClassifyPending = ops;
-    renderClassifyPreview(ops, manifest);
   }
 
   // 预览面板：分组展示 + 确认/取消

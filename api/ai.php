@@ -599,14 +599,73 @@ try {
         $message = isset($input['message']) ? (string)$input['message'] : '';
         if (trim($message) === '') jsonOut(array('success' => false, 'message' => '没有可整理的便签清单'));
 
-        $base = rtrim(trim(getSetting('ai_base_url', '')), '/');
-        $key  = trim(getSetting('ai_api_key', ''));
-        $model = trim(getSetting('ai_model', ''));
-        if ($base === '' || $key === '' || $model === '') {
-            jsonOut(array('success' => false, 'message' => '管理员尚未配置 AI 上游'));
+        // ===== 鉴权（与 edit 同款三通道）：政策版本 + 平台密钥/管理员/自有 Key =====
+        $policyV = isset($input['policyVersion']) ? (int)$input['policyVersion'] : 0;
+        if ($policyV < AI_POLICY_VERSION) {
+            jsonOut(array('success' => false, 'need_policy' => true, 'policy_version' => AI_POLICY_VERSION,
+                          'message' => '请先阅读并同意 AI 使用政策'));
         }
-        $url = (substr($base, -17) === '/chat/completions') ? $base : $base . '/chat/completions';
+        $prefs = isset($input['prefs']) && is_array($input['prefs']) ? $input['prefs'] : array();
+        $mode = (isset($prefs['mode']) && $prefs['mode'] === 'own') ? 'own' : 'platform';
         $pdo = getDB();
+        $keyRow = null;     // 平台密钥行（成功后计费用）
+        $ownUsed = -1;      // 自有 Key 已用次数（成功后计费用）
+
+        if ($mode === 'platform') {
+            $isAdmin = isAdminUser();
+            $base = rtrim(trim(getSetting('ai_base_url', '')), '/');
+            $key  = trim(getSetting('ai_api_key', ''));
+            $model = trim(getSetting('ai_model', ''));
+            if ($base === '' || $key === '' || $model === '') {
+                jsonOut(array('success' => false, 'message' => '平台 AI 上游尚未配置，请联系管理员'));
+            }
+            $url = (substr($base, -17) === '/chat/completions') ? $base : $base . '/chat/completions';
+            if ($isAdmin) {
+                $mode = 'admin';
+            } else {
+                $st = $pdo->prepare("SELECT * FROM pn_ai_keys WHERE enabled = 1 AND user_id = ? ORDER BY id ASC LIMIT 1");
+                $st->execute(array($uid));
+                $keyRow = $st->fetch();
+                $inputKey = isset($prefs['platformKey']) ? trim((string)$prefs['platformKey']) : '';
+                if (!$keyRow && $inputKey !== '') {
+                    $st = $pdo->prepare("SELECT * FROM pn_ai_keys WHERE akey = ? AND enabled = 1 AND (user_id = 0 OR user_id = ?) LIMIT 1");
+                    $st->execute(array($inputKey, $uid));
+                    $keyRow = $st->fetch();
+                    if (!$keyRow) jsonOut(array('success' => false, 'message' => '平台密钥无效（不存在、已被禁用或不是分配给你的）'));
+                }
+                if (!$keyRow) {
+                    jsonOut(array('success' => false, 'message' => '管理员还没有为你分配 AI 密钥，也没有填写有效的平台密钥。可在「AI 设置」里改用自己的 API Key'));
+                }
+                $q = checkKeyQuota($keyRow);
+                if (!$q['ok']) jsonOut(array('success' => false, 'message' => $q['err'], 'usage' => $q['usage']));
+            }
+        } else {
+            // 自有 Key 模式：同 edit——强制走管理员透明代理，每日限 500 次
+            $target = ownEndpoint(isset($prefs['ownBaseUrl']) ? $prefs['ownBaseUrl'] : '');
+            $key  = isset($prefs['ownApiKey']) ? trim((string)$prefs['ownApiKey']) : '';
+            $model = isset($prefs['ownModel']) ? trim((string)$prefs['ownModel']) : '';
+            if ($target === '') {
+                jsonOut(array('success' => false, 'message' => '自有 Key 接口地址无效：仅支持公网 http/https 地址'));
+            }
+            if ($key === '' || $model === '') {
+                jsonOut(array('success' => false, 'message' => '自有 Key 模式需要在「AI 设置」里填写 API Key 和模型名'));
+            }
+            $period = aiPeriodNow();
+            $row = getUserAiPrefs($uid);
+            $ownUsed = ($row && $row['own_period'] === $period) ? (int)$row['own_used'] : 0;
+            if ($ownUsed >= AI_OWN_DAILY_LIMIT) {
+                jsonOut(array('success' => false, 'message' => '今日自有 Key 调用次数已达上限（' . AI_OWN_DAILY_LIMIT . '，北京时间 8:00 重置）'));
+            }
+            $proxyPrefix = rtrim(trim(getSetting('ai_own_proxy', '')), '/');
+            if (!preg_match('#^https://#i', $proxyPrefix)) {
+                jsonOut(array('success' => false, 'message' => '服务器未配置自有 Key 透明代理，请联系管理员在「AI 设置」中填写'));
+            }
+            $url = $proxyPrefix . '/' . $target;
+        }
+        // 整理 Agent 要给上游多次往返（工具调用循环），全局限时 150s 会让 SSE 中途被 kill；
+        // 这里放宽到 900s——前端有断线兜底，真超时用户能看到明确错误而非假死
+        if (function_exists('set_time_limit')) @set_time_limit(900);
+        ignore_user_abort(false);   // 浏览器断开连接立即kill（不耗上游 token）
 
         $system = '你是便签整理助手，能力等同一个文件管理器（类似 Claude Code 的 Agent）。'
             . '最终必须输出严格合法的 JSON 对象（{"ops":[...]}），ops 是操作数组，每个元素为以下操作之一：'
@@ -761,6 +820,18 @@ try {
                 $id = isset($op['id']) ? (int)$op['id'] : 0;
                 if ($id > 0) $validOps[] = array('op' => 'pin', 'id' => $id, 'pinned' => !empty($op['pinned']) ? 1 : 0);
             }
+        }
+        // 整理成功才计费 1 次（无论中间调了多少次工具都按整单算，与 edit 一致）
+        if ($mode === 'platform' && $keyRow) {
+            $period = aiPeriodNow();
+            $used = ($keyRow['period'] === $period) ? (int)$keyRow['used'] : 0;
+            bumpKeyUsage($keyRow['id'], $period, $used);
+        } elseif ($mode === 'own' && $ownUsed >= 0) {
+            try {
+                $pdo->exec("INSERT INTO pn_user_ai_prefs (user_id, own_used, own_period, updated_at)
+                            VALUES (" . $uid . ", 1, '" . $period . "', NOW())
+                            ON DUPLICATE KEY UPDATE own_used = " . ($ownUsed + 1) . ", own_period = '" . $period . "', updated_at = NOW()");
+            } catch (Exception $e) { /* 计数失败不阻断 */ }
         }
         aiOut(array('success' => true, 'plan' => array('ops' => $validOps)));
     }
