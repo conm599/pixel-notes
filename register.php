@@ -17,7 +17,7 @@ if (isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>注册 - Pixel Notes</title>
-    <link rel="stylesheet" href="css/pixel.css?v=43">
+    <link rel="stylesheet" href="css/pixel.css?v=54">
 </head>
 <body>
     <div class="auth-container">

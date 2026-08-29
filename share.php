@@ -136,7 +136,7 @@ $accent = isset($note['color']) && isset($colorMap[$note['color']]) ? $colorMap[
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
 <title><?= $notfound ? '分享不存在' : '分享的便签 - Pixel Notes' ?></title>
-<link rel="stylesheet" href="css/pixel.css?v=35">
+<link rel="stylesheet" href="css/pixel.css?v=54">
 <script src="js/md.js?v=35"></script>
 </head>
 <body>
