@@ -32,6 +32,7 @@ if (isset($_SESSION['user_id'])) {
                 <div class="form-group">
                     <label class="form-label" for="username">用户名</label>
                     <input type="text" id="username" class="form-input" placeholder="2-30 个字符" required autocomplete="username">
+                    <p class="md-hint">用户名仅作展示昵称，登录请使用邮箱</p>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="email">邮箱</label>

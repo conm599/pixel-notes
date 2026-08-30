@@ -240,7 +240,7 @@ try {
         $password = isset($input['password']) ? $input['password'] : '';
 
         if ($login === '' || $password === '') {
-            jsonResponse(array('success' => false, 'message' => '请输入邮箱/用户名和密码'), 400);
+            jsonResponse(array('success' => false, 'message' => '请输入邮箱和密码'), 400);
         }
 
         $stmt = $pdo->prepare("SELECT COUNT(*) FROM pn_login_attempts
@@ -252,6 +252,7 @@ try {
             jsonResponse(array('success' => false, 'message' => '尝试次数过多，请15分钟后再试'), 429);
         }
 
+        // 仅支持邮箱登录（用户名仅作昵称展示，不参与登录，避免撞名歧义）
         $stmt = $pdo->prepare("SELECT id, username, password_hash, email_verified FROM pn_users WHERE email = ?");
         $stmt->execute(array($login));
         $user = $stmt->fetch();
@@ -261,7 +262,7 @@ try {
             $stmt = $pdo->prepare("INSERT INTO pn_login_attempts (username, ip, action, success, attempted_at)
                                    VALUES (?, ?, 'login', 0, NOW())");
             $stmt->execute(array(substr($login, 0, 100), $ip));
-            jsonResponse(array('success' => false, 'message' => '邮箱/用户名或密码错误'), 401);
+            jsonResponse(array('success' => false, 'message' => '邮箱或密码错误'), 401);
         }
         if ((int)$user['email_verified'] !== 1) {
             jsonResponse(array('success' => false, 'message' => '该账号邮箱未验证，无法登录（如需恢复请联系管理员）'), 403);
@@ -373,12 +374,15 @@ try {
             jsonResponse(array('success' => false, 'message' => '验证码错误或已过期'), 400);
         }
 
-        // 事务删除该用户所有数据（便签/AI偏好/绑定的AI密钥/账号）
+        // 事务删除该用户所有数据（便签/文件夹/AI溯源含正文快照/AI偏好/绑定的AI密钥/邮箱验证码/登录尝试/账号）
         try {
             $pdo->beginTransaction();
             $pdo->prepare("DELETE FROM pn_notes WHERE user_id = ?")->execute(array($uid));
+            $pdo->prepare("DELETE FROM pn_folders WHERE user_id = ?")->execute(array($uid));
+            $pdo->prepare("DELETE FROM pn_ai_actions WHERE user_id = ?")->execute(array($uid));
             $pdo->prepare("DELETE FROM pn_user_ai_prefs WHERE user_id = ?")->execute(array($uid));
             $pdo->prepare("DELETE FROM pn_ai_keys WHERE user_id = ?")->execute(array($uid));
+            $pdo->prepare("DELETE FROM pn_email_codes WHERE email = ?")->execute(array($email));
             $pdo->prepare("DELETE FROM pn_login_attempts WHERE username = ?")->execute(array($_SESSION['username']));
             $pdo->prepare("DELETE FROM pn_users WHERE id = ?")->execute(array($uid));
             $pdo->commit();

@@ -36,8 +36,8 @@ if (isset($_SESSION['user_id'])) {
             <!-- 面板一：密码登录 -->
             <form id="loginForm" class="auth-panel active" data-panel="pass">
                 <div class="form-group">
-                    <label class="form-label" for="login">邮箱 / 用户名</label>
-                    <input type="text" id="login" class="form-input" placeholder="邮箱或用户名" required autocomplete="username">
+                    <label class="form-label" for="login">邮箱</label>
+                    <input type="email" id="login" class="form-input" placeholder="注册时使用的邮箱" required autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="password">密码</label>
