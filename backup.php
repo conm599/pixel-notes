@@ -184,7 +184,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $mergeTargets[] = array('bid' => $bid, 'email' => $email, 'target_id' => (int)$exist['id']);
                         } else {
                             $stM = $pdo->prepare("INSERT INTO pn_users (username, email, password_hash, created_at, email_verified, is_admin) VALUES (?, ?, ?, NOW(), ?, ?)");
-                            $stM->execute(array((string)($u['username'] ?? $email), $email, (string)($u['password_hash'] ?? ''), (int)($u['email_verified'] ?? 1), (int)($u['is_admin'] ?? 0)));
+                            // is_admin 强制 0：备份导入永不提权（防"导入即管理员"——备份文件不可信）
+                            $stM->execute(array((string)($u['username'] ?? $email), $email, (string)($u['password_hash'] ?? ''), (int)($u['email_verified'] ?? 1), 0));
                             $uidMap[$bid] = (int)$pdo->lastInsertId();
                             $newUsers++;
                         }
@@ -193,11 +194,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // ② 数据表按 user_id 映射后用 INSERT IGNORE 合并（不覆盖现有）
                 // 记录本次真正新插入的便签 id（INSERT IGNORE 影响行数为 1 才算新进），供 ③ 精确归置
                 $importedNoteIds = array();
+                // 非用户数据表不参与增量导入：pn_settings/pn_ai_keys 可被武器化备份污染平台配置或伪造密钥白嫖配额，
+                // pn_email_codes/pn_login_attempts/pn_share_logs 为验证码/限流日志/幽灵表，导入无意义
+                $noImportTables = array('pn_settings', 'pn_ai_keys', 'pn_email_codes', 'pn_login_attempts', 'pn_share_logs');
                 foreach ($TABLES as $t) {
                     if ($t === 'pn_users') continue;
+                    if (in_array($t, $noImportTables)) continue;
                     if (empty($data[$t]['rows']) || !is_array($data[$t]['rows'])) continue;
+                    // 列名白名单：只认数据库真实存在的列，上传数据里的 key 一律与 SHOW COLUMNS 取交集
+                    // （历史漏洞：列名直接取自上传 JSON 首行 key 拼 SQL，key 内嵌 SQL 片段即注入）
+                    $realCols = array();
+                    foreach ($pdo->query("SHOW COLUMNS FROM `$t`")->fetchAll() as $cr) { $realCols[] = $cr['Field']; }
                     $first = $data[$t]['rows'][0];
-                    $cols = array_keys($first);
+                    if (!is_array($first)) continue;
+                    $cols = array_values(array_intersect(array_map('strval', array_keys($first)), $realCols));
+                    if (empty($cols)) continue;
                     $ph = implode(',', array_fill(0, count($cols), '?'));
                     $ins = $pdo->prepare("INSERT IGNORE INTO `$t` (`" . implode('`,`', $cols) . "`) VALUES ($ph)");
                     $cnt = 0;
