@@ -381,12 +381,15 @@ try {
             jsonResponse(array('success' => false, 'message' => '验证码错误或已过期'), 400);
         }
 
-        // 事务删除该用户所有数据（便签/AI偏好/绑定的AI密钥/账号）
+        // 事务删除该用户所有数据（便签/文件夹/AI溯源含正文快照/AI偏好/绑定的AI密钥/邮箱验证码/登录尝试/账号）
         try {
             $pdo->beginTransaction();
             $pdo->prepare("DELETE FROM pn_notes WHERE user_id = ?")->execute(array($uid));
+            $pdo->prepare("DELETE FROM pn_folders WHERE user_id = ?")->execute(array($uid));
+            $pdo->prepare("DELETE FROM pn_ai_actions WHERE user_id = ?")->execute(array($uid));
             $pdo->prepare("DELETE FROM pn_user_ai_prefs WHERE user_id = ?")->execute(array($uid));
             $pdo->prepare("DELETE FROM pn_ai_keys WHERE user_id = ?")->execute(array($uid));
+            $pdo->prepare("DELETE FROM pn_email_codes WHERE email = ?")->execute(array($email));
             $pdo->prepare("DELETE FROM pn_login_attempts WHERE username = ?")->execute(array($_SESSION['username']));
             $pdo->prepare("DELETE FROM pn_users WHERE id = ?")->execute(array($uid));
             $pdo->commit();
