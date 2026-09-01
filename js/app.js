@@ -695,7 +695,9 @@
   }
 
   // 保存（新建 POST / 编辑 PUT）
+  var saveBusy = false; // 防重复提交锁：网络慢时连点/误点只发一次请求
   btnSaveNew.addEventListener('click', async function () {
+    if (saveBusy) return;
     var title = newTitle.value.trim();
     var content = newContent.value.trim();
 
@@ -705,6 +707,7 @@
         showToast('⚠️ 标题和内容不能都为空', 'error');
         return;
       }
+      saveBusy = true; btnSaveNew.disabled = true; btnSaveNew.textContent = '💾 保存中…';
       try {
         var r = await api('PUT', {
           id: editingId,
@@ -734,6 +737,8 @@
         }
       } catch (e) {
         if (String(e.message).indexOf('未登录') === -1) showToast('❌ 保存失败', 'error');
+      } finally {
+        saveBusy = false; btnSaveNew.disabled = false; btnSaveNew.textContent = '💾 保存修改';
       }
       return;
     }
@@ -743,6 +748,7 @@
       showToast('⚠️ 标题和内容不能都为空', 'error');
       return;
     }
+    saveBusy = true; btnSaveNew.disabled = true; btnSaveNew.textContent = '💾 保存中…';
     try {
       var r2 = await api('POST', { title: title, content: content, color: selectedColor, folder_id: currentFolderId });
       if (r2.success) {
@@ -754,6 +760,8 @@
       }
     } catch (e) {
       showToast('❌ 创建失败', 'error');
+    } finally {
+      saveBusy = false; btnSaveNew.disabled = false; btnSaveNew.textContent = '💾 保存';
     }
   });
 
