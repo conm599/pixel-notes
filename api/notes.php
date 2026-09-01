@@ -52,6 +52,26 @@ try {
 
     // ================= GET =================
     if ($method === 'GET') {
+        // 单条全文模式：?id=123 —— 编辑器/AI 打开时按需拉完整正文（首屏列表只传摘要）
+        if (isset($_GET['id'])) {
+            $st = $pdo->prepare("SELECT id, title, content, color, pinned, sort_order, folder_id, created_at, updated_at, share_token, share_until
+                                 FROM pn_notes WHERE id = ? AND user_id = ?");
+            $st->execute(array((int)$_GET['id'], $userId));
+            $n = $st->fetch();
+            if (!$n) jsonResponse(array('success' => false, 'message' => '便签不存在'), 404);
+            $n['pinned'] = (int)$n['pinned'];
+            $n['sort_order'] = (int)$n['sort_order'];
+            $n['folder_id'] = $n['folder_id'] === null ? null : (int)$n['folder_id'];
+            $base = (!empty($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
+            if (!empty($n['share_token']) && strlen($n['share_token']) === 36) {
+                $until = (int)$n['share_until'];
+                if ($until > 0 && time() > $until) { $n['share_token'] = ''; $n['share_until'] = 0; }
+                else { $n['share_url'] = $base . '/share.php?t=' . $n['share_token']; $n['share_until'] = $until; }
+            }
+            $n['_full'] = 1;
+            jsonResponse(array('success' => true, 'note' => $n));
+        }
+        // 列表模式：content 只传前 2000 字摘要（首屏瘦身，正文点开编辑时按需 ?id= 拉全文）
         $stmt = $pdo->prepare("SELECT id, title, content, color, pinned, sort_order, folder_id, created_at, updated_at, share_token, share_until
                                FROM pn_notes WHERE user_id = ?
                                ORDER BY pinned DESC, sort_order ASC, updated_at DESC");
@@ -70,6 +90,12 @@ try {
                 $n['share_until'] = $until;
             } else {
                 $n['share_until'] = (int)$n['share_until'];
+            }
+            // 摘要截断：正文超过 2000 字只传前 2000 字并打 _more 标记（卡片渲染与搜索索引够用）
+            $clen = function_exists('mb_strlen') ? mb_strlen((string)$n['content'], 'UTF-8') : strlen((string)$n['content']);
+            if ($clen > 2000) {
+                $n['content'] = function_exists('mb_substr') ? mb_substr((string)$n['content'], 0, 2000, 'UTF-8') : substr((string)$n['content'], 0, 2000);
+                $n['_more'] = 1;
             }
         }
         jsonResponse(array('success' => true, 'notes' => $notes));

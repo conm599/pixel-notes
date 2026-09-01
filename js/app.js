@@ -158,7 +158,8 @@
         updated_at: note.updated_at || '',
         share_token: note.share_token || '',
         share_until: parseInt(note.share_until) || 0,
-        share_url: note.share_url || ''
+        share_url: note.share_url || '',
+        _more: parseInt(note._more) || 0   // 1=content 只是摘要（前2000字），打开编辑时需按需拉全文
       };
       notesById[n.id] = n;
       allNotes.push(n);
@@ -646,12 +647,33 @@
     }
   });
 
-  // 编辑模式：打开同一个大面板并填充原文
-  function openEditorForNote(id) {
+  // 编辑模式：打开同一个大面板并填充原文（摘要便签先按需拉全文）
+  async function openEditorForNote(id) {
     var note = notesById[id];
     if (!note) return;
     closeModal();
     editingId = id;
+    if (note._more) {
+      // 首屏只传了 2000 字摘要：先亮出面板给加载反馈，拉到全文后再填充
+      newNoteForm.classList.remove('edit-mode');
+      newNoteForm.style.display = 'block';
+      newTitle.value = note.title;
+      newContent.value = '';
+      if (editorMode) editorMode.textContent = '⏳ 正在加载全文…';
+      try {
+        var resp = await fetch(API_BASE + '?id=' + id, { credentials: 'include', cache: 'no-store' });
+        var r = await resp.json();
+        if (r.success && r.note && editingId === id) {
+          note.content = r.note.content || '';
+          note._more = 0;
+        } else if (editingId === id) {
+          if (editorMode) editorMode.textContent = '⚠️ 全文加载失败（将使用摘要编辑）';
+        }
+      } catch (e) {
+        if (editingId === id && editorMode) editorMode.textContent = '⚠️ 全文加载失败（将使用摘要编辑）';
+      }
+    }
+    if (editingId !== id) return;   // 等待期间用户切换了编辑对象
 
     // 高亮正在编辑的卡片
     document.querySelectorAll('.note-card.editing-source').forEach(function (c) {
@@ -722,6 +744,7 @@
             n.content = content;
             n.color = selectedColor;
             n.updated_at = nowStr();
+            n._more = 0;   // 编辑器内容即全文，清除摘要标记
           }
           hideEditor();
           showToast('💾 已保存', 'success');
