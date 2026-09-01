@@ -113,7 +113,7 @@
     currentFolderId = fid === null ? null : fid;
     if (window.PixelSelection) window.PixelSelection.reset();   // 切目录清选择（剪贴板保留）
     renderBreadcrumb();
-    refreshView();
+    renderFromMemory();   // 本地过滤渲染，零网络请求——点击瞬间进入
   }
 
   async function loadNotes() {
@@ -142,9 +142,8 @@
   }
 
   function renderNotes(notes) {
-    // 更新内存索引（folder_id 由后端返回）
+    // 仅更新内存索引（由网络响应触发）；渲染走 renderFromMemory
     notesById = {};
-    var allNotes = [];
     (notes || []).forEach(function (note) {
       var rawFid = (note.folder_id === null || note.folder_id === undefined) ? null : parseInt(note.folder_id);
       var n = {
@@ -162,8 +161,13 @@
         _more: parseInt(note._more) || 0   // 1=content 只是摘要（前2000字），打开编辑时需按需拉全文
       };
       notesById[n.id] = n;
-      allNotes.push(n);
     });
+    renderFromMemory();
+  }
+
+  // 用内存索引按当前目录过滤渲染——切文件夹零请求，点击瞬间进入（数据首屏已在内存）
+  function renderFromMemory() {
+    var allNotes = Object.keys(notesById).map(function (k) { return notesById[k]; });
     notesGrid.innerHTML = '';
 
     // 当前层级下的子文件夹卡片（排在便签前面）
