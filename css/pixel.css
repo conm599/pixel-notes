@@ -1263,3 +1263,22 @@ body.marquee-selecting .note-card, body.marquee-selecting .folder-card { cursor:
 /* ===== 文件夹分享页：可导航视图 ===== */
 .sf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; margin-bottom: 18px; }
 .sf-note-wrap .folder-share-note { margin: 14px 0; }
+
+/* ============ MD 扩展语法（v7.5：高亮/上下标/脚注） ============ */
+.md-content mark.md-mark {
+  background: #ffe86b;
+  color: #2a2200;
+  padding: 0 4px;
+  border: 1px solid #b8a63a;
+  box-shadow: 2px 2px 0 #b8a63a;
+}
+.md-content sup.md-sup, .md-content sub.md-sub {
+  font-size: 0.72em;
+  line-height: 0;
+  color: inherit;
+}
+.md-content sup.md-fn {
+  font-size: 0.72em;
+  color: #4af0ff;
+  cursor: help;
+}

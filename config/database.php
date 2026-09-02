@@ -7,9 +7,9 @@
 // 优先读环境变量（本地便携环境用），未设置则走生产常量——生产行为零变化
 define('DB_HOST', getenv('PIXEL_DB_HOST') !== false ? getenv('PIXEL_DB_HOST') : 'localhost');
 define('DB_PORT', getenv('PIXEL_DB_PORT') !== false ? getenv('PIXEL_DB_PORT') : '3306');
-define('DB_NAME', getenv('PIXEL_DB_NAME') !== false ? getenv('PIXEL_DB_NAME') : 'CHANGE_ME');
-define('DB_USER', getenv('PIXEL_DB_USER') !== false ? getenv('PIXEL_DB_USER') : 'CHANGE_ME');
-define('DB_PASS', getenv('PIXEL_DB_PASS') !== false ? getenv('PIXEL_DB_PASS') : 'CHANGE_ME');
+define('DB_NAME', getenv('PIXEL_DB_NAME') !== false ? getenv('PIXEL_DB_NAME') : 'REDACTED_DB_IDENT');
+define('DB_USER', getenv('PIXEL_DB_USER') !== false ? getenv('PIXEL_DB_USER') : 'REDACTED_DB_IDENT');
+define('DB_PASS', getenv('PIXEL_DB_PASS') !== false ? getenv('PIXEL_DB_PASS') : 'REDACTED_DB_PASS');
 
 function getDB() {
     static $pdo = null;
@@ -349,6 +349,7 @@ function startSecureSession() {
     session_set_cookie_params(array(
         'lifetime' => 0,
         'path' => '/',
+        'domain' => '.naxid.top',   // 父域共享：tuchang 图床同会话（账号统一）
         'secure' => true,      // 站点已强制 HTTPS（301）
         'httponly' => true,    // JS 无法读取会话 Cookie
         'samesite' => 'Lax',   // 缓解 CSRF

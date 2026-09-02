@@ -189,6 +189,20 @@
     t = t.replace(/(^|[^_\w])_([^_\n]+)_(?=$|[^_\w])/g, '$1<em>$2</em>');
     t = t.replace(/~~([^~]+)~~/g, '<del>$1</del>');
 
+    // 6.5) 常见 MD 扩展：高亮 ==text== / 上标 ^text^ / 下标 ~text~（删线已先行处理）/ 脚注引用 [^n]
+    t = t.replace(/==([^=\n]+)==/g, '<mark class="md-mark">$1</mark>');
+    t = t.replace(/\^([^\^\s]+)\^/g, '<sup class="md-sup">$1</sup>');
+    t = t.replace(/(^|[\w,;:.!?")\]])~([^~\s]+)~(?![~])/g, '$1<sub class="md-sub">$2</sub>');
+    t = t.replace(/\[\^(\d{1,3}|[a-zA-Z]{1,8})\]/g, '<sup class="md-fn">[$1]</sup>');
+
+    // 6.6) 自动链接：剩余裸 URL（贪婪吃满非空白，尾部标点剥离不进链接）
+    t = t.replace(/(^|[\s(])(https?:\/\/[^\s<>"']+)/g, function (m, pre, raw) {
+      var url = raw, tail = '';
+      while (url.length && /[.,;:!?)]$/.test(url)) { tail = url.slice(-1) + tail; url = url.slice(0, -1); }
+      if (url.length < 12) return m; // 过短残片不处理
+      return pre + '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' + tail;
+    });
+
     // 7) 还原占位
     t = t.replace(/\u0000(\d+)\u0000/g, function (m, i) {
       return stash[+i];

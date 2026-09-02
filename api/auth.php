@@ -274,6 +274,10 @@ try {
         session_regenerate_id(true);
         $_SESSION['user_id'] = (int)$user['id'];
         $_SESSION['username'] = $user['username'];
+        // 账号统一过渡：清除可能残留的旧 host-only 会话 Cookie（与父域新 Cookie 并存会让 PHP 读到旧会话）
+        if (isset($_COOKIE['PHPSESSID'])) {
+            setcookie('PHPSESSID', '', array('expires' => time() - 3600, 'path' => '/', 'secure' => true, 'httponly' => true, 'samesite' => 'Lax'));
+        }
 
         jsonResponse(array(
             'success' => true,
