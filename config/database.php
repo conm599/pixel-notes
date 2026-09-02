@@ -355,6 +355,13 @@ function startSecureSession() {
         'samesite' => 'Lax',   // 缓解 CSRF
     ));
     session_start();
+    // 账号统一：已登录会话确保父域 Cookie 常驻（tuchang 图床共享同一会话；旧 host-only Cookie 用户会在浏览便签时自动补齐）
+    if (!empty($_SESSION['user_id'])) {
+        setcookie(session_name(), session_id(), array(
+            'expires' => 0, 'path' => '/', 'domain' => '.naxid.top',
+            'secure' => true, 'httponly' => true, 'samesite' => 'Lax'
+        ));
+    }
 }
 
 /**
