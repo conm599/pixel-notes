@@ -6,6 +6,9 @@
  * - 配置优先级：环境变量 PSU_* > suite-config.php（本面板写）> 代码默认值
  * - 配置文件位置：webroot 上一级（/var/www/suite-config.php），nginx 不可达
  */
+// 独立会话名：与便签/图床的 PHPSESSID（父域 Cookie）彻底隔离，
+// 否则浏览器同时携带两个同名 Cookie 时 PHP 取错会话，登录后会被弹回登录页
+session_name('ADMINI_SID');
 session_set_cookie_params(array('httponly' => true, 'samesite' => 'Lax', 'secure' => true));
 session_start();
 header('Content-Type: text/html; charset=utf-8');
@@ -33,7 +36,7 @@ function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 $logged = !empty($_SESSION['admini_ok']);
 if ($logged && !empty($cfg['admin_hash'])) {
     // 每次请求校验密码未变更
-    if (isset($_POST['logout'])) { session_destroy(); header('Location: .'); exit; }
+    if (isset($_POST['logout'])) { session_destroy(); header('Location: ./'); exit; }
 }
 if (!$INSTALLED && isset($_POST['install'])) {
     // ---- 安装向导提交：注册的账号自动成为双站管理员 ----
@@ -82,7 +85,7 @@ if (!$INSTALLED && isset($_POST['install'])) {
             @chmod($CFG_TARGET, 0640);
             session_regenerate_id(true);
             $_SESSION['admini_ok'] = 1;
-            header('Location: .');
+            header('Location: ./');
             exit;
         }
     }
@@ -95,7 +98,7 @@ if (!$INSTALLED && isset($_POST['install'])) {
         session_regenerate_id(true);
         $_SESSION['admini_ok'] = 1;
         unset($_SESSION['admini_fail']);
-        header('Location: .');
+        header('Location: ./');
         exit;
     }
     $_SESSION['admini_fail'] = $cnt + 1;
