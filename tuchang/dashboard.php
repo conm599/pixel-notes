@@ -327,7 +327,7 @@ var CURRENT_UUID = <?php echo json_encode($myUuid); ?>;
 var API_MAIN_HOST = <?php echo json_encode(siblingHost('tuchang')); ?>;
 var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
-<script src="js/dashboard.js?v=5"></script>
-<script src="js/selection.js?v=1"></script>
+<script src="js/selection.js?v=2"></script>
+<script src="js/dashboard.js?v=6"></script>
 </body>
 </html>
