@@ -38,10 +38,14 @@ function doShare() {
   act('share', ['duration', dur]).then(function (r) {
     if (r.ok) {
       var box = document.getElementById('shareBox');
-      box.innerHTML = '<input class="v-share-url" id="shareUrl" readonly value="' + r.url + '">' +
-        '<div class="v-remain" id="shareRemain">' + (r.until > 0 ? '分享剩余 <b>' + Math.max(1, Math.ceil((r.until - Date.now() / 1000) / 60)) + '</b> 分钟' : '永久分享') + '</div>' +
+      var same = r.url === r.url2;
+      var html = same ? '' : '<div class="v-url-label">优选线路（推荐外发）</div>';
+      html += '<input class="v-share-url" id="shareUrl" readonly value="' + (same ? r.url : r.url2) + '">';
+      if (!same) html += '<div class="v-url-label">当前域名</div><input class="v-share-url" id="shareUrlAlt" readonly value="' + r.url + '">';
+      html += '<div class="v-remain" id="shareRemain">' + (r.until > 0 ? '分享剩余 <b>' + Math.max(1, Math.ceil((r.until - Date.now() / 1000) / 60)) + '</b> 分钟' : '永久分享') + '</div>' +
         '<button class="v-btn" onclick="copyShare()">复制分享链接</button>' +
         '<button class="v-btn stop" onclick="doUnshare()">停止分享</button>';
+      box.innerHTML = html;
       toast('分享已创建');
     } else toast(r.err || '创建失败');
   });
