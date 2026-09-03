@@ -1,0 +1,37 @@
+# Pixel Notes - Apache 配置
+# 安全加固
+
+# 禁止直接访问 config 目录
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    
+    # 阻止访问敏感文件
+    RewriteRule ^config/ - [F,L]
+    
+    # 如果请求的不是文件或目录，重定向到 index.php
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>
+
+# 禁止目录浏览
+Options -Indexes
+
+# 安全头
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-XSS-Protection "1; mode=block"
+</IfModule>
+
+# 设置默认字符集
+AddDefaultCharset UTF-8
+
+# 缓存静态资源（短缓存 + 版本号查询参数强制刷新）
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 1 hour"
+    ExpiresByType application/javascript "access plus 1 hour"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType image/gif "access plus 1 month"
+</IfModule>
