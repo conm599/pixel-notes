@@ -627,7 +627,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (name === null) return;
     name = name.trim();
     if (name === '') return toast('名称不能为空');
-    fapi('folder_create', { name: name }, function (r) {
+    fapi('folder_create', { name: name, parent_id: CUR_FOLDER === null ? '' : CUR_FOLDER }, function (r) {
       if (r.ok) { toast('已创建「' + r.name + '」'); setTimeout(function () { location.href = 'dashboard.php?folder=' + r.id; }, 400); }
       else toast(r.err || '创建失败');
     });

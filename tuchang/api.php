@@ -13,6 +13,44 @@ function jerr($msg, $code = 400) {
     jout(array('ok' => false, 'err' => $msg));
 }
 
+// ==== 文件夹辅助（对齐便签 folders.php 逻辑：多层/环检测/同父重名/上移删除） ====
+// 取某文件夹祖先 id 链（含自身），用于环检测与深度限制
+function folderAncestorChain($uid, $folderId) {
+    $chain = array();
+    $cur = (int)$folderId;
+    $guard = 0;
+    while ($cur > 0 && $guard++ < 50) {
+        $chain[] = $cur;
+        $st = db()->prepare('SELECT parent_id FROM img_folders WHERE id = ? AND uid = ?');
+        $st->execute(array($cur, $uid));
+        $row = $st->fetch();
+        if (!$row) break;
+        $cur = $row['parent_id'] === null ? 0 : (int)$row['parent_id'];
+    }
+    return $chain;
+}
+// 确保 API 归档夹存在（根级，名「api」），返回其 id
+function ensureApiFolder($uid) {
+    $st = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND parent_id IS NULL AND name = ?');
+    $st->execute(array($uid, 'api'));
+    $row = $st->fetch();
+    if ($row) return (int)$row['id'];
+    db()->prepare('INSERT INTO img_folders (uid, parent_id, name, sort_order, created_at) VALUES (?, NULL, ?, 0, ?)')
+       ->execute(array($uid, 'api', time()));
+    return (int)db()->lastInsertId();
+}
+// 新建/移动时的 parent 校验（返回 null=根；出错返回错误文案）
+function folderCheckParent($uid, $parentId, $excludeId = 0) {
+    if ($parentId === null || $parentId === 0) return null;
+    $st = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
+    $st->execute(array((int)$parentId, $uid));
+    if (!$st->fetch()) return '目标文件夹不存在';
+    if ($excludeId > 0 && (int)$parentId === $excludeId) return '不能移到自己里面';
+    if ($excludeId > 0 && in_array($excludeId, folderAncestorChain($uid, (int)$parentId))) return '不能移到自己的子文件夹里';
+    if (count(folderAncestorChain($uid, (int)$parentId)) >= 5) return '文件夹嵌套过深（最多 5 层）';
+    return null;
+}
+
 // ============ API Key 鉴权（外部程序/Mod 调用） ============
 $apiUid = api_auth_user();
 $isApi = $apiUid > 0;
@@ -83,13 +121,17 @@ if ($isApi) {
             $allowed = array_map('intval', explode(',', EXPIRE_OPTIONS));
             if (in_array($v, $allowed, true)) $exp = $v === 0 ? 0 : time() + $v;
         }
-        // 可选 folder_id（multipart 字段或 JSON 字段）：上传直接归档；夹不存在/非本人静默回退未归类（旧客户端兼容）
+        // folder_id：显式指定优先（multipart/JSON 字段，夹不存在/非本人时忽略）；
+        // 未指定时自动归档到「api」夹（根级，无则自动创建）——API 上传与网页上传分区
         $apiFolderId = null;
         $fvRaw = isset($_POST['folder_id']) ? (int)$_POST['folder_id'] : (isset($in['folder_id']) ? (int)$in['folder_id'] : 0);
         if ($fvRaw > 0) {
             $fst = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
             $fst->execute(array($fvRaw, $uid));
             if ($fst->fetch()) $apiFolderId = $fvRaw;
+        }
+        if ($apiFolderId === null) {
+            $apiFolderId = ensureApiFolder($uid);
         }
         $ins = db()->prepare('INSERT INTO img_images (uid, name, file, size, w, h, created_at, expire_at, folder_id) VALUES (?,?,?,?,?,?,?,?,?)');
         $ins->execute(array($uid, $name === '' ? 'api-upload' : $name, $file, $size, $w, $h, time(), $exp, $apiFolderId));
@@ -138,26 +180,59 @@ if ($isApi) {
         jout(array('ok' => true, 'count' => count($rows), 'images' => $rows));
     }
 
-    // ---- 文件夹列表（含每夹计数） ----
+    // ---- 文件夹列表（多层树 + 递归累计计数，对齐便签） ----
     if ($action === 'folder_list') {
-        $fst = db()->prepare('SELECT f.id, f.name, f.created_at, COUNT(i.id) AS cnt FROM img_folders f LEFT JOIN img_images i ON i.folder_id = f.id AND i.uid = ? WHERE f.uid = ? GROUP BY f.id, f.name, f.created_at ORDER BY f.id ASC');
-        $fst->execute(array($uid, $uid));
-        $fs = array();
-        foreach ($fst->fetchAll() as $f) {
-            $fs[] = array('id' => (int)$f['id'], 'name' => $f['name'], 'count' => (int)$f['cnt'], 'created_at' => (int)$f['created_at']);
+        $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
+        $fst->execute(array($uid));
+        $fs = $fst->fetchAll();
+        $direct = array();
+        $st = db()->prepare('SELECT folder_id, COUNT(*) AS c FROM img_images WHERE uid = ? GROUP BY folder_id');
+        $st->execute(array($uid));
+        foreach ($st->fetchAll() as $r) {
+            $fid = $r['folder_id'] === null ? 0 : (int)$r['folder_id'];
+            $direct[$fid] = (int)$r['c'];
         }
-        jout(array('ok' => true, 'folders' => $fs));
+        $parentOf = array();
+        foreach ($fs as $f) $parentOf[(int)$f['id']] = $f['parent_id'] === null ? 0 : (int)$f['parent_id'];
+        $roll = array();
+        foreach ($direct as $fid => $cn) {
+            $cur = $fid; $guard = 0;
+            while ($cur > 0 && $guard++ < 50) {
+                if (!isset($roll[$cur])) $roll[$cur] = 0;
+                $roll[$cur] += $cn;
+                $cur = isset($parentOf[$cur]) ? $parentOf[$cur] : 0;
+            }
+        }
+        $out = array();
+        foreach ($fs as $f) {
+            $fid = (int)$f['id'];
+            $out[] = array('id' => $fid,
+                'parent_id' => $f['parent_id'] === null ? 0 : (int)$f['parent_id'],
+                'name' => $f['name'], 'sort_order' => (int)$f['sort_order'],
+                'count' => isset($roll[$fid]) ? $roll[$fid] : 0,
+                'direct_count' => isset($direct[$fid]) ? $direct[$fid] : 0,
+                'created_at' => (int)$f['created_at']);
+        }
+        jout(array('ok' => true, 'folders' => $out));
     }
 
-    // ---- 创建文件夹 ----
+    // ---- 创建文件夹（多层：parent_id 可选，深≤5，同父重名拒绝） ----
     if ($action === 'folder_create') {
         $fname = isset($_POST['name']) ? trim(substr(strip_tags($_POST['name']), 0, 60)) : (isset($in['name']) ? trim(substr(strip_tags($in['name']), 0, 60)) : '');
+        $parentId = null;
+        $pv = isset($_POST['parent_id']) ? $_POST['parent_id'] : (isset($in['parent_id']) ? $in['parent_id'] : null);
+        if ($pv !== null && $pv !== '') $parentId = (int)$pv;
         if ($fname === '') jerr('文件夹名称不能为空');
-        $fst = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND name = ?');
-        $fst->execute(array($uid, $fname));
-        if ($fst->fetch()) jerr('同名文件夹已存在');
-        db()->prepare('INSERT INTO img_folders (uid, name, created_at) VALUES (?,?,?)')->execute(array($uid, $fname, time()));
-        jout(array('ok' => true, 'id' => (int)db()->lastInsertId(), 'name' => $fname));
+        if (($e = folderCheckParent($uid, $parentId)) !== null) jerr($e);
+        $fst = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND parent_id <=> ? AND name = ?');
+        $fst->execute(array($uid, $parentId, $fname));
+        if ($fst->fetch()) jerr('同级已有同名文件夹');
+        $fst = db()->prepare('SELECT COALESCE(MAX(sort_order), -1) FROM img_folders WHERE uid = ? AND parent_id <=> ?');
+        $fst->execute(array($uid, $parentId));
+        $order = (int)$fst->fetchColumn() + 1;
+        db()->prepare('INSERT INTO img_folders (uid, parent_id, name, sort_order, created_at) VALUES (?,?,?,?,?)')
+           ->execute(array($uid, $parentId, $fname, $order, time()));
+        jout(array('ok' => true, 'id' => (int)db()->lastInsertId(), 'name' => $fname, 'parent_id' => $parentId));
     }
 
     // ---- 重命名文件夹 ----
@@ -168,11 +243,26 @@ if ($isApi) {
         $fst = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
         $fst->execute(array($fid, $uid));
         if (!$fst->fetch()) jerr('文件夹不存在', 404);
-        $fst = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND name = ? AND id <> ?');
-        $fst->execute(array($uid, $fname, $fid));
-        if ($fst->fetch()) jerr('同名文件夹已存在');
+        $fst = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND parent_id <=> (SELECT parent_id FROM img_folders WHERE id = ?) AND name = ? AND id <> ?');
+        $fst->execute(array($uid, $fid, $fname, $fid));
+        if ($fst->fetch()) jerr('同级已有同名文件夹');
         db()->prepare('UPDATE img_folders SET name = ? WHERE id = ?')->execute(array($fname, $fid));
         jout(array('ok' => true, 'name' => $fname));
+    }
+
+    // ---- 移动文件夹（环检测 + 深度限制） ----
+    if ($action === 'folder_move') {
+        $mid = isset($_POST['id']) ? (int)$_POST['id'] : (isset($in['id']) ? (int)$in['id'] : 0);
+        $parentId = null;
+        $pv = isset($_POST['parent_id']) ? $_POST['parent_id'] : (isset($in['parent_id']) ? $in['parent_id'] : null);
+        if ($pv !== null && $pv !== '') $parentId = (int)$pv;
+        if ($mid <= 0) jerr('参数错误');
+        $fst = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
+        $fst->execute(array($mid, $uid));
+        if (!$fst->fetch()) jerr('文件夹不存在', 404);
+        if (($e = folderCheckParent($uid, $parentId, $mid)) !== null) jerr($e);
+        db()->prepare('UPDATE img_folders SET parent_id = ? WHERE id = ?')->execute(array($parentId, $mid));
+        jout(array('ok' => true, 'parent_id' => $parentId));
     }
 
     // ---- 删除文件夹（夹内图片回未归类，绝不删图） ----
@@ -182,7 +272,13 @@ if ($isApi) {
         $fst = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
         $fst->execute(array($fid, $uid));
         if (!$fst->fetch()) jerr('文件夹不存在', 404);
-        db()->prepare('UPDATE img_images SET folder_id = NULL WHERE folder_id = ? AND uid = ?')->execute(array($fid, $uid));
+        $fst = db()->prepare('SELECT parent_id FROM img_folders WHERE id = ?');
+        $fst->execute(array($fid));
+        $row = $fst->fetch();
+        $grand = $row['parent_id'] === null ? null : (int)$row['parent_id'];
+        // 子文件夹与图片整体上移一级（对齐便签），绝不删图
+        db()->prepare('UPDATE img_folders SET parent_id = ? WHERE parent_id = ? AND uid = ?')->execute(array($grand, $fid, $uid));
+        db()->prepare('UPDATE img_images SET folder_id = ? WHERE folder_id = ? AND uid = ?')->execute(array($grand, $fid, $uid));
         db()->prepare('DELETE FROM img_folders WHERE id = ?')->execute(array($fid));
         jout(array('ok' => true));
     }
@@ -328,15 +424,21 @@ if ($action === 'sharebatch' || $action === 'delbatch' || $action === 'zip') {
     batch_handlers($uid, $action);
 }
 
-// ============ 文件夹（Windows 风格归类，仅会话模式；内容上移绝不删图） ============
+// ============ 文件夹（对齐便签 folders.php：多层嵌套/环检测/同父重名/删除上移一级，绝不删图） ============
 if ($action === 'folder_create') {
     $name = trim(substr(strip_tags(isset($_POST['name']) ? $_POST['name'] : ''), 0, 60));
+    $parentId = isset($_POST['parent_id']) ? ($_POST['parent_id'] === '' ? null : (int)$_POST['parent_id']) : null;
     if ($name === '') jerr('文件夹名称不能为空');
-    $st = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND name = ?');
-    $st->execute(array($uid, $name));
-    if ($st->fetch()) jerr('同名文件夹已存在');
-    db()->prepare('INSERT INTO img_folders (uid, name, created_at) VALUES (?,?,?)')->execute(array($uid, $name, time()));
-    jout(array('ok' => true, 'id' => (int)db()->lastInsertId(), 'name' => $name));
+    if (($e = folderCheckParent($uid, $parentId)) !== null) jerr($e);
+    $st = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND parent_id <=> ? AND name = ?');
+    $st->execute(array($uid, $parentId, $name));
+    if ($st->fetch()) jerr('同级已有同名文件夹');
+    $st = db()->prepare('SELECT COALESCE(MAX(sort_order), -1) FROM img_folders WHERE uid = ? AND parent_id <=> ?');
+    $st->execute(array($uid, $parentId));
+    $order = (int)$st->fetchColumn() + 1;
+    db()->prepare('INSERT INTO img_folders (uid, parent_id, name, sort_order, created_at) VALUES (?,?,?,?,?)')
+       ->execute(array($uid, $parentId, $name, $order, time()));
+    jout(array('ok' => true, 'id' => (int)db()->lastInsertId(), 'name' => $name, 'parent_id' => $parentId));
 }
 if ($action === 'folder_rename') {
     $id = (int)(isset($_POST['id']) ? $_POST['id'] : 0);
@@ -345,21 +447,70 @@ if ($action === 'folder_rename') {
     $st = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
     $st->execute(array($id, $uid));
     if (!$st->fetch()) jerr('文件夹不存在', 404);
-    $st = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND name = ? AND id <> ?');
-    $st->execute(array($uid, $name, $id));
-    if ($st->fetch()) jerr('同名文件夹已存在');
+    $st = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND parent_id <=> (SELECT parent_id FROM img_folders WHERE id = ?) AND name = ? AND id <> ?');
+    $st->execute(array($uid, $id, $name, $id));
+    if ($st->fetch()) jerr('同级已有同名文件夹');
     db()->prepare('UPDATE img_folders SET name = ? WHERE id = ?')->execute(array($name, $id));
     jout(array('ok' => true, 'name' => $name));
 }
-if ($action === 'folder_delete') {
+if ($action === 'folder_move') {
     $id = (int)(isset($_POST['id']) ? $_POST['id'] : 0);
+    $parentId = isset($_POST['parent_id']) ? ($_POST['parent_id'] === '' ? null : (int)$_POST['parent_id']) : null;
     if ($id <= 0) jerr('参数错误');
     $st = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
     $st->execute(array($id, $uid));
     if (!$st->fetch()) jerr('文件夹不存在', 404);
-    db()->prepare('UPDATE img_images SET folder_id = NULL WHERE folder_id = ? AND uid = ?')->execute(array($id, $uid));
+    if (($e = folderCheckParent($uid, $parentId, $id)) !== null) jerr($e);
+    db()->prepare('UPDATE img_folders SET parent_id = ? WHERE id = ?')->execute(array($parentId, $id));
+    jout(array('ok' => true, 'parent_id' => $parentId));
+}
+if ($action === 'folder_delete') {
+    $id = (int)(isset($_POST['id']) ? $_POST['id'] : 0);
+    if ($id <= 0) jerr('参数错误');
+    $st = db()->prepare('SELECT parent_id FROM img_folders WHERE id = ? AND uid = ?');
+    $st->execute(array($id, $uid));
+    $row = $st->fetch();
+    if (!$row) jerr('文件夹不存在', 404);
+    $grand = $row['parent_id'] === null ? null : (int)$row['parent_id'];
+    // 子文件夹与图片整体上移一级（对齐便签），绝不删图
+    db()->prepare('UPDATE img_folders SET parent_id = ? WHERE parent_id = ? AND uid = ?')->execute(array($grand, $id, $uid));
+    db()->prepare('UPDATE img_images SET folder_id = ? WHERE folder_id = ? AND uid = ?')->execute(array($grand, $id, $uid));
     db()->prepare('DELETE FROM img_folders WHERE id = ?')->execute(array($id));
     jout(array('ok' => true));
+}
+if ($action === 'folder_list') {
+    $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
+    $fst->execute(array($uid));
+    $fs = $fst->fetchAll();
+    $direct = array();
+    $st = db()->prepare('SELECT folder_id, COUNT(*) AS c FROM img_images WHERE uid = ? GROUP BY folder_id');
+    $st->execute(array($uid));
+    foreach ($st->fetchAll() as $r) {
+        $fid = $r['folder_id'] === null ? 0 : (int)$r['folder_id'];
+        $direct[$fid] = (int)$r['c'];
+    }
+    $parentOf = array();
+    foreach ($fs as $f) $parentOf[(int)$f['id']] = $f['parent_id'] === null ? 0 : (int)$f['parent_id'];
+    $roll = array();
+    foreach ($direct as $fid => $cn) {
+        $cur = $fid; $guard = 0;
+        while ($cur > 0 && $guard++ < 50) {
+            if (!isset($roll[$cur])) $roll[$cur] = 0;
+            $roll[$cur] += $cn;
+            $cur = isset($parentOf[$cur]) ? $parentOf[$cur] : 0;
+        }
+    }
+    $out = array();
+    foreach ($fs as $f) {
+        $fid = (int)$f['id'];
+        $out[] = array('id' => $fid,
+            'parent_id' => $f['parent_id'] === null ? 0 : (int)$f['parent_id'],
+            'name' => $f['name'], 'sort_order' => (int)$f['sort_order'],
+            'count' => isset($roll[$fid]) ? $roll[$fid] : 0,
+            'direct_count' => isset($direct[$fid]) ? $direct[$fid] : 0,
+            'created_at' => (int)$f['created_at']);
+    }
+    jout(array('ok' => true, 'folders' => $out));
 }
 if ($action === 'setfolder') {
     $id = (int)(isset($_POST['id']) ? $_POST['id'] : 0);

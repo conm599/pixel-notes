@@ -396,3 +396,13 @@ html, body { scrollbar-width: thin; scrollbar-color: var(--accent) var(--bg-card
 .folder-card .f-act button.f-del:hover { color: var(--danger); border-color: var(--danger); }
 .folder-new { border-style: dashed; background: transparent; box-shadow: none; opacity: 0.75; }
 .folder-new:hover { opacity: 1; }
+
+/* ===== 文件夹面包屑（多层浏览） ===== */
+.crumbs {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-bottom: 12px; font-size: 13px;
+}
+.crumb { color: var(--accent); text-decoration: none; font-weight: 700; }
+a.crumb:hover { text-decoration: underline; }
+.crumb.on { color: var(--text-primary); }
+.crumb-sep { color: var(--text-secondary); }
