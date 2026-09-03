@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=57">
+    <link rel="stylesheet" href="css/pixel.css?v=58">
 </head>
 <body>
     <!-- 顶部导航 -->
@@ -111,7 +111,7 @@ if (!isset($_SESSION['user_id'])) {
     <!-- Toast 提示 -->
     <div id="toast" class="toast" style="display:none;"></div>
 
-    <script src="js/md.js?v=40"></script>
+    <script src="js/md.js?v=41"></script>
     <script src="js/Sortable.min.js"></script>
     <script src="js/ai-direct.js?v=15"></script>
     <script src="js/selection.js?v=5"></script>

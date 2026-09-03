@@ -415,46 +415,9 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
   font-size: 12px; line-height: 1.8; white-space: pre;
 }
 
-/* mermaid 图表：库未加载/渲染前按代码块样式显示源码，渲染后展示 SVG */
-/* contain:inline-size 阻止超宽源码行/SVG 把 grid/flex 容器撑破（手机页面被强制扩大的根因） */
-.md-body .mermaid {
-  display: block; max-width: 100%; min-width: 0;
-  contain: inline-size;
-  background: var(--md-code-bg, #0a0a1a); border: 2px solid var(--border-color);
-  box-shadow: 3px 3px 0 #000; padding: 14px; margin: 12px 0;
-  overflow-x: auto;
-  font-family: Consolas, 'Courier New', monospace;
-  font-size: 12px; line-height: 1.8; white-space: pre;
-  color: var(--md-code-color, var(--success));
-  text-align: center;
-}
-.md-body .mermaid svg { max-width: 100% !important; height: auto !important; }
-.md-body .mermaid[data-mermaid-done] { white-space: normal; cursor: zoom-in; }
-.md-body pre.md-pre { contain: inline-size; max-width: 100%; }
 
-/* mermaid 相册式预览层（自 md.js 注入，全站共用） */
-#mdmZoomMask {
-  position: fixed; inset: 0; z-index: 99999; display: none;
-  background: rgba(4, 8, 14, 0.93);
-  cursor: grab; touch-action: none; user-select: none;
-}
-#mdmZoomMask.on { display: flex; align-items: center; justify-content: center; }
-#mdmZoomMask:active { cursor: grabbing; }
-#mdmZoomMask .mdm-zoom-stage { max-width: 96vw; max-height: 92vh; display: flex; align-items: center; justify-content: center; }
-#mdmZoomMask .mdm-zoom-svg { max-width: 88vw; max-height: 84vh; width: auto; height: auto; }
-#mdmZoomMask .mdm-zoom-close {
-  position: absolute; top: 14px; right: 16px; font-size: 18px;
-  padding: 6px 13px; background: #0a0a1a; border: 2px solid var(--border-color);
-  color: var(--accent); cursor: pointer; font-family: var(--font-main); box-shadow: 3px 3px 0 #000;
-}
-#mdmZoomMask .mdm-zoom-close:hover { color: var(--text-primary); }
-#mdmZoomMask .mdm-zoom-tip {
-  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
-  font-size: 11px; color: rgba(255, 255, 255, 0.4); pointer-events: none; white-space: nowrap;
-}
-@media (max-width: 640px) {
-  #mdmZoomMask .mdm-zoom-tip { font-size: 10px; }
-}
+
+
 
 .md-body blockquote.md-quote {
   border-left: 4px solid var(--md-quote-border, var(--accent));
