@@ -1,0 +1,16 @@
+8bd4fc6 s.php 失效链接改输出 404 占位图：notfound_img() 抽入 config.php 全站共用，s.php 5 处裸 404 白页全部替换（200+1660B webp，嵌外链不再空白）
+14261c6 失效占位图改 webp 1660B（<10KB）；登录 TTL 24H（cookie lifetime+gc_maxlifetime+已登录滑动续期）
+0e5a48a adminws.php 像素蓝化（glass→pixel-blue v6，硬边框+像素进度条；密令门禁与删户确认逻辑一行未动）
+87b4e42 api-doc.php 像素蓝化（glass→pixel-blue v6，硬边框硬阴影文档样式）
+0296df5 i.php 失效分支改为输出 854B 像素风 404 占位图（200+png 保证 img 标签渲染，外链页面不再空白）
+b53c983 手机 view 锁滚根治：移动优先反向断点（默认文档流可滚，min-width 721 才锁应用内滚动）+ dvh 兜底；CSS v6
+e147b65 修复批量上传只传一张：uploadOne 漏 return Promise 导致队列卡死；合并重复内嵌 uploadQueue 声明；dashboard.js v2
+f5ce2f9 归档 nginx 现行配置（mcft.conf + revproxy.conf；证书私钥不入仓）
+321c813 UI：自定义滚动条（淡蓝像素风 thin，对应便签风格）CSS bump v5
+f831bda 修复：移除 background-attachment fixed（Chromium 缩放下滚动条消失/滚动卡死的经典 bug，便签无此行故正常）+ CSS 引用统一 bump v4
+3b3275f 修复：①补 Mod jar 文件（迁移漏件，下载 500/404 根因）②HTML 页发 Cache-Control: no-store（根治浏览器启发式缓存旧 HTML 锁滚——老用户刷新一次自愈）③view.php 清 glass 残留引用
+cda1ca6 热修v2：view.js 缓存键 v1 被旧版占用 bump v2；保存按钮补文字「💾 保存」；未改动保存 toast 空提示改「名称未变化」；修错别字釶瓦→陶瓦
+af13c6d 热修：pixel-blue 缓存键 v1 被 view 段前版本占用——引用 bump v2，view 布局恢复
+7383681 阶段1+：view.php 拆分（js/view.js 76行 + 内嵌样式迁移 pixel-blue.css 并像素化）
+3b84451 阶段1：dashboard 前端拆分（js/dashboard.js 612行）+ 像素蓝设计系统 css/pixel-blue.css（对应便签粉色版）
+2748adf tuchang 图床基线（迁移后 VPS 运行版，改造前快照）
