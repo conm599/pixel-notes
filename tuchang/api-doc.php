@@ -10,7 +10,7 @@ $base = base_url();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>API 使用说明 · 陶瓦图床</title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=7">
+<link rel="stylesheet" href="css/pixel-blue.css?v=8">
 <style>
 /* API 文档页像素蓝适配（基于 pixel-blue 变量，硬边框+硬阴影） */
 .doc-wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 60px; }
@@ -88,6 +88,42 @@ $base = base_url();
 
   <div class="note">
     API Key 为 64 位十六进制字符串，在控制台点击「生成 API Key」获取。请妥善保管，泄露后可在控制台删除并重新生成。
+  </div>
+</div>
+
+<!-- ==================== 文件夹 ==================== -->
+<div class="doc-section">
+  <h2>文件夹（归类管理）</h2>
+  <p>图片可归入文件夹；删除文件夹时夹内图片自动回到「未归类」，不会删除图片。</p>
+
+  <div class="endpoint">
+    <div class="endpoint-head"><span class="method get">GET/POST</span><span class="endpoint-path">?key=KEY&amp;action=folder_list</span></div>
+    <div class="resp-block"><pre>{"ok":true,"folders":[{"id":1,"name":"截图","count":12,"created_at":1788440000}]}</pre></div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-head"><span class="method post">POST</span><span class="endpoint-path">action=folder_create&amp;name=截图</span></div>
+    <div class="resp-block"><pre>{"ok":true,"id":1,"name":"截图"}   // 同名（同用户）拒绝</pre></div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-head"><span class="method post">POST</span><span class="endpoint-path">action=folder_rename&amp;id=1&amp;name=新名</span></div>
+    <div class="resp-block"><pre>{"ok":true,"name":"新名"}   // 夹不存在返回 404</pre></div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-head"><span class="method post">POST</span><span class="endpoint-path">action=folder_delete&amp;id=1</span></div>
+    <div class="resp-block"><pre>{"ok":true}   // 夹内图片自动回未归类，不删图</pre></div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-head"><span class="method post">POST</span><span class="endpoint-path">action=setfolder&amp;id=42&amp;folder_id=1</span></div>
+    <div class="resp-block"><pre>{"ok":true,"folder_id":1}   // folder_id=0 或缺省 = 移出到未归类</pre></div>
+  </div>
+
+  <div class="note">
+    <b>上传直接入夹</b>：upload 请求带 <code>folder_id</code> 字段（multipart 或 JSON 均可）；夹不存在或非本人时<b>静默回退未归类</b>（旧客户端零影响）。<br>
+    <b>列表过滤</b>：list 可带 <code>folder_id</code> 参数（0=未归类，N=指定夹，缺省=全部）；list/get 返回值新增 <code>folder_id</code> 字段（未归类为 0），旧字段不变。
   </div>
 </div>
 

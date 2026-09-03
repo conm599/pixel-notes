@@ -606,3 +606,90 @@ document.addEventListener('DOMContentLoaded', function () {
       });
   }
 });
+
+/* ===== Windows 风格图片文件夹（新建/改名/删除/拖拽归类） ===== */
+(function () {
+  function fapi(action, data, done) {
+    var fd = new FormData();
+    fd.append('action', action);
+    fd.append('csrf_token', CSRF);
+    for (var k in data) fd.append(k, data[k]);
+    fetch(API_MAIN.replace(/\/api\.php$/, '') + '/api.php', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (r) { done(r); })
+      .catch(function () { done({ ok: false, err: '网络错误' }); });
+  }
+
+  // 新建文件夹
+  var newBtn = document.getElementById('folderNew');
+  if (newBtn) newBtn.addEventListener('click', function () {
+    var name = prompt('文件夹名称（≤60 字）：', '');
+    if (name === null) return;
+    name = name.trim();
+    if (name === '') return toast('名称不能为空');
+    fapi('folder_create', { name: name }, function (r) {
+      if (r.ok) { toast('已创建「' + r.name + '」'); setTimeout(function () { location.href = 'dashboard.php?folder=' + r.id; }, 400); }
+      else toast(r.err || '创建失败');
+    });
+  });
+
+  // 改名 / 删除（委托，阻止冒泡避免触发卡片跳转）
+  var bar = document.getElementById('folderBar');
+  if (bar) bar.addEventListener('click', function (e) {
+    var ren = e.target.closest && e.target.closest('.f-ren');
+    var del = e.target.closest && e.target.closest('.f-del');
+    if (!ren && !del) return;
+    e.stopPropagation();
+    var card = (ren || del).closest('.folder-card');
+    var fid = card.getAttribute('data-fid');
+    if (ren) {
+      var cur = card.querySelector('.f-name').textContent;
+      var name = prompt('重命名为：', cur);
+      if (name === null) return;
+      name = name.trim();
+      if (name === '' || name === cur) return;
+      fapi('folder_rename', { id: fid, name: name }, function (r) {
+        if (r.ok) { card.querySelector('.f-name').textContent = r.name; toast('已重命名'); }
+        else toast(r.err || '失败');
+      });
+    } else {
+      if (!confirm('删除该文件夹？夹内图片自动回到「未归类」，图片不会删除。')) return;
+      fapi('folder_delete', { id: fid }, function (r) {
+        if (r.ok) {
+          card.remove();
+          toast('文件夹已删除，图片已回未归类');
+          if (String(CUR_FOLDER) === String(fid)) setTimeout(function () { location.href = 'dashboard.php'; }, 500);
+        } else toast(r.err || '失败');
+      });
+    }
+  });
+
+  // 拖拽归类：卡片 dragstart 记录 id；folder-card dragover/drop 落夹
+  var dragId = null;
+  document.addEventListener('dragstart', function (e) {
+    var card = e.target.closest && e.target.closest('.card');
+    if (card) dragId = card.getAttribute('data-id');
+  });
+  document.addEventListener('dragend', function () { dragId = null; });
+  document.querySelectorAll('.folder-card.fdrop').forEach(function (fc) {
+    fc.addEventListener('dragover', function (e) { e.preventDefault(); fc.classList.add('dragover'); });
+    fc.addEventListener('dragleave', function () { fc.classList.remove('dragover'); });
+    fc.addEventListener('drop', function (e) {
+      e.preventDefault();
+      fc.classList.remove('dragover');
+      var id = dragId; dragId = null;
+      if (!id) return;
+      var fid = fc.getAttribute('data-fid') || '0';
+      var cardEl = document.querySelector('.card[data-id="' + id + '"]');
+      if (cardEl && cardEl.getAttribute('data-folder-id') === fid) return; // 已在该夹
+      fapi('setfolder', { id: id, folder_id: fid }, function (r) {
+        if (!r.ok) return toast(r.err || '移动失败');
+        toast(fid === '0' ? '已移出至未归类' : '已移入「' + (fc.querySelector('.f-name').textContent) + '」');
+        // 非全部视图：卡片已不属于当前视图，直接移除
+        if (CUR_FOLDER !== null && cardEl) cardEl.remove();
+        // 全部视图：更新卡片归属标记
+        if (cardEl) cardEl.setAttribute('data-folder-id', fid);
+      });
+    });
+  });
+})();
