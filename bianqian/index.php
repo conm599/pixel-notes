@@ -31,7 +31,7 @@ if (!isset($_SESSION['user_id'])) {
                 <a href="admin.php" class="btn btn-outline btn-xs">⚙️ 管理</a>
             <?php endif; ?>
             <a href="tts.php" class="btn btn-outline btn-xs">🔊 朗读</a>
-            <a href="<?php echo e('https://' . siblingHost('tuchang') . '/dashboard.php'); ?>" class="btn btn-outline btn-xs" target="_blank" rel="noopener">🖼 图床</a>
+            <a href="<?php echo 'https://' . siblingHost('tuchang') . '/dashboard.php'; ?>" class="btn btn-outline btn-xs" target="_blank" rel="noopener">🖼 图床</a>
             <div class="nav-settings-wrap">
                 <button type="button" id="btnSettings" class="btn btn-outline btn-xs" title="设置">⚙️ 设置</button>
                 <div id="settingsMenu" class="settings-menu" style="display:none;">
