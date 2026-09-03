@@ -5,11 +5,25 @@
  */
 
 // 优先读环境变量（本地便携环境用），未设置则用下方常量——仓库内一律占位符，真实凭据只存在于服务器上的部署副本
-define('DB_HOST', getenv('PIXEL_DB_HOST') !== false ? getenv('PIXEL_DB_HOST') : 'localhost');
-define('DB_PORT', getenv('PIXEL_DB_PORT') !== false ? getenv('PIXEL_DB_PORT') : '3306');
-define('DB_NAME', getenv('PIXEL_DB_NAME') !== false ? getenv('PIXEL_DB_NAME') : 'CHANGE_ME_DB_NAME');
-define('DB_USER', getenv('PIXEL_DB_USER') !== false ? getenv('PIXEL_DB_USER') : 'CHANGE_ME_DB_USER');
-define('DB_PASS', getenv('PIXEL_DB_PASS') !== false ? getenv('PIXEL_DB_PASS') : 'CHANGE_ME_DB_PASS');
+// ==== 套件共享配置（/admini 面板管理）：环境变量 PSU_* > 共享配置文件 > 代码默认 ====
+// 探测顺序：VPS 布局 /var/www/suite-config.php（两站 webroot 的上一级自动共享）→ 项目根 suite-config.php（本地测试）
+$GLOBALS['SUITE_CFG'] = array();
+foreach (array(@__DIR__ . '/../suite-config.php', @__DIR__ . '/../../suite-config.php') as $__suiteFile) {
+    if (is_file($__suiteFile)) { $GLOBALS['SUITE_CFG'] = (array)include($__suiteFile); break; }
+}
+function suite_cfg($key, $default) {
+    $e = getenv('PSU_' . strtoupper($key));
+    if ($e === false || $e === '') $e = getenv('PIXEL_' . strtoupper($key)); // 兼容旧 PIXEL_DB_* 约定
+    if ($e !== false && $e !== '') return $e;
+    return isset($GLOBALS['SUITE_CFG'][$key]) && $GLOBALS['SUITE_CFG'][$key] !== '' ? $GLOBALS['SUITE_CFG'][$key] : $default;
+}
+
+// DB 凭证：环境变量 PSU_*/PIXEL_* > suite-config.php（/admini 面板管理）> 默认值
+define('DB_HOST', suite_cfg('bianqian_db_host', 'localhost'));
+define('DB_PORT', suite_cfg('bianqian_db_port', '3306'));
+define('DB_NAME', suite_cfg('bianqian_db_name', 'CHANGE_ME_DB_NAME'));
+define('DB_USER', suite_cfg('bianqian_db_user', 'CHANGE_ME_DB_USER'));
+define('DB_PASS', suite_cfg('bianqian_db_pass', 'CHANGE_ME_DB_PASS')); // 凭证由 /admini 面板或环境变量提供
 
 function getDB() {
     static $pdo = null;

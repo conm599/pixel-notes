@@ -18,21 +18,34 @@ error_reporting(E_ALL);
 ini_set('session.use_strict_mode', '1');
 ini_set('session.gc_maxlifetime', '86400'); // 登录态服务端有效期 24H（每次请求滑动续期）
 
+// ==== 套件共享配置（/admini 面板管理）：环境变量 PSU_* > 共享配置文件 > 代码默认 ====
+// 探测顺序：VPS 布局 /var/www/suite-config.php（两站 webroot 的上一级自动共享）→ 项目根 suite-config.php（本地测试）
+$GLOBALS['SUITE_CFG'] = array();
+foreach (array(@__DIR__ . '/../suite-config.php', @__DIR__ . '/../../suite-config.php') as $__suiteFile) {
+    if (is_file($__suiteFile)) { $GLOBALS['SUITE_CFG'] = (array)include($__suiteFile); break; }
+}
+function suite_cfg($key, $default) {
+    $e = getenv('PSU_' . strtoupper($key));
+    if ($e === false || $e === '') $e = getenv('PIXEL_' . strtoupper($key)); // 兼容旧 PIXEL_DB_* 约定
+    if ($e !== false && $e !== '') return $e;
+    return isset($GLOBALS['SUITE_CFG'][$key]) && $GLOBALS['SUITE_CFG'][$key] !== '' ? $GLOBALS['SUITE_CFG'][$key] : $default;
+}
+
 // ================= 配置区（按需修改） =================
-define('DB_HOST', 'localhost');
-define('DB_USER', 'ser444059533145');
-define('DB_PASS', '9qqaZYEh8pcF');
-define('DB_NAME', 'ser444059533145');
-define('INVITE_CODE', 'taowa-aug2026-x7k9');          // 注册邀请码（修改这里）
-define('ADMIN_PASS', 'Tw@0Wa-N3wP4ss-9mK7xQvR2'); // adminws 管理密码（修改这里）
-define('USER_QUOTA', 20 * 1024 * 1024);       // 默认每用户配额 20MB（adminws 可单独调整）
-define('MAX_UPLOAD', 10 * 1024 * 1024);      // 上传文件最大 10MB（mod 截图 PNG 较大，后端压缩后须 ≤4MB）
-define('MAX_COMPRESSED', 4 * 1024 * 1024);   // 压缩后最大 4MB
-define('MAX_DIM', 8192);                      // 图片最大边长
-define('IMG_DIR', __DIR__ . '/../private_img_store/');
-define('CRON_KEY', 'taowa-cron-x7k9m2e4f8');      // cron 清理密钥
-define('EXPIRE_OPTIONS', '0,3600,86400,604800,2592000'); // 永不过期,1小时,1天,7天,30天
-define('PREFERRED_HOST', 'tuchang.naxid.top'); // 优选域名（CF Worker 反代），分享链接副域名
+define('DB_HOST', suite_cfg('tuchang_db_host', 'localhost'));
+define('DB_USER', suite_cfg('tuchang_db_user', ''));
+define('DB_PASS', suite_cfg('tuchang_db_pass', '')); // 凭证由 /admini 面板或环境变量提供，不写死在代码
+define('DB_NAME', suite_cfg('tuchang_db_name', ''));
+define('INVITE_CODE', suite_cfg('tuchang_invite_code', ''));       // 注册邀请码（/admini 面板可改）
+define('ADMIN_PASS', suite_cfg('tuchang_admin_pass', '')); // adminws 管理密码（/admini 面板可改）
+define('USER_QUOTA', (int)suite_cfg('tuchang_user_quota', 20 * 1024 * 1024)); // 默认每用户配额（adminws 可单独调整）
+define('MAX_UPLOAD', (int)suite_cfg('tuchang_max_upload', 10 * 1024 * 1024)); // 上传文件最大（mod 截图 PNG 较大，后端压缩后须 ≤4MB）
+define('MAX_COMPRESSED', (int)suite_cfg('tuchang_max_compressed', 4 * 1024 * 1024)); // 压缩后最大
+define('MAX_DIM', (int)suite_cfg('tuchang_max_dim', 8192));                // 图片最大边长
+define('IMG_DIR', suite_cfg('tuchang_img_dir', __DIR__ . '/../private_img_store/'));
+define('CRON_KEY', suite_cfg('tuchang_cron_key', ''));      // cron 清理密钥
+define('EXPIRE_OPTIONS', suite_cfg('tuchang_expire_options', '0,3600,86400,604800,2592000')); // 永不过期,1小时,1天,7天,30天
+define('PREFERRED_HOST', suite_cfg('tuchang_preferred_host', 'tuchang.naxid.top')); // 优选域名（CF Worker 反代），分享链接副域名
 
 // 生成分享双链接：主域名 + 优选域名
 function share_urls($tok) {
