@@ -24,10 +24,31 @@ if (!$krow) {
     $apiKey = $krow['api_key'];
 }
 
-// 图片列表（全部）
-$st = db()->prepare('SELECT id, file, name, size, w, h, created_at, expire_at, hits, share_token, share_until FROM img_images WHERE uid = ? ORDER BY id DESC');
+// 文件夹视图：all=全部 / 0=未归类 / N=指定夹
+$folderView = isset($_GET['folder']) ? (string)$_GET['folder'] : 'all';
+$curFolder = ($folderView === 'all') ? null : (int)$folderView;
+
+// 文件夹列表 + 计数
+$fst = db()->prepare('SELECT f.id, f.name, COUNT(i.id) AS cnt FROM img_folders f LEFT JOIN img_images i ON i.folder_id = f.id AND i.uid = ? WHERE f.uid = ? GROUP BY f.id, f.name ORDER BY f.id ASC');
+$fst->execute(array($uid, $uid));
+$folders = $fst->fetchAll();
+$folderCntMap = array();
+foreach ($folders as $f) $folderCntMap[(int)$f['id']] = (int)$f['cnt'];
+$unsortedCnt = 0;
+
+// 图片列表（按文件夹视图过滤）
+$sql = 'SELECT id, file, name, size, w, h, created_at, expire_at, hits, share_token, share_until, folder_id FROM img_images WHERE uid = ?';
+if ($folderView === '0') { $sql .= ' AND folder_id IS NULL'; }
+elseif ($folderView !== 'all') { $sql .= ' AND folder_id = ' . $curFolder; }
+$sql .= ' ORDER BY id DESC';
+$st = db()->prepare($sql);
 $st->execute(array($uid));
 $imgs = $st->fetchAll();
+if ($folderView === 'all') {
+    foreach ($imgs as $_im) { if ($_im['folder_id'] === null) $unsortedCnt++; }
+} elseif ($folderView === '0') {
+    $unsortedCnt = count($imgs);
+}
 
 $base = base_url();
 $csrf = csrf_token();
@@ -39,7 +60,7 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=7">
+<link rel="stylesheet" href="css/pixel-blue.css?v=8">
 </head>
 <body>
 <div class="app">
@@ -102,6 +123,27 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
 
   <div class="queue" id="queue"></div>
 
+  <div class="folder-bar" id="folderBar">
+    <div class="folder-card<?php echo $folderView === 'all' ? ' active' : ''; ?>" onclick="location.href='dashboard.php'">
+      <div class="f-icon">🗂</div><div class="f-name">全部图片</div><div class="f-count"><?php echo count($imgs) && $folderView !== 'all' ? '' : count($imgs) . ' 张'; ?></div>
+    </div>
+    <div class="folder-card fdrop" data-fid="0"<?php echo $folderView === '0' ? ' class="folder-card fdrop active"' : ''; ?> onclick="location.href='dashboard.php?folder=0'">
+      <div class="f-icon">📥</div><div class="f-name">未归类</div><div class="f-count"><?php echo $unsortedCnt; ?> 张</div>
+    </div>
+<?php foreach ($folders as $f): ?>
+    <div class="folder-card fdrop" data-fid="<?php echo (int)$f['id']; ?>"<?php echo $folderView !== 'all' && $curFolder === (int)$f['id'] ? ' class="folder-card fdrop active"' : ''; ?> onclick="location.href='dashboard.php?folder=<?php echo (int)$f['id']; ?>'">
+      <div class="f-icon">📁</div><div class="f-name"><?php echo e($f['name']); ?></div><div class="f-count"><?php echo (int)$f['cnt']; ?> 张</div>
+      <div class="f-act">
+        <button type="button" class="f-ren" title="重命名">✏️</button>
+        <button type="button" class="f-del" title="删除文件夹">🗑</button>
+      </div>
+    </div>
+<?php endforeach; ?>
+    <div class="folder-card folder-new" id="folderNew" title="新建文件夹">
+      <div class="f-icon">＋</div><div class="f-name">新建文件夹</div>
+    </div>
+  </div>
+
   <div class="grid-title">
     <h2>我的图片</h2>
     <span class="cnt"><?php echo count($imgs); ?> 张 · 点击缩略图可放大查看
@@ -131,6 +173,8 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
         $shareUrl = $shared ? $url . '&t=' . $img['share_token'] : '';
     ?>
     <div class="card" data-id="<?php echo (int)$img['id']; ?>"
+         data-folder-id="<?php echo $img['folder_id'] === null ? '0' : (int)$img['folder_id']; ?>"
+         draggable="true"
          data-name="<?php echo e($img['name']); ?>"
          data-url="<?php echo e($vUrl); ?>"
          data-shared="<?php echo $shared ? '1' : '0'; ?>"
@@ -229,7 +273,8 @@ var CSRF = <?php echo json_encode($csrf); ?>;
 var BASE = <?php echo json_encode($base); ?>;
 var CURRENT_UUID = <?php echo json_encode($myUuid); ?>;
 var API_MAIN_HOST = <?php echo json_encode(siblingHost('tuchang')); ?>;
+var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
-<script src="js/dashboard.js?v=3"></script>
+<script src="js/dashboard.js?v=4"></script>
 </body>
 </html>

@@ -83,8 +83,16 @@ if ($isApi) {
             $allowed = array_map('intval', explode(',', EXPIRE_OPTIONS));
             if (in_array($v, $allowed, true)) $exp = $v === 0 ? 0 : time() + $v;
         }
-        $ins = db()->prepare('INSERT INTO img_images (uid, name, file, size, w, h, created_at, expire_at) VALUES (?,?,?,?,?,?,?,?)');
-        $ins->execute(array($uid, $name === '' ? 'api-upload' : $name, $file, $size, $w, $h, time(), $exp));
+        // 可选 folder_id（multipart 字段或 JSON 字段）：上传直接归档；夹不存在/非本人静默回退未归类（旧客户端兼容）
+        $apiFolderId = null;
+        $fvRaw = isset($_POST['folder_id']) ? (int)$_POST['folder_id'] : (isset($in['folder_id']) ? (int)$in['folder_id'] : 0);
+        if ($fvRaw > 0) {
+            $fst = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
+            $fst->execute(array($fvRaw, $uid));
+            if ($fst->fetch()) $apiFolderId = $fvRaw;
+        }
+        $ins = db()->prepare('INSERT INTO img_images (uid, name, file, size, w, h, created_at, expire_at, folder_id) VALUES (?,?,?,?,?,?,?,?,?)');
+        $ins->execute(array($uid, $name === '' ? 'api-upload' : $name, $file, $size, $w, $h, time(), $exp, $apiFolderId));
         $id = (int)db()->lastInsertId();
         // API 上传默认自动创建公开分享（Mod 等外部程序场景）；传 share=0 保持私有（Web 前端）
         $autoShare = !isset($_POST['share']) || (int)$_POST['share'] === 1;
@@ -104,7 +112,13 @@ if ($isApi) {
 
     // ---- 图片列表 ----
     if ($action === 'list') {
-        $st = db()->prepare('SELECT id, name, size, w, h, created_at, expire_at, hits FROM img_images WHERE uid = ? ORDER BY id DESC');
+        // 可选 folder_id 过滤：0=未归类(folder_id IS NULL)，N=指定夹，缺省=全部（向后兼容）
+        $lf = isset($_GET['folder_id']) ? (int)$_GET['folder_id'] : (isset($_POST['folder_id']) ? (int)$_POST['folder_id'] : -1);
+        $sql = 'SELECT id, name, size, w, h, created_at, expire_at, hits, folder_id FROM img_images WHERE uid = ?';
+        if ($lf === 0) $sql .= ' AND folder_id IS NULL';
+        elseif ($lf > 0) $sql .= ' AND folder_id = ' . $lf;
+        $sql .= ' ORDER BY id DESC';
+        $st = db()->prepare($sql);
         $st->execute(array($uid));
         $rows = array();
         foreach ($st->fetchAll() as $r) {
@@ -117,21 +131,89 @@ if ($isApi) {
                 'h' => (int)$r['h'],
                 'created_at' => (int)$r['created_at'],
                 'expire_at' => (int)$r['expire_at'],
-                'hits' => (int)$r['hits']
+                'hits' => (int)$r['hits'],
+                'folder_id' => $r['folder_id'] === null ? 0 : (int)$r['folder_id']
             );
         }
         jout(array('ok' => true, 'count' => count($rows), 'images' => $rows));
+    }
+
+    // ---- 文件夹列表（含每夹计数） ----
+    if ($action === 'folder_list') {
+        $fst = db()->prepare('SELECT f.id, f.name, f.created_at, COUNT(i.id) AS cnt FROM img_folders f LEFT JOIN img_images i ON i.folder_id = f.id AND i.uid = ? WHERE f.uid = ? GROUP BY f.id, f.name, f.created_at ORDER BY f.id ASC');
+        $fst->execute(array($uid, $uid));
+        $fs = array();
+        foreach ($fst->fetchAll() as $f) {
+            $fs[] = array('id' => (int)$f['id'], 'name' => $f['name'], 'count' => (int)$f['cnt'], 'created_at' => (int)$f['created_at']);
+        }
+        jout(array('ok' => true, 'folders' => $fs));
+    }
+
+    // ---- 创建文件夹 ----
+    if ($action === 'folder_create') {
+        $fname = isset($_POST['name']) ? trim(substr(strip_tags($_POST['name']), 0, 60)) : (isset($in['name']) ? trim(substr(strip_tags($in['name']), 0, 60)) : '');
+        if ($fname === '') jerr('文件夹名称不能为空');
+        $fst = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND name = ?');
+        $fst->execute(array($uid, $fname));
+        if ($fst->fetch()) jerr('同名文件夹已存在');
+        db()->prepare('INSERT INTO img_folders (uid, name, created_at) VALUES (?,?,?)')->execute(array($uid, $fname, time()));
+        jout(array('ok' => true, 'id' => (int)db()->lastInsertId(), 'name' => $fname));
+    }
+
+    // ---- 重命名文件夹 ----
+    if ($action === 'folder_rename') {
+        $fid = isset($_POST['id']) ? (int)$_POST['id'] : (isset($in['id']) ? (int)$in['id'] : 0);
+        $fname = isset($_POST['name']) ? trim(substr(strip_tags($_POST['name']), 0, 60)) : (isset($in['name']) ? trim(substr(strip_tags($in['name']), 0, 60)) : '');
+        if ($fid <= 0 || $fname === '') jerr('参数错误');
+        $fst = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
+        $fst->execute(array($fid, $uid));
+        if (!$fst->fetch()) jerr('文件夹不存在', 404);
+        $fst = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND name = ? AND id <> ?');
+        $fst->execute(array($uid, $fname, $fid));
+        if ($fst->fetch()) jerr('同名文件夹已存在');
+        db()->prepare('UPDATE img_folders SET name = ? WHERE id = ?')->execute(array($fname, $fid));
+        jout(array('ok' => true, 'name' => $fname));
+    }
+
+    // ---- 删除文件夹（夹内图片回未归类，绝不删图） ----
+    if ($action === 'folder_delete') {
+        $fid = isset($_POST['id']) ? (int)$_POST['id'] : (isset($in['id']) ? (int)$in['id'] : 0);
+        if ($fid <= 0) jerr('参数错误');
+        $fst = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
+        $fst->execute(array($fid, $uid));
+        if (!$fst->fetch()) jerr('文件夹不存在', 404);
+        db()->prepare('UPDATE img_images SET folder_id = NULL WHERE folder_id = ? AND uid = ?')->execute(array($fid, $uid));
+        db()->prepare('DELETE FROM img_folders WHERE id = ?')->execute(array($fid));
+        jout(array('ok' => true));
+    }
+
+    // ---- 移动图片进/出文件夹（folder_id 0 或缺省 = 移出到未归类） ----
+    if ($action === 'setfolder') {
+        $iid = isset($_POST['id']) ? (int)$_POST['id'] : (isset($in['id']) ? (int)$in['id'] : 0);
+        $fid = isset($_POST['folder_id']) ? (int)$_POST['folder_id'] : (isset($in['folder_id']) ? (int)$in['folder_id'] : 0);
+        if ($iid <= 0) jerr('参数错误');
+        $st = db()->prepare('SELECT id FROM img_images WHERE id = ? AND uid = ?');
+        $st->execute(array($iid, $uid));
+        if (!$st->fetch()) jerr('图片不存在', 404);
+        if ($fid > 0) {
+            $fst = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
+            $fst->execute(array($fid, $uid));
+            if (!$fst->fetch()) jerr('目标文件夹不存在', 404);
+        }
+        db()->prepare('UPDATE img_images SET folder_id = ? WHERE id = ?')->execute(array($fid > 0 ? $fid : null, $iid));
+        jout(array('ok' => true, 'folder_id' => $fid > 0 ? $fid : 0));
     }
 
     // ---- 图片信息 ----
     if ($action === 'get') {
         $id = isset($_GET['id']) ? (int)$_GET['id'] : (isset($_POST['id']) ? (int)$_POST['id'] : 0);
         if ($id <= 0) jerr('参数错误');
-        $st = db()->prepare('SELECT id, name, size, w, h, created_at, expire_at, hits FROM img_images WHERE id = ? AND uid = ?');
+        $st = db()->prepare('SELECT id, name, size, w, h, created_at, expire_at, hits, folder_id FROM img_images WHERE id = ? AND uid = ?');
         $st->execute(array($id, $uid));
         $r = $st->fetch();
         if (!$r) jerr('图片不存在', 404);
         jout(array('ok' => true, 'id' => (int)$r['id'], 'name' => $r['name'],
+            'folder_id' => $r['folder_id'] === null ? 0 : (int)$r['folder_id'],
             'url' => base_url() . 'i.php?id=' . $r['id'],
             'download' => base_url() . 'api.php?key=' . $_GET['key'] . '&action=download&id=' . $r['id'],
             'size' => (int)$r['size'], 'w' => (int)$r['w'], 'h' => (int)$r['h'],
