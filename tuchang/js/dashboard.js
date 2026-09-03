@@ -693,3 +693,37 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 })();
+
+
+/* ===== Windows 式多选（长按/框选/Ctrl+XCV）注入依赖 ===== */
+(function () {
+  if (!window.PixelSelection) return;
+  function fapiRaw(action, data) {
+    var fd = new FormData();
+    fd.append('action', action);
+    fd.append('csrf_token', CSRF);
+    for (var k in data) fd.append(k, data[k]);
+    return fetch(API_MAIN, { method: 'POST', body: fd }).then(function (r) { return r.json(); });
+  }
+  window.PixelSelection.init({
+    grid: document.querySelector('.grid'),
+    getCurrentFolderId: function () { return CUR_FOLDER; },
+    showToast: function (m) { toast(m); },
+    isUiLocked: function () {
+      return ['shareDlg', 'shareBatchDlg'].some(function (id) {
+        var el = document.getElementById(id);
+        return el && el.style.display !== 'none';
+      });
+    },
+    api: fapiRaw,
+    folderApi: fapiRaw,
+    delbatch: function (ids) {
+      var fd = new FormData();
+      fd.append('action', 'delbatch');
+      fd.append('csrf_token', CSRF);
+      ids.forEach(function (id) { fd.append('ids[]', id); });
+      return fetch(API_MAIN, { method: 'POST', body: fd }).then(function (r) { return r.json(); });
+    },
+    refreshAll: function () { location.reload(); }
+  });
+})();

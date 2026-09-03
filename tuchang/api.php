@@ -478,6 +478,34 @@ if ($action === 'folder_delete') {
     db()->prepare('DELETE FROM img_folders WHERE id = ?')->execute(array($id));
     jout(array('ok' => true));
 }
+if ($action === 'copybatch') {
+    // 复制图片副本（Ctrl+C/V）：物理复制文件（独立生命周期，删副本不影响原图）；超额即停
+    $ids = isset($_POST['ids']) ? json_decode($_POST['ids'], true) : array();
+    $fid = (int)(isset($_POST['folder_id']) ? $_POST['folder_id'] : 0);
+    if (!is_array($ids) || count($ids) === 0) jerr('参数错误');
+    if ($fid > 0) {
+        $fst = db()->prepare('SELECT id FROM img_folders WHERE id = ? AND uid = ?');
+        $fst->execute(array($fid, $uid));
+        if (!$fst->fetch()) jerr('目标文件夹不存在', 404);
+    }
+    $done = 0;
+    $sel = db()->prepare('SELECT name, file, size, w, h, expire_at FROM img_images WHERE id = ? AND uid = ?');
+    foreach ($ids as $iid) {
+        $iid = (int)$iid;
+        if ($iid <= 0) continue;
+        $sel->execute(array($iid, $uid));
+        $r = $sel->fetch();
+        if (!$r) continue;
+        if (user_used($uid) + (int)$r['size'] > user_quota($uid)) break; // 配额不足即停
+        $newFile = rand_name() . '.webp';
+        if (!@copy(IMG_DIR . $r['file'], IMG_DIR . $newFile)) continue;
+        db()->prepare('INSERT INTO img_images (uid, name, file, size, w, h, created_at, expire_at, folder_id) VALUES (?,?,?,?,?,?,?,?,?)')
+           ->execute(array($uid, $r['name'] . '（副本）', $newFile, (int)$r['size'], (int)$r['w'], (int)$r['h'], time(), (int)$r['expire_at'], $fid > 0 ? $fid : null));
+        $done++;
+    }
+    jout(array('ok' => true, 'done' => $done));
+}
+
 if ($action === 'folder_list') {
     $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
     $fst->execute(array($uid));
