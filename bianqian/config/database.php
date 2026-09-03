@@ -353,7 +353,7 @@ function sendSecurityHeaders() {
     header('X-Content-Type-Options: nosniff');
     header('X-Frame-Options: SAMEORIGIN');
     header('Referrer-Policy: strict-origin-when-cross-origin');
-    header("Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data:; media-src 'self' blob: data: https:; frame-src 'self' https://player.bilibili.com https://www.bilibili.com https://www.youtube.com https://www.youtube-nocookie.com https://m.youtube.com https://youtube.com https://player.vimeo.com https://player.dailymotion.com https://music.163.com https://open.spotify.com; connect-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data:; media-src 'self' blob: data: https:; frame-src 'self' https://player.bilibili.com https://www.bilibili.com https://www.youtube.com https://www.youtube-nocookie.com https://m.youtube.com https://youtube.com https://player.vimeo.com https://player.dailymotion.com https://music.163.com https://open.spotify.com; connect-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'");
 }
 
 /**

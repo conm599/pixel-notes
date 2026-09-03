@@ -15,7 +15,7 @@ error_reporting(E_ALL);
 header('X-Content-Type-Options: nosniff');
 // CSP（公开门面同样穿甲）：外链脚本 nonce 白名单，媒体/嵌入与主站同级放行
 $cspNonce = bin2hex(random_bytes(16));
-header("Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'nonce-{$cspNonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' https: blob: data:; frame-src 'self' https://player.bilibili.com https://www.bilibili.com https://www.youtube.com https://www.youtube-nocookie.com https://m.youtube.com https://youtube.com https://player.vimeo.com https://player.dailymotion.com https://music.163.com https://open.spotify.com; connect-src 'self' https:; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+header("Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-{$cspNonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' https: blob: data:; frame-src 'self' https://player.bilibili.com https://www.bilibili.com https://www.youtube.com https://www.youtube-nocookie.com https://m.youtube.com https://youtube.com https://player.vimeo.com https://player.dailymotion.com https://music.163.com https://open.spotify.com; connect-src 'self' https:; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
 // 注：nginx 拦截 404 替换响应体，所以"不存在"也用 200 输出自定义错误页
 http_response_code(200);
 
@@ -139,8 +139,8 @@ $accent = isset($note['color']) && isset($colorMap[$note['color']]) ? $colorMap[
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
 <title><?= $notfound ? '分享不存在' : '分享的便签 - Pixel Notes' ?></title>
-<link rel="stylesheet" href="css/pixel.css?v=57">
-<script src="js/md.js?v=40" nonce="<?= htmlspecialchars($cspNonce) ?>"></script>
+<link rel="stylesheet" href="css/pixel.css?v=58">
+<script src="js/md.js?v=41" nonce="<?= htmlspecialchars($cspNonce) ?>"></script>
 </head>
 <body>
 <div class="share-wrap">
