@@ -24,17 +24,51 @@ if (!$krow) {
     $apiKey = $krow['api_key'];
 }
 
-// 文件夹视图：all=全部 / 0=未归类 / N=指定夹
+// 文件夹视图：all=全部 / 0=未归类 / N=指定夹（N 夹内显示子夹+图片，多层浏览）
 $folderView = isset($_GET['folder']) ? (string)$_GET['folder'] : 'all';
 $curFolder = ($folderView === 'all') ? null : (int)$folderView;
 
-// 文件夹列表 + 计数
-$fst = db()->prepare('SELECT f.id, f.name, COUNT(i.id) AS cnt FROM img_folders f LEFT JOIN img_images i ON i.folder_id = f.id AND i.uid = ? WHERE f.uid = ? GROUP BY f.id, f.name ORDER BY f.id ASC');
-$fst->execute(array($uid, $uid));
-$folders = $fst->fetchAll();
-$folderCntMap = array();
-foreach ($folders as $f) $folderCntMap[(int)$f['id']] = (int)$f['cnt'];
-$unsortedCnt = 0;
+// 全量文件夹树（对齐便签：多层嵌套/面包屑/当前层子夹）
+$fst = db()->prepare('SELECT id, parent_id, name FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
+$fst->execute(array($uid));
+$allFolders = $fst->fetchAll();
+$parentOf = array(); $childrenOf = array(); $nameOf = array();
+foreach ($allFolders as $f) {
+    $fid = (int)$f['id']; $pid = $f['parent_id'] === null ? 0 : (int)$f['parent_id'];
+    $parentOf[$fid] = $pid; $nameOf[$fid] = $f['name'];
+    $childrenOf[$pid][] = $fid;
+}
+// 当前层子夹（根层在 all/未归类视图显示；夹内显示其子夹）
+$curChildren = array();
+$baseLevel = ($folderView !== 'all' && $folderView !== '0' && $curFolder > 0) ? $curFolder : 0;
+foreach (($childrenOf[$baseLevel] ?? array()) as $cid) $curChildren[] = $cid;
+// 面包屑祖先链（根→当前）
+$crumbs = array();
+if ($folderView !== 'all' && $folderView !== '0' && $curFolder > 0) {
+    $chain = array(); $cur = $curFolder; $guard = 0;
+    while ($cur > 0 && $guard++ < 50) { $chain[] = $cur; $cur = isset($parentOf[$cur]) ? $parentOf[$cur] : 0; }
+    $crumbs = array_reverse($chain);
+}
+// 递归累计计数（对齐便签 roll-up）+ 未归类计数
+$direct = array();
+$dst = db()->prepare('SELECT folder_id, COUNT(*) AS c FROM img_images WHERE uid = ? GROUP BY folder_id');
+$dst->execute(array($uid));
+foreach ($dst->fetchAll() as $r) {
+    $fid = $r['folder_id'] === null ? 0 : (int)$r['folder_id'];
+    $direct[$fid] = (int)$r['c'];
+}
+$parentAll = array();
+foreach ($allFolders as $f) $parentAll[(int)$f['id']] = $f['parent_id'] === null ? 0 : (int)$f['parent_id'];
+$roll = array();
+foreach ($direct as $fid => $cn) {
+    $cur = $fid; $guard = 0;
+    while ($cur > 0 && $guard++ < 50) {
+        if (!isset($roll[$cur])) $roll[$cur] = 0;
+        $roll[$cur] += $cn;
+        $cur = isset($parentAll[$cur]) ? $parentAll[$cur] : 0;
+    }
+}
+$unsortedCnt = isset($direct[0]) ? $direct[0] : 0;
 
 // 图片列表（按文件夹视图过滤）
 $sql = 'SELECT id, file, name, size, w, h, created_at, expire_at, hits, share_token, share_until, folder_id FROM img_images WHERE uid = ?';
@@ -60,7 +94,7 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=8">
+<link rel="stylesheet" href="css/pixel-blue.css?v=9">
 </head>
 <body>
 <div class="app">
@@ -123,16 +157,34 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
 
   <div class="queue" id="queue"></div>
 
+  <div class="crumbs" id="folderCrumbs">
+    <a class="crumb<?php echo $folderView === 'all' ? ' on' : ''; ?>" href="dashboard.php">🗂 全部图片</a>
+<?php if ($folderView === '0'): ?>
+    <span class="crumb-sep">›</span><span class="crumb on">📥 未归类</span>
+<?php elseif ($folderView !== 'all'): ?>
+<?php foreach ($crumbs as $i => $cid): ?>
+    <span class="crumb-sep">›</span>
+<?php if ($cid === $curFolder): ?>
+    <span class="crumb on">📁 <?php echo e($nameOf[$cid]); ?></span>
+<?php else: ?>
+    <a class="crumb" href="dashboard.php?folder=<?php echo $cid; ?>">📁 <?php echo e($nameOf[$cid]); ?></a>
+<?php endif; ?>
+<?php endforeach; endif; ?>
+  </div>
   <div class="folder-bar" id="folderBar">
-    <div class="folder-card<?php echo $folderView === 'all' ? ' active' : ''; ?>" onclick="location.href='dashboard.php'">
-      <div class="f-icon">🗂</div><div class="f-name">全部图片</div><div class="f-count"><?php echo count($imgs) && $folderView !== 'all' ? '' : count($imgs) . ' 张'; ?></div>
+<?php if ($folderView !== 'all' && $folderView !== '0'): ?>
+    <div class="folder-card" onclick="location.href='dashboard.php?folder=<?php echo $parentOf[$curFolder] === null || $parentOf[$curFolder] === 0 ? 0 : $parentOf[$curFolder]; ?>'">
+      <div class="f-icon">↩️</div><div class="f-name">上一级</div>
     </div>
-    <div class="folder-card fdrop" data-fid="0"<?php echo $folderView === '0' ? ' class="folder-card fdrop active"' : ''; ?> onclick="location.href='dashboard.php?folder=0'">
+<?php endif; ?>
+<?php if ($folderView === 'all'): ?>
+    <div class="folder-card fdrop" data-fid="0" onclick="location.href='dashboard.php?folder=0'">
       <div class="f-icon">📥</div><div class="f-name">未归类</div><div class="f-count"><?php echo $unsortedCnt; ?> 张</div>
     </div>
-<?php foreach ($folders as $f): ?>
-    <div class="folder-card fdrop" data-fid="<?php echo (int)$f['id']; ?>"<?php echo $folderView !== 'all' && $curFolder === (int)$f['id'] ? ' class="folder-card fdrop active"' : ''; ?> onclick="location.href='dashboard.php?folder=<?php echo (int)$f['id']; ?>'">
-      <div class="f-icon">📁</div><div class="f-name"><?php echo e($f['name']); ?></div><div class="f-count"><?php echo (int)$f['cnt']; ?> 张</div>
+<?php endif; ?>
+<?php foreach ($curChildren as $cid): ?>
+    <div class="folder-card fdrop" data-fid="<?php echo $cid; ?>" onclick="location.href='dashboard.php?folder=<?php echo $cid; ?>'">
+      <div class="f-icon">📁</div><div class="f-name"><?php echo e($nameOf[$cid]); ?></div><div class="f-count"><?php echo isset($roll[$cid]) ? $roll[$cid] : 0; ?> 张</div>
       <div class="f-act">
         <button type="button" class="f-ren" title="重命名">✏️</button>
         <button type="button" class="f-del" title="删除文件夹">🗑</button>
