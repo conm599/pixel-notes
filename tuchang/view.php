@@ -43,7 +43,7 @@ if ($remain > 0) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?php echo e($img['name']); ?> · 陶瓦图床</title>
 
-<link rel="stylesheet" href="css/pixel-blue.css?v=6">
+<link rel="stylesheet" href="css/pixel-blue.css?v=7">
 </head>
 <body class="view-mode">
 <div class="view">
@@ -80,8 +80,19 @@ if ($remain > 0) {
     <div class="v-sep"></div>
     <div class="v-title">公开分享</div>
     <div class="v-share-box" id="shareBox">
-      <?php if ($shared): ?>
-        <input class="v-share-url" id="shareUrl" readonly value="<?php echo e($shareUrl); ?>">
+      <?php if ($shared):
+          $curHost = strtolower(preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST']));
+          $prefUrl = 'https://' . PREFERRED_HOST . '/s.php?t=' . $img['share_token'];
+          $sameHost = ($curHost === strtolower(PREFERRED_HOST));
+      ?>
+        <?php if (!$sameHost): ?>
+          <div class="v-url-label">优选线路（推荐外发）</div>
+          <input class="v-share-url" id="shareUrl" readonly value="<?php echo e($prefUrl); ?>">
+          <div class="v-url-label">当前域名</div>
+          <input class="v-share-url" id="shareUrlAlt" readonly value="<?php echo e($shareUrl); ?>">
+        <?php else: ?>
+          <input class="v-share-url" id="shareUrl" readonly value="<?php echo e($shareUrl); ?>">
+        <?php endif; ?>
         <div class="v-remain" id="shareRemain">
           <?php
           if ($img['share_until'] > 0) {
@@ -119,6 +130,6 @@ var CSRF = <?php echo json_encode($csrf); ?>;
 var IMGID = <?php echo (int)$id; ?>;
 var IMGNAME = <?php echo json_encode($img["name"]); ?>;
 </script>
-<script src="js/view.js?v=2"></script>
+<script src="js/view.js?v=3"></script>
 </body>
 </html>
