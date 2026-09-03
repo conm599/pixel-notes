@@ -10,7 +10,7 @@ $base = base_url();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>API 使用说明 · 陶瓦图床</title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=10">
+<link rel="stylesheet" href="css/pixel-blue.css?v=11">
 <style>
 /* API 文档页像素蓝适配（基于 pixel-blue 变量，硬边框+硬阴影） */
 .doc-wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 60px; }
