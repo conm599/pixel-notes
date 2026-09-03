@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=58">
+    <link rel="stylesheet" href="css/pixel.css?v=59">
 </head>
 <body>
     <!-- 顶部导航 -->
