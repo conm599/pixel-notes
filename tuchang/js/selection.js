@@ -26,6 +26,24 @@
   var selectedFolders = {};   // {folderId: true}
   var clipboard = null;       // {type:'cut'|'copy', imgs:[id], folders:[id]}
 
+  // 剪贴板持久化：图床进文件夹是整页跳转，内存会丢——sessionStorage 保存，跨页面存活
+  var CLIP_KEY = 'tuchangClipboard';
+  function saveClipboard() {
+    try {
+      if (clipboard) sessionStorage.setItem(CLIP_KEY, JSON.stringify(clipboard));
+      else sessionStorage.removeItem(CLIP_KEY);
+    } catch (e) { /* 隐私模式等场景忽略 */ }
+  }
+  function restoreClipboard() {
+    try {
+      var raw = sessionStorage.getItem(CLIP_KEY);
+      if (raw) {
+        var c = JSON.parse(raw);
+        if (c && (c.type === 'cut' || c.type === 'copy') && ((c.imgs || []).length + (c.folders || []).length) > 0) clipboard = c;
+      }
+    } catch (e) { clipboard = null; }
+  }
+
   function selCount() { return Object.keys(selectedImgs).length + Object.keys(selectedFolders).length; }
 
   function ensureBar() {
@@ -52,6 +70,7 @@
     bar.querySelector('.sel-exit').addEventListener('click', function () { exitSelection(); });
     bar.querySelector('.sel-clip-clear').addEventListener('click', function () {
       clipboard = null;
+      saveClipboard();
       ctx.showToast('🚫 剪贴板已清空');
       updateSelUI();
     });
@@ -114,6 +133,7 @@
       imgs: Object.keys(selectedImgs).map(Number),
       folders: Object.keys(selectedFolders).map(Number)
     };
+    saveClipboard();
     ctx.showToast('✂️ 已剪切 ' + selCount() + ' 项，进入目标文件夹后按 Ctrl+V 粘贴');
     exitSelection();
   }
@@ -123,6 +143,7 @@
     var n = Object.keys(selectedImgs).length;
     if (n === 0) return;
     clipboard = { type: 'copy', imgs: Object.keys(selectedImgs).map(Number), folders: [] };
+    saveClipboard();
     ctx.showToast('📋 已复制 ' + n + ' 张图片，可到任意文件夹反复粘贴（Ctrl+V，粘贴时创建副本）');
     exitSelection();
   }
@@ -154,7 +175,7 @@
     }
     var typ = isCopy ? '复制' : '移动';
     ctx.showToast(done + ' 项' + typ + '完成' + (failed ? '，' + failed + ' 项失败' : ''));
-    if (!isCopy) clipboard = null;   // Windows：剪切粘贴后清空，复制粘贴保留
+    if (!isCopy) { clipboard = null; saveClipboard(); }   // Windows：剪切粘贴后清空，复制粘贴保留
     exitSelection();
     ctx.refreshAll();
   }
@@ -357,6 +378,7 @@
     init: function (context) {
       ctx = context;
       grid = ctx.grid;
+      restoreClipboard();
       bindLongPress();
       bindMarquee();
       bindClickAndKeys();

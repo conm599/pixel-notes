@@ -697,8 +697,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
 /* ===== Windows 式多选（长按/框选/Ctrl+XCV）注入依赖 ===== */
 (function () {
-  if (!window.PixelSelection) return;
-  function fapiRaw(action, data) {
+  function initSel() {
+    if (!window.PixelSelection) return;
+    function fapiRaw(action, data) {
     var fd = new FormData();
     fd.append('action', action);
     fd.append('csrf_token', CSRF);
@@ -725,5 +726,8 @@ document.addEventListener('DOMContentLoaded', function () {
       return fetch(API_MAIN, { method: 'POST', body: fd }).then(function (r) { return r.json(); });
     },
     refreshAll: function () { location.reload(); }
-  });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initSel);
+  else initSel();
 })();
