@@ -94,7 +94,7 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=10">
+<link rel="stylesheet" href="css/pixel-blue.css?v=11">
 </head>
 <body>
 <div class="app">
