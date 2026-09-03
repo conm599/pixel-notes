@@ -94,7 +94,7 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=9">
+<link rel="stylesheet" href="css/pixel-blue.css?v=10">
 </head>
 <body>
 <div class="app">
@@ -327,6 +327,7 @@ var CURRENT_UUID = <?php echo json_encode($myUuid); ?>;
 var API_MAIN_HOST = <?php echo json_encode(siblingHost('tuchang')); ?>;
 var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
-<script src="js/dashboard.js?v=4"></script>
+<script src="js/dashboard.js?v=5"></script>
+<script src="js/selection.js?v=1"></script>
 </body>
 </html>
