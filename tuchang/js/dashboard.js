@@ -705,6 +705,7 @@ document.addEventListener('DOMContentLoaded', function () {
       document.getElementById('fsName').textContent = '📁 ' + (card.querySelector('.f-name').textContent) + ' · 分享';
       document.getElementById('fsResult').style.display = 'none';
       document.getElementById('folderShareDlg').style.display = 'flex';
+      if (window.__openFolderShare) window.__openFolderShare();   // 回显当前分享状态
       return;
     }
     if (ren) {
@@ -784,10 +785,46 @@ document.addEventListener('click', function (e) {
   if (ov && e.target === ov) ov.style.display = 'none';
 });
 
-// ===== 文件夹分享弹窗逻辑 =====
+// ===== 文件夹分享弹窗逻辑（打开即回显当前分享状态；链接主/优选双行带复制） =====
 (function () {
   var goBtn = document.getElementById('fsGo');
   if (!goBtn) return;
+
+  function fmtUntil(until) {
+    if (!until) return '永久有效';
+    var left = until - Math.floor(Date.now() / 1000);
+    if (left <= 0) return '已过期';
+    var d = Math.floor(left / 86400), h = Math.floor((left % 86400) / 3600);
+    return d > 0 ? '剩 ' + d + ' 天 ' + h + ' 小时' : '剩 ' + Math.max(1, h) + ' 小时';
+  }
+
+  function renderState(d) {
+    var box = document.getElementById('fsResult');
+    var untilEl = document.getElementById('fsUntil');
+    if (d.shared) {
+      document.getElementById('fsUrlMain').value = d.url;
+      document.getElementById('fsUrlPref').value = d.url2;
+      untilEl.textContent = '当前状态：已分享 · ' + fmtUntil(d.until);
+      box.style.display = 'block';
+    } else {
+      box.style.display = 'none';
+      document.getElementById('fsUrlMain').value = '';
+      document.getElementById('fsUrlPref').value = '';
+      untilEl.textContent = '当前状态：未分享';
+    }
+  }
+
+  function fetchInfo() {
+    var fid = window.__fsFid;
+    if (!fid) return;
+    fetch(API_MAIN + '?action=folder_share_info&csrf_token=' + encodeURIComponent(CSRF) + '&id=' + fid, { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d.ok) renderState(d); });
+  }
+
+  // f-share 点击打开弹窗（dashboard.js 文件夹委托里设置 __fsFid 后调用）
+  window.__openFolderShare = function () { fetchInfo(); };
+
   goBtn.addEventListener('click', function () {
     var fid = window.__fsFid;
     if (!fid) return;
@@ -800,31 +837,31 @@ document.addEventListener('click', function (e) {
     fetch(API_MAIN, { method: 'POST', body: fd, cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (r) {
-        var box = document.getElementById('fsResult');
         if (!r.ok) { toast(r.err || '操作失败'); return; }
         if (r.cancelled) {
-          box.style.display = 'none';
+          renderState({ shared: 0, url: '', url2: '', until: 0 });
           toast('已撤销文件夹分享（链接立即失效）');
-          if (window.__SPA) window.__SPA.refreshFolders();
           return;
         }
-        document.getElementById('fsUrl').value = r.url;
-        box.style.display = 'block';
-        document.getElementById('fsUrl').select();
-        try { document.execCommand('copy'); toast('链接已生成并复制'); } catch (e) {}
+        renderState({ shared: 1, url: r.url, url2: r.url2, until: r.until });
+        toast('分享链接已更新' + (r.until === 0 ? '（永久）' : ''));
         if (window.__SPA) window.__SPA.refreshFolders();
       })
       .catch(function () { toast('网络错误，请重试'); });
   });
-  var cp = document.getElementById('fsCopy');
-  if (cp) cp.addEventListener('click', function () {
-    var inp = document.getElementById('fsUrl');
+
+  // 复制按钮（委托）
+  document.addEventListener('click', function (e) {
+    var cp = e.target.closest && e.target.closest('#fsResult .copy-btn[data-copy]');
+    if (!cp) return;
+    var inp = document.getElementById(cp.getAttribute('data-copy'));
+    if (!inp) return;
     inp.select();
     try { document.execCommand('copy'); toast('已复制'); } catch (e) {}
   });
 })();
 
-// ===== 单击图片 = 打开大图（选择模式中由 selection 拦截为加选，不会到这里） =====
+// ===== 单击图片 = 打开大图（选择模式中由 selection 拦截为加选，不会到这里） =====// ===== 单击图片 = 打开大图（选择模式中由 selection 拦截为加选，不会到这里） =====
 document.addEventListener('click', function (e) {
   if (window.PixelSelection && window.PixelSelection.isActive()) return;
   var pick = e.target.closest ? e.target.closest('.pick, .pickbox') : null;

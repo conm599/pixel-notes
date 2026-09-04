@@ -195,8 +195,10 @@ $csrf = csrf_token();
     </select>
     <button class="btn-primary" id="fsGo" style="margin-top:16px;width:100%">生成 / 更新链接</button>
     <div class="share-result" id="fsResult" style="display:none;margin-top:16px">
-      <h3 style="font-size:13px;color:var(--muted);margin-bottom:10px">文件夹链接（含子文件夹，访客只读）</h3>
-      <div class="code-row"><input id="fsUrl" readonly><button class="copy-btn" id="fsCopy">复制</button></div>
+      <h3 style="font-size:13px;color:var(--muted);margin-bottom:10px">分享链接（携带 token，未登录访问需 token）</h3>
+      <div class="code-row" style="margin-bottom:6px"><label>主域名</label><input id="fsUrlMain" readonly><button class="copy-btn" data-copy="fsUrlMain">复制</button></div>
+      <div class="code-row"><label>优选</label><input id="fsUrlPref" readonly><button class="copy-btn" data-copy="fsUrlPref">复制</button></div>
+      <div id="fsUntil" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
     </div>
   </div>
 </div>
@@ -210,6 +212,6 @@ var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
 <script src="js/spa.js?v=8"></script>
 <script src="js/selection.js?v=9"></script>
-<script src="js/dashboard.js?v=25"></script>
+<script src="js/dashboard.js?v=26"></script>
 </body>
 </html>
