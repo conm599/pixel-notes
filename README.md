@@ -10,9 +10,24 @@
 
 ```
 pixel-suite/
-├── bianqian/   便签 Pixel Notes  → VPS /var/www/hosting   （bianqian.naxid.top）
-├── tuchang/    陶瓦图床          → VPS /var/www/tuchang    （tuchang.naxid.top / mcft.naxid.top 走 CF）
-└── docs/       图床旧仓 git 历史存档（合并前独立仓库的 log）
+├── README.md               本文档
+├── bianqian/   便签 Pixel Notes  → VPS /var/www/hosting（bianqian.naxid.top）
+│   ├── index.php / login.php / register.php / logout.php
+│   ├── share.php（公开分享只读页）/ backup.php（备份）
+│   ├── admin.php（AI/邮件后台）/ admini/（/admini 配置中心）
+│   ├── api/（ai.php、auth.php、folders.php、notes.php、tts.php…）
+│   ├── css/ js/（app.js v78、md.js v41、selection.js v5、ai-direct.js v15）
+│   └── protocol.md（AI 编辑协议 v8）
+├── tuchang/    图床（tuchang.naxid.top / mcft.naxid.top）→ VPS /var/www/tuchang
+│   ├── dashboard.php（SPA 控制台）/ view.php / login.php / register.php
+│   ├── i.php（图片出口）/ s.php（token 分享）/ api.php（全部操作）
+│   ├── adminws.php（密令管理台）/ api-doc.php
+│   ├── js/（dashboard.js v21、spa.js v7、selection.js v9）
+│   ├── css/（pixel-blue.css v13）
+│   └── nginx/ 配置归档
+├── admini/  # 合并仓办公用配置中心副本（部署时只取 bianqian/admini/）
+├── docs/    部署教程-傻瓜式.md / 便签使用教程-从入门到精通.md / tuchang-gitlog.txt
+└── tools/   build-tutorial.js（教程 md → JS 数据文件构建）
 ```
 
 ## 动态域名（第二域名绑定）
