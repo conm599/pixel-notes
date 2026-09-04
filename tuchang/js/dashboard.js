@@ -639,24 +639,30 @@ document.addEventListener('DOMContentLoaded', function () {
     // 重试拿到的业务错误（同名已存在/文件夹不存在等）多为「首次已成功」的证据，
     // 一律按 unreliable 处理：done(r, true)，调用方重拉真实状态、不报错误。
     stage = stage || 0;
+    var key = action + ':' + JSON.stringify(data);
+    if (window.__fapiInflight && window.__fapiInflight[key]) return;   // 请求级防重：同参数请求进行中忽略重复（双击/重试双发根除）
+    if (!window.__fapiInflight) window.__fapiInflight = {};
+    window.__fapiInflight[key] = true;
+    var release = function () { if (window.__fapiInflight) delete window.__fapiInflight[key]; };
     var fd = new FormData();
     fd.append('action', action);
     fd.append('csrf_token', CSRF);
     for (var k in data) fd.append(k, data[k]);
     var url = API_MAIN.replace(/\/api\.php$/, '') + '/api.php';
+    var finish = function (r, unreliable) { release(); done(r, unreliable); };
     var fallback = function () {
-      if (stage === 0) { fapi(action, data, done, 1); return; }          // fetch 重试
+      if (stage === 0) { fapi(action, data, function (r, u) { finish(r, u); }, 1); return; }          // fetch 重试
       if (stage === 1) {                                                 // XHR 换通道
         var xhr = new XMLHttpRequest();
         xhr.open('POST', url);
-        xhr.onload = function () { try { done(JSON.parse(xhr.responseText), true); } catch (e) { done({ ok: false, err: '网络响应丢失' }, true); } };
-        xhr.onerror = function () { done({ ok: false, err: '网络响应丢失' }, true); };
+        xhr.onload = function () { try { var r = JSON.parse(xhr.responseText); finish(r, true); } catch (e) { finish({ ok: false, err: '网络响应丢失' }, true); } };
+        xhr.onerror = function () { finish({ ok: false, err: '网络响应丢失' }, true); };
         xhr.send(fd);
         return;
       }
       done({ ok: false, err: '网络响应丢失' }, true);
     };
-    fetch(url, { method: 'POST', body: fd })
+    fetch(url, { method: 'POST', body: fd, cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (r) { done(r, false); })
       .catch(fallback);
@@ -675,10 +681,11 @@ document.addEventListener('DOMContentLoaded', function () {
     if (name === '') return toast('名称不能为空');
     var createParent = window.__SPA ? window.__SPA.getCur() : CUR_FOLDER;   // 实时读当前夹（新建落当前层）
     fapi('folder_create', { name: name, parent_id: createParent === null ? '' : createParent }, function (r, unreliable) {
-      if (!r.ok && !unreliable) { toast(r.err || '创建失败'); return; }
-      toast(r.ok ? '已创建「' + r.name + '」' : '已提交（网络响应丢失，按服务器状态刷新）');
+      // 无论成败都重拉列表（说实话原则，学便签）：同名冲突时列表里能看到已存在的夹
       if (window.__SPA) window.__SPA.refreshFolders();
       else location.reload();
+      if (!r.ok && !unreliable) { toast(r.err || '创建失败'); return; }
+      toast(r.ok ? '已创建「' + r.name + '」' : '已提交（网络响应丢失，按服务器状态刷新）');
     });
   });
 
@@ -698,12 +705,13 @@ document.addEventListener('DOMContentLoaded', function () {
       name = name.trim();
       if (name === '' || name === cur) return;
       fapi('folder_rename', { id: fid, name: name }, function (r, unreliable) {
-        if (!r.ok && !unreliable) { toast(r.err || '失败'); return; }
-        // 成功：立即更新卡片名；并重拉树同步 SPA 数据（防下次渲染回退旧名）
-        card.querySelector('.f-name').textContent = r.ok ? r.name : name;
-        toast(r.ok ? '已重命名' : '已提交（按服务器状态刷新）');
+        // 无论成败都重拉列表（说实话原则）：失败时用户能看到真实名字
         if (window.__SPA) window.__SPA.refreshFolders();
         else location.reload();
+        if (!r.ok && !unreliable) { toast(r.err || '失败'); return; }
+        // 成功：立即更新卡片名（重拉后的渲染也带新名）
+        card.querySelector('.f-name').textContent = r.ok ? r.name : name;
+        toast(r.ok ? '已重命名' : '已提交（按服务器状态刷新）');
       });
     } else {
       if (!confirm('删除该文件夹？夹内图片自动回到「未归类」，图片不会删除。')) return;
