@@ -161,25 +161,14 @@ function insertCard(res) {
     '<span class="exp-badge off">永久</span></div></div>' +
     '<div class="ops"><select class="exp-sel">' + expOptsHtml + '</select>' +
     '<button class="sm-btn share-btn">外链</button><button class="sm-btn rename-btn">重命名</button><button class="sm-btn danger del-btn">删除</button></div>';
-  grid.insertBefore(card, grid.firstChild);
-  // 缩略图点击 → 新标签页打开详情页（由 document 委托处理，避免重复绑定）
-  card.querySelector('.share-btn').addEventListener('click', function () {
-    openShare(card.dataset.id, card.dataset.name);
-  });
-  card.querySelector('.rename-btn').addEventListener('click', function () {
-    doRename(card.dataset.id, card.dataset.name);
-  });
-  card.querySelector('.del-btn').addEventListener('click', function () {
-    if (!confirm('确定删除这张图片？')) return;
-    act(card.dataset.id, 'delete').then(function (r) {
-      if (r.ok) { card.remove(); toast('已删除'); } else toast(r.err || '删除失败');
-    });
-  });
-  card.querySelector('.exp-sel').addEventListener('change', function () {
-    act(card.dataset.id, 'setexpire', ['expire', this.value]).then(function (r) {
-      toast(r.ok ? '过期时间已更新' : (r.err || '失败'));
-    });
-  });
+  if (window.__SPA) {
+    // SPA 模式：登记进视图模型（上传落在当前文件夹视图）
+    card.setAttribute('data-folder-id', window.__SPA.getCur() === null ? '0' : String(window.__SPA.getCur() === 0 ? 0 : window.__SPA.getCur()));
+    window.__SPA.addCard(card, window.__SPA.getCur() === null ? 0 : window.__SPA.getCur());
+    card.remove();   // addCard 内部按可见性自行插入，这里避免双重插入
+  } else {
+    grid.insertBefore(card, grid.firstChild);
+  }
 }
 function fmtSize(b) {
   if (b >= 1048576) return (b / 1048576).toFixed(2) + ' MB';
@@ -332,13 +321,15 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   // 卡片操作
-  document.querySelectorAll('.card').forEach(function (card) {
+  // 卡片操作：document 级委托（SPA 重建卡片后依然有效）
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('.card .share-btn, .card .unshare-btn, .card .rename-btn, .card .del-btn') : null;
+    if (!btn) return;
+    var card = btn.closest('.card');
     var id = card.dataset.id;
-    card.querySelector('.share-btn').addEventListener('click', function () {
+    if (btn.classList.contains('share-btn')) {
       openShare(id, card.querySelector('.m-name').textContent);
-    });
-    var unshareBtn = card.querySelector('.unshare-btn');
-    if (unshareBtn) unshareBtn.addEventListener('click', function () {
+    } else if (btn.classList.contains('unshare-btn')) {
       if (!confirm('停止分享？链接将立即失效')) return;
       act(id, 'unshare').then(function (r) {
         if (r.ok) {
@@ -348,27 +339,30 @@ document.addEventListener('DOMContentLoaded', function () {
           var badge = card.querySelector('.share-badge');
           if (badge) badge.remove();
           card.querySelector('.share-btn').textContent = '外链';
-          unshareBtn.remove();
+          btn.remove();
           toast('已停止分享');
         } else toast(r.err || '失败');
       });
-    });
-    var renameBtn = card.querySelector('.rename-btn');
-    if (renameBtn) renameBtn.addEventListener('click', function () {
+    } else if (btn.classList.contains('rename-btn')) {
       doRename(id, card.dataset.name);
-    });
-    card.querySelector('.del-btn').addEventListener('click', function () {
+    } else if (btn.classList.contains('del-btn')) {
       if (!confirm('确定删除这张图片？')) return;
       act(id, 'delete').then(function (r) {
-        if (r.ok) { card.remove(); toast('已删除'); } else toast(r.err || '删除失败');
+        if (r.ok) {
+          card.remove();
+          if (window.__SPA) window.__SPA.removeCard(parseInt(id));
+          toast('已删除');
+        } else toast(r.err || '删除失败');
       });
-    });
-    var sel = card.querySelector('.exp-sel');
-    sel.addEventListener('change', function () {
-      act(id, 'setexpire', ['expire', sel.value]).then(function (r) {
-        toast(r.ok ? '过期时间已更新' : (r.err || '失败'));
-        if (r.ok) updateExpireLabel(card, sel.value);
-      });
+    }
+  });
+  document.addEventListener('change', function (e) {
+    var sel = e.target.closest ? e.target.closest('.card .exp-sel') : null;
+    if (!sel) return;
+    var card = sel.closest('.card');
+    act(card.dataset.id, 'setexpire', ['expire', sel.value]).then(function (r) {
+      toast(r.ok ? '过期时间已更新' : (r.err || '失败'));
+      if (r.ok) updateExpireLabel(card, sel.value);
     });
   });
 
@@ -628,7 +622,11 @@ document.addEventListener('DOMContentLoaded', function () {
     name = name.trim();
     if (name === '') return toast('名称不能为空');
     fapi('folder_create', { name: name, parent_id: CUR_FOLDER === null ? '' : CUR_FOLDER }, function (r) {
-      if (r.ok) { toast('已创建「' + r.name + '」'); setTimeout(function () { location.href = 'dashboard.php?folder=' + r.id; }, 400); }
+      if (r.ok) {
+        toast('已创建「' + r.name + '」');
+        if (window.__SPA) window.__SPA.refreshFolders();
+        else location.reload();
+      }
       else toast(r.err || '创建失败');
     });
   });
@@ -649,16 +647,19 @@ document.addEventListener('DOMContentLoaded', function () {
       name = name.trim();
       if (name === '' || name === cur) return;
       fapi('folder_rename', { id: fid, name: name }, function (r) {
-        if (r.ok) { card.querySelector('.f-name').textContent = r.name; toast('已重命名'); }
+        if (r.ok) {
+          toast('已重命名');
+          if (window.__SPA) window.__SPA.refreshFolders();
+        }
         else toast(r.err || '失败');
       });
     } else {
       if (!confirm('删除该文件夹？夹内图片自动回到「未归类」，图片不会删除。')) return;
       fapi('folder_delete', { id: fid }, function (r) {
         if (r.ok) {
-          card.remove();
-          toast('文件夹已删除，图片已回未归类');
-          if (String(CUR_FOLDER) === String(fid)) setTimeout(function () { location.href = 'dashboard.php'; }, 500);
+          toast('文件夹已删除，内容已上移一级');
+          if (window.__SPA) window.__SPA.refreshFolders();   // SPA 重拉树重渲染（含被删夹的图片归属）
+          else location.reload();
         } else toast(r.err || '失败');
       });
     }
@@ -725,7 +726,11 @@ document.addEventListener('DOMContentLoaded', function () {
       ids.forEach(function (id) { fd.append('ids[]', id); });
       return fetch(API_MAIN, { method: 'POST', body: fd }).then(function (r) { return r.json(); });
     },
-    refreshAll: function () { location.reload(); }
+    refreshAll: function () {
+      // SPA 局部刷新：重拉文件夹树重渲染视图（选择/剪贴板全部在内存存活）
+      if (window.__SPA) window.__SPA.refreshFolders();
+      else location.reload();
+    }
     });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initSel);

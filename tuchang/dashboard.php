@@ -70,19 +70,10 @@ foreach ($direct as $fid => $cn) {
 }
 $unsortedCnt = isset($direct[0]) ? $direct[0] : 0;
 
-// 图片列表（按文件夹视图过滤）
-$sql = 'SELECT id, file, name, size, w, h, created_at, expire_at, hits, share_token, share_until, folder_id FROM img_images WHERE uid = ?';
-if ($folderView === '0') { $sql .= ' AND folder_id IS NULL'; }
-elseif ($folderView !== 'all') { $sql .= ' AND folder_id = ' . $curFolder; }
-$sql .= ' ORDER BY id DESC';
-$st = db()->prepare($sql);
+// 图片列表（SPA 全量：视图过滤交给前端 spa.js，切夹零请求零跳转）
+$st = db()->prepare('SELECT id, file, name, size, w, h, created_at, expire_at, hits, share_token, share_until, folder_id FROM img_images WHERE uid = ? ORDER BY id DESC');
 $st->execute(array($uid));
 $imgs = $st->fetchAll();
-if ($folderView === 'all') {
-    foreach ($imgs as $_im) { if ($_im['folder_id'] === null) $unsortedCnt++; }
-} elseif ($folderView === '0') {
-    $unsortedCnt = count($imgs);
-}
 
 $base = base_url();
 $csrf = csrf_token();
@@ -157,44 +148,8 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
 
   <div class="queue" id="queue"></div>
 
-  <div class="crumbs" id="folderCrumbs">
-    <a class="crumb<?php echo $folderView === 'all' ? ' on' : ''; ?>" href="dashboard.php">🗂 全部图片</a>
-<?php if ($folderView === '0'): ?>
-    <span class="crumb-sep">›</span><span class="crumb on">📥 未归类</span>
-<?php elseif ($folderView !== 'all'): ?>
-<?php foreach ($crumbs as $i => $cid): ?>
-    <span class="crumb-sep">›</span>
-<?php if ($cid === $curFolder): ?>
-    <span class="crumb on">📁 <?php echo e($nameOf[$cid]); ?></span>
-<?php else: ?>
-    <a class="crumb" href="dashboard.php?folder=<?php echo $cid; ?>">📁 <?php echo e($nameOf[$cid]); ?></a>
-<?php endif; ?>
-<?php endforeach; endif; ?>
-  </div>
-  <div class="folder-bar" id="folderBar">
-<?php if ($folderView !== 'all' && $folderView !== '0'): ?>
-    <div class="folder-card" onclick="location.href='dashboard.php?folder=<?php echo $parentOf[$curFolder] === null || $parentOf[$curFolder] === 0 ? 0 : $parentOf[$curFolder]; ?>'">
-      <div class="f-icon">↩️</div><div class="f-name">上一级</div>
-    </div>
-<?php endif; ?>
-<?php if ($folderView === 'all'): ?>
-    <div class="folder-card fdrop" data-fid="0" onclick="location.href='dashboard.php?folder=0'">
-      <div class="f-icon">📥</div><div class="f-name">未归类</div><div class="f-count"><?php echo $unsortedCnt; ?> 张</div>
-    </div>
-<?php endif; ?>
-<?php foreach ($curChildren as $cid): ?>
-    <div class="folder-card fdrop" data-fid="<?php echo $cid; ?>" onclick="location.href='dashboard.php?folder=<?php echo $cid; ?>'">
-      <div class="f-icon">📁</div><div class="f-name"><?php echo e($nameOf[$cid]); ?></div><div class="f-count"><?php echo isset($roll[$cid]) ? $roll[$cid] : 0; ?> 张</div>
-      <div class="f-act">
-        <button type="button" class="f-ren" title="重命名">✏️</button>
-        <button type="button" class="f-del" title="删除文件夹">🗑</button>
-      </div>
-    </div>
-<?php endforeach; ?>
-    <div class="folder-card folder-new" id="folderNew" title="新建文件夹">
-      <div class="f-icon">＋</div><div class="f-name">新建文件夹</div>
-    </div>
-  </div>
+  <div class="crumbs" id="folderCrumbs"></div>
+  <div class="folder-bar" id="folderBar"></div>
 
   <div class="grid-title">
     <h2>我的图片</h2>
@@ -203,11 +158,13 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
     </span>
   </div>
 
-  <?php if (count($imgs) === 0): ?>
-    <div class="empty"><div class="big">☁️</div>还没有图片，拖一张上来吧</div>
-  <?php else: ?>
-  <div class="grid">
-    <?php foreach ($imgs as $img):
+  <div class="grid"></div>
+  <div class="empty" style="display:none"><div class="big">☁️</div>这里还没有图片</div>
+  <?php
+    // 全部卡片渲染为字符串，收进 #suiteData 供 SPA 接管（首屏即当前视图，无闪烁）
+    $__cards = array();
+    foreach ($imgs as $img):
+        ob_start();
         $thumb = $base . 'i.php?id=' . $img['id']; // 静态路径：浏览器可缓存
         $vUrl = 'view.php?id=' . $img['id'] . '&u=' . $myUuid; // 详情页（带用户专属 uuid）
         $url = $base . 'i.php?id=' . $img['id'];
@@ -260,9 +217,17 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
         <button class="sm-btn danger del-btn">删除</button>
       </div>
     </div>
-    <?php endforeach; ?>
-  </div>
-  <?php endif; ?>
+    <?php
+        endforeach;
+        $__html = ob_get_clean();
+        $__cards[] = $__html;
+        $__cardsJson = json_encode($__cards, JSON_UNESCAPED_UNICODE);
+    ?>
+  <script type="application/json" id="suiteData">{"curFolder":<?php echo json_encode($curFolder); ?>,"folders":<?php
+    $__tree = array();
+    foreach ($allFolders as $__f) $__tree[] = array('id' => (int)$__f['id'], 'parent_id' => $__f['parent_id'] === null ? 0 : (int)$__f['parent_id'], 'name' => $__f['name']);
+    echo json_encode($__tree, JSON_UNESCAPED_UNICODE);
+  ?>,"cards":<?php echo $__cardsJson; ?>}</script>
 
   <div class="footer">
     陶瓦图床 · 前端压缩 WebP 60% · 图片自动剥离元数据<br>
@@ -327,7 +292,8 @@ var CURRENT_UUID = <?php echo json_encode($myUuid); ?>;
 var API_MAIN_HOST = <?php echo json_encode(siblingHost('tuchang')); ?>;
 var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
-<script src="js/selection.js?v=2"></script>
-<script src="js/dashboard.js?v=6"></script>
+<script src="js/spa.js?v=1"></script>
+<script src="js/selection.js?v=3"></script>
+<script src="js/dashboard.js?v=7"></script>
 </body>
 </html>
