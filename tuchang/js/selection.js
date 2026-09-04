@@ -261,9 +261,55 @@
     });
   }
 
-  // ===== 框选（Windows 桌面式：半透明框 + 实时命中，Ctrl 追加） =====
+  // ===== 框选（Windows 桌面式：文档坐标 + 边缘自动滚屏，可跨屏框住视口外的图） =====
   function bindMarquee() {
     var marquee = null;
+    var active = false;
+    var startDoc = null;      // 起点文档坐标
+    var lastClient = { x: 0, y: 0 };
+    var baseImgs = {}, baseFolders = {};
+    var scrollDir = 0, ticking = false;
+
+    function toDoc(e) { return { x: e.clientX + window.scrollX, y: e.clientY + window.scrollY }; }
+
+    function updateRect(ev) {
+      var p = toDoc(ev);
+      var x1 = Math.min(startDoc.x, p.x), y1 = Math.min(startDoc.y, p.y);
+      var w = Math.abs(p.x - startDoc.x), h = Math.abs(p.y - startDoc.y);
+      if (!active) return;
+      // 框的视口显示位置（fixed 定位 = 文档坐标 - 滚动偏移）
+      marquee.style.left = (x1 - window.scrollX) + 'px';
+      marquee.style.top = (y1 - window.scrollY) + 'px';
+      marquee.style.width = w + 'px';
+      marquee.style.height = h + 'px';
+      var r = { x1: x1 - window.scrollX, y1: y1 - window.scrollY, x2: x1 - window.scrollX + w, y2: y1 - window.scrollY + h };
+      // 命中检测（视口坐标对比）
+      selectedImgs = {}; selectedFolders = {};
+      Object.keys(baseImgs).forEach(function (k) { selectedImgs[k] = true; });
+      Object.keys(baseFolders).forEach(function (k) { selectedFolders[k] = true; });
+      grid.querySelectorAll('.card').forEach(function (c) {
+        var b = c.getBoundingClientRect();
+        if (b.right > r.x1 && b.left < r.x2 && b.bottom > r.y1 && b.top < r.y2) {
+          selectedImgs[parseInt(c.getAttribute('data-id'))] = true;
+        }
+      });
+      grid.querySelectorAll('.folder-card').forEach(function (c) {
+        var b = c.getBoundingClientRect();
+        if (b.right > r.x1 && b.left < r.x2 && b.bottom > r.y1 && b.top < r.y2) {
+          selectedFolders[parseInt(c.getAttribute('data-fid'))] = true;
+        }
+      });
+      selMode = selCount() > 0;
+      updateSelUI();
+    }
+
+    function scrollTick() {
+      if (!active || scrollDir === 0) { ticking = false; return; }
+      window.scrollBy(0, scrollDir);
+      updateRect({ clientX: lastClient.x, clientY: lastClient.y });   // 滚动后按最新视口关系重算命中
+      requestAnimationFrame(scrollTick);
+    }
+
     document.addEventListener('pointerdown', function (e) {
       if (e.button !== undefined && e.button !== 0) return;
       if (e.pointerType !== 'mouse') return;
@@ -273,53 +319,32 @@
       if (ctx.isUiLocked()) return;
 
       var additive = e.ctrlKey || e.metaKey;
-      var baseImgs = {}, baseFolders = {};
+      baseImgs = {}; baseFolders = {};
       if (additive) {
         Object.keys(selectedImgs).forEach(function (k) { baseImgs[k] = true; });
         Object.keys(selectedFolders).forEach(function (k) { baseFolders[k] = true; });
       }
 
-      var startX = e.clientX, startY = e.clientY;
-      var active = false;
-      var rect = null;
+      startDoc = toDoc(e);
+      lastClient = { x: e.clientX, y: e.clientY };
+      active = false;
 
       function onMove(ev) {
-        var x = Math.min(startX, ev.clientX), y = Math.min(startY, ev.clientY);
-        var w = Math.abs(ev.clientX - startX), h = Math.abs(ev.clientY - startY);
+        lastClient = { x: ev.clientX, y: ev.clientY };
         if (!active) {
-          if (w < DRAG_THRESHOLD && h < DRAG_THRESHOLD) return;
+          var dx = Math.abs(ev.clientX - (startDoc.x - window.scrollX));
+          var dy = Math.abs(ev.clientY - (startDoc.y - window.scrollY));
+          if (dx < DRAG_THRESHOLD && dy < DRAG_THRESHOLD) return;
           active = true;
           marquee = document.createElement('div');
           marquee.className = 'marquee';
           document.body.appendChild(marquee);
           document.body.classList.add('marquee-selecting');
         }
-        marquee.style.left = x + 'px';
-        marquee.style.top = y + 'px';
-        marquee.style.width = w + 'px';
-        marquee.style.height = h + 'px';
-        rect = { x1: x, y1: y, x2: x + w, y2: y + h };
-        applyMarqueeSelection(rect, baseImgs, baseFolders);
-      }
-
-      function applyMarqueeSelection(r, bI, bF) {
-        selectedImgs = {}; selectedFolders = {};
-        Object.keys(bI).forEach(function (k) { selectedImgs[k] = true; });
-        Object.keys(bF).forEach(function (k) { selectedFolders[k] = true; });
-        grid.querySelectorAll('.card').forEach(function (c) {
-          var b = c.getBoundingClientRect();
-          if (b.right > r.x1 && b.left < r.x2 && b.bottom > r.y1 && b.top < r.y2) {
-            selectedImgs[parseInt(c.getAttribute('data-id'))] = true;
-          }
-        });
-        grid.querySelectorAll('.folder-card').forEach(function (c) {
-          var b = c.getBoundingClientRect();
-          if (b.right > r.x1 && b.left < r.x2 && b.bottom > r.y1 && b.top < r.y2) {
-            selectedFolders[parseInt(c.getAttribute('data-fid'))] = true;
-          }
-        });
-        selMode = selCount() > 0;
-        updateSelUI();
+        updateRect(ev);
+        // 边缘自动滚屏（Windows 桌面行为：拖到视口上下缘继续框住屏外内容）
+        scrollDir = ev.clientY > window.innerHeight - 48 ? 16 : (ev.clientY < 48 ? -16 : 0);
+        if (scrollDir !== 0 && !ticking) { ticking = true; requestAnimationFrame(scrollTick); }
       }
 
       function finish() {
@@ -328,6 +353,7 @@
         window.removeEventListener('pointercancel', finish);
         document.body.classList.remove('marquee-selecting');
         if (marquee) { marquee.remove(); marquee = null; }
+        scrollDir = 0; ticking = false;
         if (active) armClickSuppression();
       }
       window.addEventListener('pointermove', onMove);
@@ -336,15 +362,17 @@
     });
   }
 
+  var clickTimer = null;   // 单击延迟判定（双击的第二击取消它，避免选中闪烁/点三次才开图）
   function bindClickAndKeys() {
     grid.addEventListener('click', function (e) {
       if (isClickSuppressed()) { e.preventDefault(); e.stopPropagation(); return; }
       var ic = e.target.closest ? e.target.closest('.card') : null;
       if (ic) {
-        // 单击图片 = 选中/取消（未激活时自动进入选择模式）；打开详情 = 双击
         e.preventDefault(); e.stopPropagation();
         var id = parseInt(ic.getAttribute('data-id'));
-        if (!isNaN(id)) toggleSelect('img', id);
+        if (isNaN(id)) return;
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+        clickTimer = setTimeout(function () { clickTimer = null; toggleSelect('img', id); }, 250);
         return;
       }
       var fc = e.target.closest ? e.target.closest('.folder-card.fdrop') : null;
@@ -365,6 +393,18 @@
         '.card, .folder-card, button, a, input, textarea, select, .modal-mask, .sel-bar, .dropzone'
       )) return;
       exitSelection();
+    }, true);
+
+    // 双击卡片 = 打开详情（取消挂起的单击；若第一击的 toggle 已执行则撤销，保证双击后不残留选中）
+    document.addEventListener('dblclick', function (e) {
+      var ic = e.target.closest ? e.target.closest('.card') : null;
+      if (!ic) return;
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      e.preventDefault(); e.stopPropagation();
+      var id = parseInt(ic.getAttribute('data-id'));
+      if (isNaN(id)) return;
+      if (selectedImgs[id]) toggleSelect('img', id);   // 撤销第一击的选中
+      if (ctx.openDetail) ctx.openDetail(id);
     }, true);
 
     document.addEventListener('keydown', function (e) {

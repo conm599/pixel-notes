@@ -450,3 +450,18 @@ body.marquee-selecting { cursor: crosshair; user-select: none; }
 .sel-btn.sel-del:hover, .sel-btn.sel-clip-clear:hover { color: var(--danger); border-color: var(--danger); }
 .sel-clip-info { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
 body.sel-active #bulkbar { display: none !important; }   /* 选择模式与 checkbox 批量栏互斥 */
+
+/* ===== 全窗口拖放上传蒙层 ===== */
+#dropMask {
+  position: fixed; inset: 0; z-index: 9990; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(10, 16, 24, 0.72);
+  border: 4px dashed var(--accent2);
+  pointer-events: none;
+}
+#dropMask.on { display: flex; }
+#dropMask .dm-inner {
+  font-size: 17px; font-weight: 700; color: var(--accent);
+  background: var(--bg-panel); border: 2px solid var(--border-color);
+  box-shadow: var(--shadow-hard); padding: 18px 32px;
+}

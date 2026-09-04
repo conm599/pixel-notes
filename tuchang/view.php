@@ -43,7 +43,7 @@ if ($remain > 0) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?php echo e($img['name']); ?> · 陶瓦图床</title>
 
-<link rel="stylesheet" href="css/pixel-blue.css?v=12">
+<link rel="stylesheet" href="css/pixel-blue.css?v=13">
 </head>
 <body class="view-mode">
 <div class="view">
