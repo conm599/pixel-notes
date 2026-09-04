@@ -57,6 +57,8 @@
       + '<button type="button" class="sel-btn sel-copy" title="Ctrl+C">📋 复制</button>'
       + '<button type="button" class="sel-btn sel-paste" title="Ctrl+V">📥 粘贴到当前文件夹</button>'
       + '<button type="button" class="sel-btn sel-all" title="Ctrl+A">☑️ 全选</button>'
+      + '<button type="button" class="sel-btn sel-share">🔗 批量分享</button>'
+      + '<button type="button" class="sel-btn sel-zip">📦 打包 ZIP</button>'
       + '<button type="button" class="sel-btn sel-del">🗑 删除</button>'
       + '<button type="button" class="sel-btn sel-exit" title="Esc">✕ 取消选择</button>'
       + '<span class="sel-clip-info"></span>'
@@ -66,6 +68,8 @@
     bar.querySelector('.sel-copy').addEventListener('click', function () { selCopy(); });
     bar.querySelector('.sel-paste').addEventListener('click', function () { selPaste(); });
     bar.querySelector('.sel-all').addEventListener('click', function () { selAll(); });
+    bar.querySelector('.sel-share').addEventListener('click', function () { if (ctx.bulkShare) ctx.bulkShare(selectedImgs && Object.keys(selectedImgs).map(Number)); });
+    bar.querySelector('.sel-zip').addEventListener('click', function () { if (ctx.bulkZip) ctx.bulkZip(Object.keys(selectedImgs).map(Number)); });
     bar.querySelector('.sel-del').addEventListener('click', function () { selDelete(); });
     bar.querySelector('.sel-exit').addEventListener('click', function () { exitSelection(); });
     bar.querySelector('.sel-clip-clear').addEventListener('click', function () {
@@ -95,7 +99,7 @@
     document.body.classList.toggle('sel-active', full || hasClip);   // 隐藏原 checkbox 批量栏，两套多选不同时出现
     bar.classList.toggle('mini', !full && hasClip);
     bar.querySelector('.sel-count').style.display = full ? '' : 'none';
-    ['sel-cut', 'sel-copy', 'sel-all', 'sel-del', 'sel-exit'].forEach(function (cls) {
+    ['sel-cut', 'sel-copy', 'sel-all', 'sel-share', 'sel-zip', 'sel-del', 'sel-exit'].forEach(function (cls) {
       bar.querySelector('.' + cls).style.display = full ? '' : 'none';
     });
     bar.querySelector('.sel-paste').style.display = hasClip ? '' : 'none';
@@ -334,21 +338,24 @@
 
   function bindClickAndKeys() {
     grid.addEventListener('click', function (e) {
-      if (!selMode) return;
       if (isClickSuppressed()) { e.preventDefault(); e.stopPropagation(); return; }
       var ic = e.target.closest ? e.target.closest('.card') : null;
-      var fc = e.target.closest ? e.target.closest('.folder-card') : null;
       if (ic) {
+        // 单击图片 = 选中/取消（未激活时自动进入选择模式）；打开详情 = 双击
+        e.preventDefault(); e.stopPropagation();
         var id = parseInt(ic.getAttribute('data-id'));
-        if (!isNaN(id)) { e.preventDefault(); e.stopPropagation(); toggleSelect('img', id); }
+        if (!isNaN(id)) toggleSelect('img', id);
         return;
       }
-      if (fc) {
+      var fc = e.target.closest ? e.target.closest('.folder-card.fdrop') : null;
+      if (fc && selMode) {
+        // 选择模式中点文件夹 = 加选/减选；否则放行导航
+        e.preventDefault(); e.stopPropagation();
         var fid = parseInt(fc.getAttribute('data-fid'));
-        if (!isNaN(fid)) { e.preventDefault(); e.stopPropagation(); toggleSelect('folder', fid); }
+        if (!isNaN(fid)) toggleSelect('folder', fid);
         return;
       }
-      exitSelection();
+      if (selMode) exitSelection();
     }, true);
 
     document.addEventListener('click', function (e) {
@@ -386,6 +393,7 @@
     },
     isActive: function () { return selMode; },
     hasClipboard: function () { return !!clipboard; },
+    getSelected: function () { return { imgs: Object.keys(selectedImgs).map(Number), folders: Object.keys(selectedFolders).map(Number) }; },
     syncUI: function () { updateSelUI(); },
     reset: function () { exitSelection(); }
   };

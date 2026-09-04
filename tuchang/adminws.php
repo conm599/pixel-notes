@@ -87,7 +87,7 @@ if (!$isAdmin) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>管理后台 · 陶瓦图床</title>
-    <link rel="stylesheet" href="css/pixel-blue.css?v=11">
+    <link rel="stylesheet" href="css/pixel-blue.css?v=12">
     </head>
     <body class="auth-page">
     <div class="glass auth-card">
@@ -128,7 +128,7 @@ $delToken = $_SESSION['admin_del_token'];
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理后台 · 陶瓦图床</title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=11">
+<link rel="stylesheet" href="css/pixel-blue.css?v=12">
 <style>
 .app { max-width: 900px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }

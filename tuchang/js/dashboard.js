@@ -448,22 +448,10 @@ document.addEventListener('DOMContentLoaded', function () {
       refreshBulk();
     });
   });
-  // 缩略图点击：事件委托，统一处理"打开详情页"与多选模式下的"切换选中"
-  document.addEventListener('click', function (e) {
-    var thumb = e.target.closest ? e.target.closest('.thumb') : null;
-    if (!thumb) return;
-    var card = thumb.closest('.card');
+  // 双击卡片 = 打开详情页（单击已被 Windows 式多选接管：选中/取消）
+  document.addEventListener('dblclick', function (e) {
+    var card = e.target.closest ? e.target.closest('.card') : null;
     if (!card) return;
-    if (selSet.size > 0) {
-      e.preventDefault();
-      var cb = card.querySelector('.pickbox');
-      if (cb) {
-        cb.checked = !cb.checked;
-        if (cb.checked) selSet.add(card.dataset.id); else selSet.delete(card.dataset.id);
-      }
-      refreshBulk();
-      return;
-    }
     window.open(BASE + 'view.php?id=' + card.dataset.id + '&u=' + CURRENT_UUID, '_blank');
   });
   var selAll = document.getElementById('selAll');
@@ -476,6 +464,9 @@ document.addEventListener('DOMContentLoaded', function () {
     refreshBulk();
     selAll.textContent = every ? '全选' : '取消全选';
   });
+  document.getElementById('bulkShare').addEventListener('click', function () { bulkShareIds(selectedIds()); });
+  document.getElementById('bulkDel').addEventListener('click', function () { bulkDelIds(selectedIds()); });
+  document.getElementById('bulkZip').addEventListener('click', function () { bulkZipIds(selectedIds()); });
   document.getElementById('bulkCancel').addEventListener('click', function () {
     selSet.clear();
     refreshBulk();
@@ -484,8 +475,7 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   // 批量分享
-  document.getElementById('bulkShare').addEventListener('click', function () {
-    var ids = selectedIds();
+  function bulkShareIds(ids) {
     if (ids.length === 0) return;
     var fd = new FormData();
     fd.append('action', 'sharebatch');
@@ -538,7 +528,7 @@ document.addEventListener('DOMContentLoaded', function () {
       });
       toast('已分享 ' + res.count + ' 张');
     });
-  });
+  }
   document.getElementById('copyAllLinks').addEventListener('click', function () {
     var links = Array.prototype.map.call(document.querySelectorAll('#batchLinks input'), function (i) { return i.value; });
     if (!links.length) return;
@@ -558,8 +548,7 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   // 批量删除
-  document.getElementById('bulkDel').addEventListener('click', function () {
-    var ids = selectedIds();
+  function bulkDelIds(ids) {
     if (ids.length === 0) return;
     if (!confirm('确定删除选中的 ' + ids.length + ' 张图片？')) return;
     var fd = new FormData();
@@ -567,29 +556,27 @@ document.addEventListener('DOMContentLoaded', function () {
     ids.forEach(function (i) { fd.append('ids[]', i); });
     apiFetch(fd).then(function (res) {
       if (!res.ok) { toast(res.err || '删除失败'); return; }
-      ids.forEach(function (i) {
-        var card = document.querySelector('.card[data-id="' + i + '"]');
-        if (card) card.remove();
-      });
+      if (window.__SPA) {
+        ids.forEach(function (i) { window.__SPA.removeImg(parseInt(i, 10)); });
+      } else {
+        ids.forEach(function (i) {
+          var card = document.querySelector('.card[data-id="' + i + '"]');
+          if (card) card.remove();
+        });
+      }
       selSet.clear();
       refreshBulk();
       toast('已删除 ' + res.deleted + ' 张');
-      var cnt = document.querySelector('.grid-title .cnt');
-      if (cnt) {
-        var m = cnt.textContent.match(/(\d+)/);
-        if (m) cnt.textContent = cnt.textContent.replace(m[1], (parseInt(m[1], 10) - res.deleted));
-      }
     });
-  });
+  }
 
   // 打包下载 ZIP（主备降级：fetch blob 本地保存）
-  document.getElementById('bulkZip').addEventListener('click', function () {
-    var ids = selectedIds();
+  function bulkZipIds(ids) {
     var q = '&ids=' + ids.join(',');
     doZip(API_MAIN, q).catch(function () { return doZip(API_BACKUP, q); }).catch(function () {
       toast('打包下载失败，请重试');
     });
-  });
+  }
   function doZip(url, q) {
     return fetch(url + '?key=' + encodeURIComponent(API_KEY) + '&action=zip' + q)
       .then(function (r) {
@@ -715,7 +702,7 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   window.PixelSelection.init({
     grid: document.querySelector('.grid'),
-    getCurrentFolderId: function () { return CUR_FOLDER; },
+    getCurrentFolderId: function () { return window.__SPA ? window.__SPA.getCur() : CUR_FOLDER; },   // 实时读 SPA 状态（旧全局是页面加载时的死值）
     showToast: function (m) { toast(m); },
     isUiLocked: function () {
       return ['shareDlg', 'shareBatchDlg'].some(function (id) {
@@ -725,6 +712,8 @@ document.addEventListener('DOMContentLoaded', function () {
     },
     api: fapiRaw,
     folderApi: fapiRaw,
+    bulkShare: function (ids) { if (ids && ids.length) { bulkShareIds(ids); } },
+    bulkZip: function (ids) { if (ids && ids.length) { bulkZipIds(ids); } },
     delbatch: function (ids) {
       var fd = new FormData();
       fd.append('action', 'delbatch');
@@ -733,8 +722,8 @@ document.addEventListener('DOMContentLoaded', function () {
       return fetch(API_MAIN, { method: 'POST', body: fd }).then(function (r) { return r.json(); });
     },
     refreshAll: function () {
-      // SPA 局部刷新：重拉文件夹树重渲染视图（选择/剪贴板全部在内存存活）
-      if (window.__SPA) window.__SPA.refreshFolders();
+      // SPA 局部刷新：完整重拉元数据（list 很轻；图片本体走缓存不重下），选择/剪贴板内存存活
+      if (window.__SPA) window.__SPA.reload();
       else location.reload();
     }
     });
