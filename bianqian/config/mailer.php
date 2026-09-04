@@ -9,6 +9,9 @@
 require_once __DIR__ . '/database.php';
 
 function defaultEmailWhitelist() {
+    // suite-config 的 email_whitelist（/admini 可配）优先于内置清单
+    $cfg = suite_cfg('email_whitelist', '');
+    if ($cfg !== '') return $cfg;
     return 'qq.com,foxmail.com,163.com,126.com,sina.com,sohu.com,yeah.net,139.com,189.cn,aliyun.com,gmail.com,outlook.com,hotmail.com,live.com,icloud.com,me.com,yahoo.com,yahoo.co.jp,protonmail.com,naxid.top';
 }
 
@@ -46,11 +49,12 @@ function smtpRead($fp, $expect) {
  * 发送 HTML 邮件。返回 array('ok'=>bool, 'err'=>string)
  */
 function smtpSend($toEmail, $subject, $htmlBody) {
-    $host = trim(getSetting('smtp_host', 'smtp.qq.com'));
-    $port = (int)getSetting('smtp_port', 465);
-    $user = trim(getSetting('smtp_user', ''));
-    $pass = trim(getSetting('smtp_pass', ''));
-    $name = trim(getSetting('smtp_from_name', ''));
+    // 读取链：pn_settings（管理页可改）优先，suite-config（/admini 面板，新装环境兜底）次之
+    $host = trim(suite_cfg('smtp_host', getSetting('smtp_host', 'smtp.qq.com')));
+    $port = (int)suite_cfg('smtp_port', getSetting('smtp_port', 465));
+    $user = trim(suite_cfg('smtp_user', getSetting('smtp_user', '')));
+    $pass = trim(suite_cfg('smtp_pass', getSetting('smtp_pass', '')));
+    $name = trim(suite_cfg('smtp_from_name', getSetting('smtp_from_name', '')));
     if ($name === '') $name = 'Pixel Notes';
     if ($user === '' || $pass === '') {
         return array('ok' => false, 'err' => '邮件服务未配置（管理员需在管理页填写 SMTP 信息）');

@@ -65,6 +65,12 @@ if (!$INSTALLED && isset($_POST['install'])) {
             'tuchang_db_user' => trim($_POST['tuchang_db_user'] ?? ''),
             'tuchang_db_pass' => (string)($_POST['tuchang_db_pass'] ?? ''),
             // 图床常量
+            'smtp_host' => trim($_POST['smtp_host'] ?? 'smtp.qq.com'),
+            'smtp_port' => (int)($_POST['smtp_port'] ?? 465),
+            'smtp_user' => trim($_POST['smtp_user'] ?? ''),
+            'smtp_pass' => (string)($_POST['smtp_pass'] ?? ''),
+            'smtp_from_name' => trim($_POST['smtp_from_name'] ?? 'Pixel Notes'),
+            'email_whitelist' => trim($_POST['email_whitelist'] ?? ''),
             'tuchang_invite_code' => trim($_POST['tuchang_invite_code'] ?? ''),
             'tuchang_admin_pass' => (string)($_POST['tuchang_admin_pass'] ?? ''),
             'tuchang_user_quota' => (int)($_POST['tuchang_user_quota'] ?? 20971520),
@@ -107,7 +113,7 @@ if (!$INSTALLED && isset($_POST['install'])) {
     $err = '密码错误';
 } elseif ($INSTALLED && $logged && isset($_POST['save'])) {
     // ---- 面板保存：读旧值合并（密码留空=不改） ----
-    $keys = array('bianqian_host','tuchang_host','bianqian_db_host','bianqian_db_port','bianqian_db_name','bianqian_db_user','bianqian_db_pass',
+    $keys = array('smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from_name','email_whitelist','bianqian_host','tuchang_host','bianqian_db_host','bianqian_db_port','bianqian_db_name','bianqian_db_user','bianqian_db_pass',
         'tuchang_db_host','tuchang_db_name','tuchang_db_user','tuchang_db_pass',
         'tuchang_invite_code','tuchang_admin_pass','tuchang_user_quota','tuchang_max_upload','tuchang_max_compressed',
         'tuchang_max_dim','tuchang_cron_key','tuchang_preferred_host',
@@ -139,6 +145,10 @@ if (!$INSTALLED && isset($_POST['install'])) {
 }
 
 $FIELDS = array(
+    '邮件 SMTP（注册验证码）' => array(
+        'smtp_host' => 'SMTP 服务器', 'smtp_port' => '端口', 'smtp_user' => '发信账号',
+        'smtp_pass' => 'SMTP 授权码', 'smtp_from_name' => '发件人名称', 'email_whitelist' => '邮箱白名单(逗号分隔)',
+    ),
     '站点域名（公共部署）' => array(
         'bianqian_host' => '便签完整域名', 'tuchang_host' => '图床完整域名',
     ),
@@ -216,6 +226,12 @@ button.ghost { background: var(--panel); color: var(--txt); border-color: var(--
       <label>库名</label><input type="text" name="tuchang_db_name" required>
       <label>用户</label><input type="text" name="tuchang_db_user" required>
       <label>密码</label><input type="password" name="tuchang_db_pass">
+      <h2>邮件 SMTP（注册验证码依赖；留空=暂不发信）</h2>
+      <label>SMTP 服务器（如 smtp.qq.com）</label><input type="text" name="smtp_host" value="smtp.qq.com">
+      <label>端口（465=SSL / 587=STARTTLS）</label><input type="text" name="smtp_port" value="465">
+      <label>发信账号</label><input type="text" name="smtp_user">
+      <label>SMTP 授权码</label><input type="password" name="smtp_pass">
+      <label>发件人名称</label><input type="text" name="smtp_from_name" value="Pixel Notes">
       <h2>图床常量</h2>
       <label>注册邀请码</label><input type="text" name="tuchang_invite_code" required>
       <label>adminws 管理密令（留空=与管理员密码相同）</label><input type="password" name="tuchang_admin_pass">
