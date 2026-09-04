@@ -13,6 +13,7 @@
   var toast = document.getElementById('toast');
   var toastTimer = null;
   var notesById = {};
+  var notesOrder = [];   // 便签 id 顺序（后端排序结果），整数 key 对象枚举会按数值升序不能用
 
   // 文件夹状态（多层嵌套）
   var foldersById = {};          // id → folder 对象
@@ -142,8 +143,9 @@
   }
 
   function renderNotes(notes) {
-    // 仅更新内存索引（由网络响应触发）；渲染走 renderFromMemory
+    // 仅更新内存索引与顺序（由网络响应触发）；渲染走 renderFromMemory
     notesById = {};
+    notesOrder = [];   // 后端返回顺序（ORDER BY pinned/sort_order）——整数 key 对象会被 JS 按数值升序枚举，顺序必须另存数组
     (notes || []).forEach(function (note) {
       var rawFid = (note.folder_id === null || note.folder_id === undefined) ? null : parseInt(note.folder_id);
       var n = {
@@ -161,13 +163,14 @@
         _more: parseInt(note._more) || 0   // 1=content 只是摘要（前2000字），打开编辑时需按需拉全文
       };
       notesById[n.id] = n;
+      notesOrder.push(n.id);
     });
     renderFromMemory();
   }
 
   // 用内存索引按当前目录过滤渲染——切文件夹零请求，点击瞬间进入（数据首屏已在内存）
   function renderFromMemory() {
-    var allNotes = Object.keys(notesById).map(function (k) { return notesById[k]; });
+    var allNotes = notesOrder.map(function (id) { return notesById[id]; }).filter(Boolean);
     notesGrid.innerHTML = '';
 
     // 当前层级下的子文件夹卡片（排在便签前面）

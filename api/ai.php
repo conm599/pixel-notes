@@ -94,6 +94,9 @@ function sseStart() {
     header('Cache-Control: no-store');
     header('X-Accel-Buffering: no');
     while (ob_get_level() > 0) { @ob_end_clean(); }
+    // 关键：立即释放 session 文件锁。SSE 流会持续几十秒~几分钟，
+    // 不释放会让同一账号的所有其他请求全部阻塞在 session_start() 上（同账号全站卡死，他账号不受影响）
+    session_write_close();
 }
 function sseSend($event, $data) {
     echo 'event: ' . $event . "\n" . 'data: ' . json_encode($data, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0) . "\n\n";
@@ -116,6 +119,8 @@ function aiOut($payload) {
  */
 function aiCleanOutput($text) {
     $t = preg_replace('/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/i', '', (string)$text);
+    // 剥推理模型的思考标签（<think>...</think>、<thinking>...</thinking>），含未闭合的残留头
+    $t = preg_replace('/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/i', '', $t);
     return trim((string)$t);
 }
 
@@ -327,8 +332,16 @@ function aiResolveIps($host) {
 
 /**
  * SSRF 防护：URL 的 host 是否安全。解析到内网/环回/链路本地/私网地址或无法解析时返回 false
+ * 第二参数引用返回第一个已验证的公网 IP（供 curl CURLOPT_RESOLVE 钉死，防校验后二次解析被 DNS rebinding）
  */
-function aiEndpointHostSafe($url) {
+// SSRF 解析缓存：校验阶段解析出的已验证公网 IP，供请求阶段钉 CURLOPT_RESOLVE（校验与连接同源）
+function aiPinCache($key, $ip = null) {
+    static $cache = array();
+    if ($ip !== null) { $cache[$key] = $ip; return; }
+    return isset($cache[$key]) ? $cache[$key] : null;
+}
+function aiEndpointHostSafe($url, &$verifiedIp = null) {
+    $verifiedIp = null;
     $p = @parse_url($url);
     if (!is_array($p) || empty($p['host'])) return false;
     $host = strtolower(trim((string)$p['host'], '[]'));
@@ -347,6 +360,9 @@ function aiEndpointHostSafe($url) {
     if (empty($ips)) return false;
     foreach ($ips as $ip) {
         if (aiIsInternalIp($ip)) return false;
+    }
+    foreach ($ips as $ip) {
+        if (!aiIsInternalIp($ip)) { $verifiedIp = $ip; break; }
     }
     return true;
 }
@@ -373,7 +389,8 @@ function ownEndpoint($baseUrl) {
     if (stripos($base, '://') === false) $base = 'https://' . $base;
     // 只接受 http/https
     if (stripos($base, 'https://') !== 0 && stripos($base, 'http://') !== 0) return '';
-    if (!aiEndpointHostSafe($base)) return '';
+    if (!aiEndpointHostSafe($base, $pinIp)) return '';
+    aiPinCache($base, $pinIp);   // 记住已验证 IP，请求阶段钉 CURLOPT_RESOLVE
     $base = rtrim($base, '/');
     if (substr($base, -17) === '/chat/completions') return $base;
     return $base . '/chat/completions';
@@ -438,6 +455,14 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
             };
         } else {
             $opts[CURLOPT_RETURNTRANSFER] = true;
+        }
+        // DNS rebinding 防护：把校验阶段已验证的 IP 钉进 curl（连接阶段不再二次解析，杜绝 TOCTOU）
+        $pp = @parse_url($url);
+        $pinIp = ($pp && !empty($pp['host'])) ? aiPinCache($base) : null;
+        if ($pinIp) {
+            $rhost = strtolower(trim((string)$pp['host'], '[]'));
+            $rport = isset($pp['port']) ? (int)$pp['port'] : ((isset($pp['scheme']) && $pp['scheme'] === 'http') ? 80 : 443);
+            $opts[CURLOPT_RESOLVE] = array($rhost . ':' . $rport . ':' . $pinIp);
         }
         curl_setopt_array($ch, $opts);
         $body = curl_exec($ch);
@@ -1524,8 +1549,27 @@ try {
         $result = null;
 
         // ===== SSE 流式开始（protocol v5）：预检全部通过，进入实际 AI 调用；此后管线内统一走 aiOut =====
+        // sseStart 内会 session_write_close() 释放锁，节流标记必须在此之前落盘
+        $_SESSION['ai_last'] = $now;
         sseStart();
-        $onDelta = function ($t) { sseSend('delta', array('t' => $t)); };
+        // 思考标签过滤：在 <think>...</think> 内的 delta 不转发给前端预览
+        $_thinkIn = false;
+        $onDelta = function ($t) use (&$_thinkIn) {
+            while ($t !== '') {
+                if ($_thinkIn) {
+                    $end = stripos($t, '</think>');
+                    if ($end === false) return;   // 整段都在 think 里
+                    $t = substr($t, $end + 8);
+                    $_thinkIn = false;
+                } else {
+                    $start = stripos($t, '<think>');
+                    if ($start === false) { sseSend('delta', array('t' => $t)); return; }
+                    if ($start > 0) sseSend('delta', array('t' => substr($t, 0, $start)));
+                    $_thinkIn = true;
+                    $t = substr($t, $start + 7);
+                }
+            }
+        };
 
         // ===== 长文分段 agent 模式：切块逐段下达指令（附全文结构大纲），逐段收集替换块后在全文统一应用 =====
         if ($clenN > AI_CHUNK_THRESHOLD) {

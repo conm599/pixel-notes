@@ -148,7 +148,7 @@
   // 输出净化（protocol v4）：全文重写 / 整段重写路径专用，删除全部协议标记串后 trim；
   // 必须在澄清解析与替换块提取之后使用，不得提前
   function cleanOutput(text) {
-    return String(text || '').replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '').trim();
+    return String(text || '').replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '').replace(/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/gi, '').trim();
   }
 
   // 宽容匹配辅助：空白集为 [ \t\r\n\f\v　]（ASCII 空白 + 全角空格），与 api/ai.php 逐字一致

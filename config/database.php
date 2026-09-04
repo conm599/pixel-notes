@@ -4,12 +4,26 @@
  * Pixel Notes - 像素便签系统
  */
 
-// 优先读环境变量（本地便携环境用），未设置则走生产常量——生产行为零变化
-define('DB_HOST', getenv('PIXEL_DB_HOST') !== false ? getenv('PIXEL_DB_HOST') : 'localhost');
-define('DB_PORT', getenv('PIXEL_DB_PORT') !== false ? getenv('PIXEL_DB_PORT') : '3306');
-define('DB_NAME', getenv('PIXEL_DB_NAME') !== false ? getenv('PIXEL_DB_NAME') : 'REDACTED_DB_IDENT');
-define('DB_USER', getenv('PIXEL_DB_USER') !== false ? getenv('PIXEL_DB_USER') : 'REDACTED_DB_IDENT');
-define('DB_PASS', getenv('PIXEL_DB_PASS') !== false ? getenv('PIXEL_DB_PASS') : 'REDACTED_DB_PASS');
+// 优先读环境变量（本地便携环境用），未设置则用下方常量——仓库内一律占位符，真实凭据只存在于服务器上的部署副本
+// ==== 套件共享配置（/admini 面板管理）：环境变量 PSU_* > 共享配置文件 > 代码默认 ====
+// 探测顺序：VPS 布局 /var/www/suite-config.php（两站 webroot 的上一级自动共享）→ 项目根 suite-config.php（本地测试）
+$GLOBALS['SUITE_CFG'] = array();
+foreach (array(@__DIR__ . '/../suite-config.php', @__DIR__ . '/../../suite-config.php') as $__suiteFile) {
+    if (is_file($__suiteFile)) { $GLOBALS['SUITE_CFG'] = (array)include($__suiteFile); break; }
+}
+function suite_cfg($key, $default) {
+    $e = getenv('PSU_' . strtoupper($key));
+    if ($e === false || $e === '') $e = getenv('PIXEL_' . strtoupper($key)); // 兼容旧 PIXEL_DB_* 约定
+    if ($e !== false && $e !== '') return $e;
+    return isset($GLOBALS['SUITE_CFG'][$key]) && $GLOBALS['SUITE_CFG'][$key] !== '' ? $GLOBALS['SUITE_CFG'][$key] : $default;
+}
+
+// DB 凭证：环境变量 PSU_*/PIXEL_* > suite-config.php（/admini 面板管理）> 默认值
+define('DB_HOST', suite_cfg('bianqian_db_host', 'localhost'));
+define('DB_PORT', suite_cfg('bianqian_db_port', '3306'));
+define('DB_NAME', suite_cfg('bianqian_db_name', 'CHANGE_ME_DB_NAME'));
+define('DB_USER', suite_cfg('bianqian_db_user', 'CHANGE_ME_DB_USER'));
+define('DB_PASS', suite_cfg('bianqian_db_pass', 'CHANGE_ME_DB_PASS')); // 凭证由 /admini 面板或环境变量提供
 
 function getDB() {
     static $pdo = null;
@@ -345,22 +359,53 @@ function sendSecurityHeaders() {
 /**
  * 以加固参数启动会话（HttpOnly + Secure + SameSite=Lax）
  */
+/**
+ * 动态父域推导：从当前请求 host 算 Cookie 父域，支持任意第二域名绑定同一套服务
+ * bianqian.example.com / tuchang.example.com → .example.com；IP 直访/localhost/注册域直访 → ''（host-only）
+ */
+function siteParentDomain() {
+    $h = strtolower(isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '');
+    $h = preg_replace('/:\d+$/', '', $h);
+    if ($h === '' || preg_match('/^\d{1,3}(\.\d{1,3}){3}$/', $h) || $h === 'localhost') return '';
+    $parts = explode('.', $h);
+    if (count($parts) <= 2) return '';
+    return '.' . $parts[count($parts) - 2] . '.' . $parts[count($parts) - 1];
+}
+
+/**
+ * 兄弟站 host：bianqian.<域名> ↔ tuchang.<域名> 动态互推（第二域名下自动生效）
+ */
+function siblingHost($want) {
+    $h = strtolower(isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '');
+    $h = preg_replace('/:\d+$/', '', $h);
+    if (preg_match('/^(bianqian|tuchang)\.([a-z0-9.-]+)$/', $h, $m)) return $want . '.' . $m[2];
+    return $want . '.naxid.top';
+}
+
 function startSecureSession() {
     session_set_cookie_params(array(
-        'lifetime' => 0,
+        'lifetime' => 86400,
         'path' => '/',
-        'domain' => '.naxid.top',   // 父域共享：tuchang 图床同会话（账号统一）
+        'domain' => siteParentDomain(),   // 动态父域：自动适配第二域名（tuchang 图床同会话）
         'secure' => true,      // 站点已强制 HTTPS（301）
         'httponly' => true,    // JS 无法读取会话 Cookie
         'samesite' => 'Lax',   // 缓解 CSRF
     ));
+    ini_set('session.gc_maxlifetime', '86400'); // 登录态服务端 24H（滑动）
     session_start();
-    // 账号统一：已登录会话确保父域 Cookie 常驻（tuchang 图床共享同一会话；旧 host-only Cookie 用户会在浏览便签时自动补齐）
-    if (!empty($_SESSION['user_id'])) {
-        setcookie(session_name(), session_id(), array(
-            'expires' => 0, 'path' => '/', 'domain' => '.naxid.top',
+    // 账号统一过渡：无条件清除旧 host-only 会话 Cookie 残留（它排在父域 Cookie 前被 PHP 优先读取，
+    // 指向的却是迁移/重置前的旧会话——不清则老用户登录死循环）。已登录则同时重发父域 Cookie。
+    if (isset($_COOKIE[session_name()])) {
+        setcookie(session_name(), '', array(
+            'expires' => time() - 3600, 'path' => '/',
             'secure' => true, 'httponly' => true, 'samesite' => 'Lax'
-        ));
+        )); // 清 host-only 残留（不影响 domain=.naxid.top 的父域 Cookie）
+        if (!empty($_SESSION['user_id'])) {
+            setcookie(session_name(), session_id(), array(
+                'expires' => time() + 86400, 'path' => '/', 'domain' => siteParentDomain(),
+                'secure' => true, 'httponly' => true, 'samesite' => 'Lax'
+            ));
+        }
     }
 }
 

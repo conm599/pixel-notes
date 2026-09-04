@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=55">
+    <link rel="stylesheet" href="css/pixel.css?v=59">
 </head>
 <body>
     <!-- 顶部导航 -->
@@ -31,7 +31,7 @@ if (!isset($_SESSION['user_id'])) {
                 <a href="admin.php" class="btn btn-outline btn-xs">⚙️ 管理</a>
             <?php endif; ?>
             <a href="tts.php" class="btn btn-outline btn-xs">🔊 朗读</a>
-            <a href="https://tuchang.naxid.top/dashboard.php" class="btn btn-outline btn-xs" target="_blank" rel="noopener">🖼 图床</a>
+            <a href="<?php echo 'https://' . siblingHost('tuchang') . '/dashboard.php'; ?>" class="btn btn-outline btn-xs" target="_blank" rel="noopener">🖼 图床</a>
             <div class="nav-settings-wrap">
                 <button type="button" id="btnSettings" class="btn btn-outline btn-xs" title="设置">⚙️ 设置</button>
                 <div id="settingsMenu" class="settings-menu" style="display:none;">
@@ -111,10 +111,10 @@ if (!isset($_SESSION['user_id'])) {
     <!-- Toast 提示 -->
     <div id="toast" class="toast" style="display:none;"></div>
 
-    <script src="js/md.js?v=37"></script>
+    <script src="js/md.js?v=41"></script>
     <script src="js/Sortable.min.js"></script>
     <script src="js/ai-direct.js?v=15"></script>
     <script src="js/selection.js?v=5"></script>
-    <script src="js/app.js?v=77"></script>
+    <script src="js/app.js?v=78"></script>
 </body>
 </html>

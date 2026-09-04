@@ -11,9 +11,9 @@
 
 require_once __DIR__ . '/../config/database.php';
 
-define('TTS_URL', 'https://edgetts.naxid.top/v1/audio/speech');
-define('TTS_TOKEN', 'YOUR_EDGE_TTS_TOKEN');
-define('TTS_MAX_TEXT', 5000);
+define('TTS_URL', suite_cfg('tts_url', 'https://edgetts.naxid.top/v1/audio/speech'));
+define('TTS_TOKEN', suite_cfg('tts_token', ''));
+define('TTS_MAX_TEXT', (int)suite_cfg('tts_max_text', 5000));
 
 startSecureSession();
 
