@@ -146,7 +146,30 @@
 
 ## 🚀 部署步骤
 
-> 📦 **配套图床（Pixel Suite / tuchang）与合并仓库**：见私仓 `taowa-projects` 的 `pixel-suite` 分支（含傻瓜式部署教程 `docs/部署教程-傻瓜式.md`，从零到上线 30 分钟）。
+**1）环境**（Debian/Ubuntu VPS）：
+
+```bash
+apt update && apt install -y nginx mariadb-server php-fpm php-mysql php-gd php-mbstring php-curl certbot python3-certbot-nginx
+systemctl enable --now nginx mariadb php7.4-fpm
+```
+
+**2）数据库**：
+
+```bash
+mysql -e "CREATE DATABASE pixel_notes CHARACTER SET utf8mb4;"
+mysql -e "CREATE USER 'pn'@'localhost' IDENTIFIED BY '强密码';"
+mysql -e "GRANT ALL ON pixel_notes.* TO 'pn'@'localhost'; FLUSH PRIVILEGES;"
+```
+
+**3）代码**：下载本仓库（Download ZIP 或 git clone）解压到 `/var/www/hosting`，`chown -R www-data:www-data /var/www/hosting`。
+
+**4）数据库配置**：编辑 `config/database.php`，把 DB 名/用户/密码 改成上面创建的（其余全部保持默认，不需要动）。
+
+**5）nginx 站点 + HTTPS**：创建站点指向 `/var/www/hosting`，`certbot --nginx -d 你的域名` 申请证书。
+
+**6）完成**：浏览器打开 `https://你的域名` → 注册账号（第一个账号自动成为管理员）→ 登录使用。
+
+> 📁 **目录结构**、⚙️ **可选配置项**（邮件 SMTP、AI 上游、TTS 语音等全部在管理页可视化配置，无需改代码）见下文与 `admin.php` 管理页。
 
 ## 📁 目录结构
 
