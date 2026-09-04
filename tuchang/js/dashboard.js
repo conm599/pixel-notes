@@ -747,6 +747,18 @@ document.addEventListener('DOMContentLoaded', function () {
 })();
 
 
+// ===== 顶栏 API 面板开关 =====
+(function () {
+  var btn = document.getElementById('apiToggle');
+  if (btn) btn.addEventListener('click', function () {
+    var panel = document.getElementById('apiPanel');
+    if (!panel) return;
+    var on = panel.style.display !== 'none';
+    panel.style.display = on ? 'none' : '';
+    btn.textContent = on ? '🔑 API' : '✕ 收起';
+  });
+})();
+
 // ===== 单击图片 = 打开大图（选择模式中由 selection 拦截为加选，不会到这里） =====
 document.addEventListener('click', function (e) {
   if (window.PixelSelection && window.PixelSelection.isActive()) return;

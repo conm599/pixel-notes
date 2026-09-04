@@ -50,6 +50,11 @@ $csrf = csrf_token();
   <div class="topbar">
     <div class="brand">陶瓦<span>图床</span></div>
     <div class="top-user">
+<?php if (!empty($_SESSION['admin_del_token'])): ?>
+      <a class="link-btn" href="adminws.php" title="管理后台">⚙ 管理</a>
+<?php endif; ?>
+      <button type="button" class="link-btn" id="apiToggle" title="开发者 API Key">🔑 API</button>
+      <a class="link-btn" href="<?php echo e('https://' . siblingHost('bianqian') . '/index.php'); ?>" title="返回便签">🏠 便签</a>
       <div class="avatar"><?php echo e(strtoupper(substr($uname, 0, 1))); ?></div>
       <span><?php echo e($uname); ?></span>
       <a class="link-btn" href="logout.php">退出</a>
@@ -62,7 +67,7 @@ $csrf = csrf_token();
     <span class="quota-num"><b><?php echo fmt_size($used); ?></b> / <?php echo round($quota / 1048576); ?> MB</span>
   </div>
 
-  <div class="glass" style="padding:18px 22px;margin-bottom:18px">
+  <div class="glass" id="apiPanel" style="padding:18px 22px;margin-bottom:18px;display:none">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
       <div>
         <div style="font-size:14px;font-weight:700">开发者 API</div>
@@ -183,6 +188,6 @@ var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
 <script src="js/spa.js?v=3"></script>
 <script src="js/selection.js?v=9"></script>
-<script src="js/dashboard.js?v=14"></script>
+<script src="js/dashboard.js?v=15"></script>
 </body>
 </html>
