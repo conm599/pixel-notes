@@ -30,6 +30,7 @@ if (!isset($_SESSION['user_id'])) {
             <?php if (isAdminUser()): ?>
                 <a href="admin.php" class="btn btn-outline btn-xs">⚙️ 管理</a>
             <?php endif; ?>
+            <a href="javascript:void(0)" id="btnTutorial" class="btn btn-outline btn-xs">📖 教程</a>
             <a href="tts.php" class="btn btn-outline btn-xs">🔊 朗读</a>
             <a href="<?php echo 'https://' . siblingHost('tuchang') . '/dashboard.php'; ?>" class="btn btn-outline btn-xs" target="_blank" rel="noopener">🖼 图床</a>
             <div class="nav-settings-wrap">
@@ -112,6 +113,8 @@ if (!isset($_SESSION['user_id'])) {
     <div id="toast" class="toast" style="display:none;"></div>
 
     <script src="js/md.js?v=41"></script>
+    <script src="js/tutorial-data.js?v=1"></script>
+    <script src="js/tutorial.js?v=1"></script>
     <script src="js/Sortable.min.js"></script>
     <script src="js/ai-direct.js?v=15"></script>
     <script src="js/selection.js?v=5"></script>
