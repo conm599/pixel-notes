@@ -418,7 +418,7 @@ if (!csrf_ok()) jerr('CSRF 校验失败', 403);
 
 $action = isset($_POST['action']) ? $_POST['action'] : (isset($_GET['action']) ? $_GET['action'] : '');   // GET 支持：只读操作走 GET 绕开线路丢包
 // GET 仅放行只读操作（线路 POST 响应偶发丢包的规避通道）；写操作一律 POST
-if ($method === 'GET' && !in_array($action, array('list', 'folder_list'), true)) jerr('写操作请使用 POST', 405);
+if ($method === 'GET' && !in_array($action, array('list', 'folder_list', 'folder_share_info'), true)) jerr('写操作请使用 POST', 405);
 $uid = (int)$_SESSION['uid'];
 cleanup_expired();
 
@@ -484,7 +484,27 @@ if ($action === 'folder_share') {
     $tok = !empty($row['share_token']) ? $row['share_token'] : uuid_v4();
     $until = $hours === 0 ? 0 : time() + $hours * 3600;
     db()->prepare('UPDATE img_folders SET share_token = ?, share_until = ? WHERE id = ?')->execute(array($tok, $until, $id));
-    jout(array('ok' => true, 'token' => $tok, 'until' => $until, 'url' => base_url() . 'fshare.php?t=' . $tok));
+    $pref = PREFERRED_HOST;
+    jout(array('ok' => true, 'token' => $tok, 'until' => $until,
+        'url' => base_url() . 'fshare.php?t=' . $tok,
+        'url2' => 'https://' . $pref . '/fshare.php?t=' . $tok));
+}
+
+// 文件夹分享状态查询（只读，GET 白名单）
+if ($action === 'folder_share_info') {
+    $id = isset($_POST['id']) ? (int)$_POST['id'] : (isset($_GET['id']) ? (int)$_GET['id'] : 0);
+    if ($id <= 0) jerr('参数错误');
+    $st = db()->prepare('SELECT name, share_token, share_until FROM img_folders WHERE id = ? AND uid = ?');
+    $st->execute(array($id, $uid));
+    $row = $st->fetch();
+    if (!$row) jerr('文件夹不存在', 404);
+    $tok = (string)$row['share_token'];
+    $until = (int)$row['share_until'];
+    $shared = strlen($tok) === 36 && ($until === 0 || time() <= $until);
+    jout(array('ok' => true, 'name' => $row['name'], 'shared' => $shared ? 1 : 0,
+        'until' => $shared ? $until : 0,
+        'url' => $shared ? base_url() . 'fshare.php?t=' . $tok : '',
+        'url2' => $shared ? 'https://' . PREFERRED_HOST . '/fshare.php?t=' . $tok : ''));
 }
 
 if ($action === 'folder_delete') {
