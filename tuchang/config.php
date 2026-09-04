@@ -251,7 +251,9 @@ function csrf_token() {
     return $_SESSION['csrf_token'];
 }
 function csrf_ok() {
+    // 支持 POST 与 GET（GET 仅用于只读操作如 folder_list，绕开用户线路 POST 响应丢包）
     $t = isset($_POST['csrf_token']) ? (string)$_POST['csrf_token'] : '';
+    if ($t === '' && isset($_GET['csrf_token'])) $t = (string)$_GET['csrf_token'];
     return !empty($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $t);
 }
 

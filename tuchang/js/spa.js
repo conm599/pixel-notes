@@ -44,21 +44,22 @@
     return n;
   }
 
-  // ===== 数据加载 =====
-  function load() {
-    var fd = new FormData();
-    fd.append('action', 'list');
-    fd.append('csrf_token', CSRF);
-    return fetch(API_MAIN, { method: 'POST', body: fd })
+  // ===== 数据加载：走 GET（list 只读；POST 响应在部分线路偶发丢失，GET 稳定） =====
+  // 失败静默保留旧数据（删除/移动后的刷新失败也绝不弹「网络错误」挤掉成功提示）
+  function load(silent) {
+    return fetch(API_MAIN + '?action=list&csrf_token=' + encodeURIComponent(CSRF))
       .then(function (r) { return r.json(); })
       .then(function (r) {
-        if (!r.ok) { toast(r.err || '加载失败'); return; }
+        if (!r.ok) { if (!silent) toast(r.err || '加载失败'); return; }
         state.images = r.images;
         state.folders = r.folders;
         state.loaded = true;
         render();
       })
-      .catch(function () { toast('网络错误，加载失败'); });
+      .catch(function () {
+        if (silent) { render(); return; }   // 静默模式：保旧数据重渲染，不弹错
+        load(true);                          // 自动静默重试一次
+      });
   }
 
   // ===== 视图过滤 =====
@@ -263,7 +264,7 @@
       render();
     },
     // 文件夹增删改 / 批量操作后：完整重拉（元数据轻量；图片走缓存不重下）
-    reload: function () { load(); }
+    reload: function () { load(true); }
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { bindNav(); boot2(); });
