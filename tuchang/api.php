@@ -467,6 +467,26 @@ if ($action === 'folder_move') {
     db()->prepare('UPDATE img_folders SET parent_id = ? WHERE id = ?')->execute(array($parentId, $id));
     jout(array('ok' => true, 'parent_id' => $parentId));
 }
+if ($action === 'folder_share') {
+    // 文件夹公开分享（学便签）：hours=0 永久 / -1 撤销；token 沿用不换（链接稳定）
+    $id = (int)(isset($_POST['id']) ? $_POST['id'] : 0);
+    $hours = (int)(isset($_POST['hours']) ? $_POST['hours'] : 0);
+    if ($id <= 0) jerr('参数错误');
+    if ($hours < -1 || $hours > 87600) jerr('无效的有效期');
+    $st = db()->prepare('SELECT id, share_token FROM img_folders WHERE id = ? AND uid = ?');
+    $st->execute(array($id, $uid));
+    $row = $st->fetch();
+    if (!$row) jerr('文件夹不存在', 404);
+    if ($hours === -1) {
+        db()->prepare('UPDATE img_folders SET share_token = NULL, share_until = 0 WHERE id = ?')->execute(array($id));
+        jout(array('ok' => true, 'cancelled' => true));
+    }
+    $tok = !empty($row['share_token']) ? $row['share_token'] : uuid_v4();
+    $until = $hours === 0 ? 0 : time() + $hours * 3600;
+    db()->prepare('UPDATE img_folders SET share_token = ?, share_until = ? WHERE id = ?')->execute(array($tok, $until, $id));
+    jout(array('ok' => true, 'token' => $tok, 'until' => $until, 'url' => base_url() . 'fshare.php?t=' . $tok));
+}
+
 if ($action === 'folder_delete') {
     $id = (int)(isset($_POST['id']) ? $_POST['id'] : 0);
     if ($id <= 0) jerr('参数错误');
