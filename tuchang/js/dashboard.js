@@ -1,6 +1,6 @@
 // 陶瓦图床 · dashboard 交互逻辑（自 dashboard.php 拆分）
 // CSRF / BASE / CURRENT_UUID 由页面内 bootstrap 脚本提供
-var API_MAIN = 'https://' + (window.API_MAIN_HOST || 'tuchang.naxid.top') + '/api.php';   // 优选域（bootstrap 注入，第二域名自动适配）
+var API_MAIN = (window.API_MAIN_HOST_URL || 'https://tuchang.naxid.top') + '/api.php';   // bootstrap 注入完整前缀（第二域名/子目录自动适配）
 var API_BACKUP = BASE + 'api.php';                     // 原域（降级）
 var API_KEY = ''; // [瀹夊叏淇] 涓嶅湪婧愮爜鏆撮湶锛岃繍琛屾椂 AJAX 鑾峰彇
 

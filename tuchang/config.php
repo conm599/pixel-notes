@@ -68,6 +68,14 @@ function cookieParentDomain() {
     return '.' . $parts[count($parts) - 2] . '.' . $parts[count($parts) - 1];
 }
 // 兄弟站 host：bianqian.<域名> ↔ tuchang.<域名> 动态互推；非约定前缀退回默认 naxid.top
+// 站间互跳 URL：配置 bianqian_url/tuchang_url（完整前缀，含 https:// 与子目录路径）优先；
+// 无配置回退 siblingHost 纯域名 + https://
+function siblingUrl($want, $path) {
+    $cfg = suite_cfg($want . '_url', '');
+    if ($cfg !== '') return rtrim($cfg, '/') . $path;
+    return 'https://' . siblingHost($want) . $path;
+}
+function siblingHost($want) {
 function siblingHost($want) {
     // 1) 显式配置优先（/admini 面板 bianqian_host/tuchang_host，公共部署者的任意子域名）
     $cfg = suite_cfg($want . '_host', '');
