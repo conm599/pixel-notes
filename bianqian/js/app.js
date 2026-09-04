@@ -112,6 +112,8 @@
 
   function switchFolder(fid) {
     currentFolderId = fid === null ? null : fid;
+    // 同步地址栏 #folder=N：刷新/分享链接后回到当前文件夹（不触发请求）
+    try { history.replaceState(null, '', currentFolderId === null ? location.pathname : location.pathname + '#folder=' + currentFolderId); } catch (e) {}
     if (window.PixelSelection) window.PixelSelection.reset();   // 切目录清选择（剪贴板保留）
     renderBreadcrumb();
     renderFromMemory();   // 本地过滤渲染，零网络请求——点击瞬间进入
@@ -3611,6 +3613,11 @@
     openClassifyDialog();
   });
 
+  // 恢复地址栏文件夹视图（页可直接分享/刷新回同一目录）
+  (function () {
+    var m = location.hash.match(/^#folder=(\d+)$/);
+    if (m) currentFolderId = parseInt(m[1], 10);
+  })();
   loadFolders().then(function () { loadNotes(); checkPendingClassify(); });
   PixelSelection.init({
     notesGrid: notesGrid,
