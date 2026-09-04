@@ -8,7 +8,7 @@
  */
 (function () {
   'use strict';
-  var state = { images: [], folders: [], cur: null, loaded: false };
+  var state = { images: [], folders: [], cur: (typeof CUR_FOLDER !== 'undefined' ? CUR_FOLDER : null), loaded: false };   // 初值来自 PHP（?folder= 深链接/刷新回原夹）
   var grid = null;
   var io = null;   // 缩略图懒加载观察器
 
@@ -240,6 +240,8 @@
       e.preventDefault();
       var v = nav.getAttribute('data-nav');
       state.cur = v === 'all' ? null : parseInt(v);
+      // 同步地址栏：写操作后的整页刷新会回到当前文件夹（不会跳回首页）
+      history.replaceState(null, '', 'dashboard.php' + (state.cur === null ? '' : '?folder=' + state.cur));
       window.scrollTo({ top: 0 });
       render();
     });
