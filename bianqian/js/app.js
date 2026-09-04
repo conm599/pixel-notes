@@ -3078,7 +3078,37 @@
   }
 
   // ============== 新手教程（设置菜单入口，详细版） ==============
+  // 内容主源：window.TUTORIAL_MD（docs/便签使用教程 md 构建而来，tools/build-tutorial.js 生成）
+  // 本文件内的章节版仅作 TUTORIAL_MD 缺失时的回退
   function openTutorial() {
+    if (window.TUTORIAL_MD && window.PixelMD) {
+      var overlay = mkEl('div', 'md-modal-overlay');
+      overlay.style.zIndex = '21000';
+      var modal = mkEl('div', 'md-modal tutorial-modal');
+      var head = mkEl('div', 'md-modal-head');
+      head.appendChild(mkEl('div', 'md-modal-title', '📖 使用教程 · 从入门到大师'));
+      var closeBtn = mkBtn('✕ 关闭', '关闭教程');
+      closeBtn.className = 'md-modal-close';
+      closeBtn.addEventListener('click', function () { document.body.removeChild(overlay); });
+      head.appendChild(closeBtn);
+      modal.appendChild(head);
+      var body = mkEl('div', 'md-modal-body');
+      var content = mkEl('div', 'note-content md-body md-static');
+      content.style.maxHeight = 'none';
+      content.style.overflow = 'visible';
+      content.style.cursor = 'default';
+      content.innerHTML = window.PixelMD.render(window.TUTORIAL_MD);
+      body.appendChild(content);
+      modal.appendChild(body);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      var close = function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); };
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+      document.addEventListener('keydown', function onKey(e) {
+        if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+      });
+      return;
+    }
     var isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
     var overlay = mkEl('div', 'md-modal-overlay');
     overlay.style.zIndex = '21000';
