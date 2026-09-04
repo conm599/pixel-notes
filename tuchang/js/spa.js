@@ -174,17 +174,29 @@
 
   function renderGrid() {
     if (!grid) grid = document.querySelector('.grid');
+    // 小水管铁律：「全部图片」视图只显示文件夹（图片零加载）；进具体文件夹/未归类才渲染该夹图片（懒加载）
+    if (state.cur === null) {
+      grid.innerHTML = '';
+      var empty = document.querySelector('.empty');
+      if (empty) {
+        empty.style.display = '';
+        empty.innerHTML = '<div class="big">📁</div>共 ' + state.images.length + ' 张图片 · 点击上方文件夹进入查看';
+      }
+      return;
+    }
     var vis = visibleImages();
     var frag = document.createDocumentFragment();
     vis.forEach(function (img) { frag.appendChild(makeCard(img)); });
     grid.innerHTML = '';
     grid.appendChild(frag);
-    observeThumbs(grid);   // 懒加载：只观察本次渲染的卡
+    observeThumbs(grid);   // 懒加载：只观察本次渲染的卡，视口外不下载
     // 空态
     var empty = document.querySelector('.empty');
     if (vis.length === 0) {
-      if (empty) empty.style.display = '';
-      else {
+      if (empty) {
+        empty.style.display = '';
+        empty.innerHTML = '<div class="big">☁️</div>这里还没有图片';
+      } else {
         var d = document.createElement('div');
         d.className = 'empty';
         d.innerHTML = '<div class="big">☁️</div>这里还没有图片';
@@ -193,7 +205,7 @@
     } else if (empty) empty.style.display = 'none';
     // 计数
     var cnt = document.querySelector('.grid-title .cnt');
-    if (cnt) cnt.textContent = (state.cur === null ? state.images.length : vis.length) + ' 张 · 点击缩略图可放大查看';
+    if (cnt) cnt.textContent = vis.length + ' 张 · 点击缩略图可放大查看';
   }
 
   // ===== 缩略图懒加载（小水管保护核心） =====
