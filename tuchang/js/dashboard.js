@@ -700,20 +700,11 @@ document.addEventListener('DOMContentLoaded', function () {
     var card = (ren || del || shr).closest('.folder-card');
     var fid = card.getAttribute('data-fid');
     if (shr) {
-      var h = prompt('公开分享此文件夹（含子文件夹），输入有效时长小时数（0=永久，-1=撤销）：', '0');
-      if (h === null) return;
-      h = h.trim();
-      if (h === '') return;
-      fapi('folder_share', { id: fid, hours: h }, function (r, unreliable) {
-        if (window.__SPA) window.__SPA.refreshFolders();
-        if (!r.ok) {
-          if (r.cancelled) toast('已取消文件夹分享');
-          else toast(r.err || '失败');
-          return;
-        }
-        toast('文件夹分享已创建（' + (r.until === 0 ? '永久' : '限时') + '），链接已复制到剪贴板');
-        try { navigator.clipboard.writeText(r.url).then(function(){ toast('链接已复制到剪贴板'); }, function(){}); } catch (e) {}
-      });
+      // 打开像素风文件夹分享弹窗（记录当前夹）
+      window.__fsFid = fid;
+      document.getElementById('fsName').textContent = '📁 ' + (card.querySelector('.f-name').textContent) + ' · 分享';
+      document.getElementById('fsResult').style.display = 'none';
+      document.getElementById('folderShareDlg').style.display = 'flex';
       return;
     }
     if (ren) {
@@ -763,6 +754,12 @@ document.addEventListener('DOMContentLoaded', function () {
 })();
 
 
+// ===== 单图分享「创建分享」按钮（原内联 onclick，CSP 下改绑定） =====
+(function () {
+  var b = document.getElementById('shareGoBtn');
+  if (b) b.addEventListener('click', function () { if (typeof doShare === 'function') doShare(); });
+})();
+
 // ===== 顶栏 API 面板开关 =====
 (function () {
   var btn = document.getElementById('apiToggle');
@@ -772,6 +769,58 @@ document.addEventListener('DOMContentLoaded', function () {
     var on = panel.style.display !== 'none';
     panel.style.display = on ? 'none' : '';
     btn.textContent = on ? '🔑 API' : '✕ 收起';
+  });
+})();
+
+// ===== 弹窗关闭统一委托（CSP 禁内联 onclick，全部改此处绑定） =====
+document.addEventListener('click', function (e) {
+  var xc = e.target.closest && e.target.closest('[data-close]');
+  if (xc) {
+    var dlg = document.getElementById(xc.getAttribute('data-close'));
+    if (dlg) dlg.style.display = 'none';
+    return;
+  }
+  var ov = e.target.closest && e.target.closest('.modal-mask[data-overlay]');
+  if (ov && e.target === ov) ov.style.display = 'none';
+});
+
+// ===== 文件夹分享弹窗逻辑 =====
+(function () {
+  var goBtn = document.getElementById('fsGo');
+  if (!goBtn) return;
+  goBtn.addEventListener('click', function () {
+    var fid = window.__fsFid;
+    if (!fid) return;
+    var hours = document.getElementById('fsDur').value;
+    var fd = new FormData();
+    fd.append('action', 'folder_share');
+    fd.append('csrf_token', CSRF);
+    fd.append('id', fid);
+    fd.append('hours', hours);
+    fetch(API_MAIN, { method: 'POST', body: fd, cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        var box = document.getElementById('fsResult');
+        if (!r.ok) { toast(r.err || '操作失败'); return; }
+        if (r.cancelled) {
+          box.style.display = 'none';
+          toast('已撤销文件夹分享（链接立即失效）');
+          if (window.__SPA) window.__SPA.refreshFolders();
+          return;
+        }
+        document.getElementById('fsUrl').value = r.url;
+        box.style.display = 'block';
+        document.getElementById('fsUrl').select();
+        try { document.execCommand('copy'); toast('链接已生成并复制'); } catch (e) {}
+        if (window.__SPA) window.__SPA.refreshFolders();
+      })
+      .catch(function () { toast('网络错误，请重试'); });
+  });
+  var cp = document.getElementById('fsCopy');
+  if (cp) cp.addEventListener('click', function () {
+    var inp = document.getElementById('fsUrl');
+    inp.select();
+    try { document.execCommand('copy'); toast('已复制'); } catch (e) {}
   });
 })();
 
