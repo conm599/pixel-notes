@@ -633,7 +633,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 /* ===== Windows 风格图片文件夹（新建/改名/删除/拖拽归类） ===== */
 (function () {
-  function fapi(action, data, done) {
+  function fapi(action, data, done, retried) {
     var fd = new FormData();
     fd.append('action', action);
     fd.append('csrf_token', CSRF);
@@ -641,7 +641,11 @@ document.addEventListener('DOMContentLoaded', function () {
     fetch(API_MAIN.replace(/\/api\.php$/, '') + '/api.php', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
       .then(function (r) { done(r); })
-      .catch(function () { done({ ok: false, err: '网络错误' }); });
+      .catch(function () {
+        // 网络抖动重试一次（HK 线路偶发响应丢失，实际服务端可能已成功）
+        if (!retried) { fapi(action, data, done, true); return; }
+        done({ ok: false, err: '网络错误（若操作未生效请刷新确认）' });
+      });
   }
 
   // 新建文件夹
@@ -725,6 +729,20 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 })();
 
+
+// ===== 单击图片 = 打开大图（选择模式中由 selection 拦截为加选，不会到这里） =====
+document.addEventListener('click', function (e) {
+  if (window.PixelSelection && window.PixelSelection.isActive()) return;
+  var pick = e.target.closest ? e.target.closest('.pick, .pickbox') : null;
+  if (pick) return;   // 勾选框由 selection 处理
+  var card = e.target.closest ? e.target.closest('.card') : null;
+  if (!card) return;
+  if (e.target.closest('.ops, .f-act, button, select, a, input')) return;   // 底部按钮原生功能
+  var now = Date.now();
+  if (card._lastOpen && now - card._lastOpen < 500) return;   // 防手抖双标签
+  card._lastOpen = now;
+  window.open(BASE + 'view.php?id=' + card.dataset.id + '&u=' + CURRENT_UUID, '_blank');
+});
 
 /* ===== Windows 式多选（长按/框选/Ctrl+XCV）注入依赖 ===== */
 (function () {

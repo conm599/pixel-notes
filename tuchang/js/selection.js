@@ -362,49 +362,42 @@
     });
   }
 
-  var clickTimer = null;   // 单击延迟判定（双击的第二击取消它，避免选中闪烁/点三次才开图）
+  // ===== 点击交互（经典图库式）：默认单击图片=开大图；点左上角勾选框=进多选；
+  // ===== 多选/框选/长按激活后，单击图片=加选减选；ops 按钮始终可用
   function bindClickAndKeys() {
     grid.addEventListener('click', function (e) {
       if (isClickSuppressed()) { e.preventDefault(); e.stopPropagation(); return; }
-      var ic = e.target.closest ? e.target.closest('.card') : null;
-      if (ic) {
+      if (e.target.closest && e.target.closest('.ops, .f-act, button, select, a, input')) {
+        if (!e.target.closest('.pick')) return;   // ops/过期下拉等原生交互放行
+      }
+      var pick = e.target.closest ? e.target.closest('.pick, .pickbox') : null;
+      if (pick) {
+        // 勾选框 = 多选入口：选中/取消并进入选择模式
         e.preventDefault(); e.stopPropagation();
-        var id = parseInt(ic.getAttribute('data-id'));
-        if (isNaN(id)) return;
-        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-        clickTimer = setTimeout(function () { clickTimer = null; toggleSelect('img', id); }, 250);
+        var pcard = pick.closest('.card');
+        if (!pcard) return;
+        var pid = parseInt(pcard.getAttribute('data-id'));
+        if (!isNaN(pid)) toggleSelect('img', pid);
         return;
       }
-      var fc = e.target.closest ? e.target.closest('.folder-card.fdrop') : null;
-      if (fc && selMode) {
-        // 选择模式中点文件夹 = 加选/减选；否则放行导航
-        e.preventDefault(); e.stopPropagation();
-        var fid = parseInt(fc.getAttribute('data-fid'));
-        if (!isNaN(fid)) toggleSelect('folder', fid);
-        return;
+      if (selMode) {
+        var ic = e.target.closest ? e.target.closest('.card') : null;
+        if (ic) {
+          e.preventDefault(); e.stopPropagation();
+          var iid = parseInt(ic.getAttribute('data-id'));
+          if (!isNaN(iid)) toggleSelect('img', iid);
+          return;
+        }
+        var fc = e.target.closest ? e.target.closest('.folder-card.fdrop') : null;
+        if (fc) {
+          e.preventDefault(); e.stopPropagation();
+          var fid = parseInt(fc.getAttribute('data-fid'));
+          if (!isNaN(fid)) toggleSelect('folder', fid);
+          return;
+        }
+        exitSelection();
       }
-      if (selMode) exitSelection();
-    }, true);
-
-    document.addEventListener('click', function (e) {
-      if (!selMode) return;
-      if (isClickSuppressed()) { e.stopPropagation(); return; }
-      if (e.target.closest && e.target.closest(
-        '.card, .folder-card, button, a, input, textarea, select, .modal-mask, .sel-bar, .dropzone'
-      )) return;
-      exitSelection();
-    }, true);
-
-    // 双击卡片 = 打开详情（取消挂起的单击；若第一击的 toggle 已执行则撤销，保证双击后不残留选中）
-    document.addEventListener('dblclick', function (e) {
-      var ic = e.target.closest ? e.target.closest('.card') : null;
-      if (!ic) return;
-      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-      e.preventDefault(); e.stopPropagation();
-      var id = parseInt(ic.getAttribute('data-id'));
-      if (isNaN(id)) return;
-      if (selectedImgs[id]) toggleSelect('img', id);   // 撤销第一击的选中
-      if (ctx.openDetail) ctx.openDetail(id);
+      // 非选择模式：放行（点击图片 = dashboard 委托打开大图）
     }, true);
 
     document.addEventListener('keydown', function (e) {

@@ -182,7 +182,7 @@ var API_MAIN_HOST = <?php echo json_encode(siblingHost('tuchang')); ?>;
 var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
 <script src="js/spa.js?v=3"></script>
-<script src="js/selection.js?v=8"></script>
-<script src="js/dashboard.js?v=11"></script>
+<script src="js/selection.js?v=9"></script>
+<script src="js/dashboard.js?v=12"></script>
 </body>
 </html>
