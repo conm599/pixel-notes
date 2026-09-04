@@ -478,6 +478,59 @@ if ($action === 'folder_delete') {
     db()->prepare('DELETE FROM img_folders WHERE id = ?')->execute(array($id));
     jout(array('ok' => true));
 }
+if ($action === 'list') {
+    // SPA 数据源（便签同构）：一次拉全部图片+文件夹树
+    $st = db()->prepare('SELECT id, name, size, w, h, created_at, expire_at, hits, share_token, share_until, folder_id FROM img_images WHERE uid = ? ORDER BY id DESC');
+    $st->execute(array($uid));
+    $imgs = array();
+    foreach ($st->fetchAll() as $r) {
+        $shared = !empty($r['share_token']) && ((int)$r['share_until'] === 0 || time() < (int)$r['share_until']);
+        $imgs[] = array(
+            'id' => (int)$r['id'], 'name' => $r['name'], 'size' => (int)$r['size'],
+            'w' => (int)$r['w'], 'h' => (int)$r['h'],
+            'created_at' => (int)$r['created_at'], 'expire_at' => (int)$r['expire_at'],
+            'hits' => (int)$r['hits'],
+            'folder_id' => $r['folder_id'] === null ? 0 : (int)$r['folder_id'],
+            'shared' => $shared ? 1 : 0, 'share_token' => $shared ? $r['share_token'] : '',
+            'share_until' => (int)$r['share_until'],
+            'thumb' => base_url() . 'i.php?id=' . (int)$r['id'],
+            'view' => 'view.php?id=' . (int)$r['id'] . '&u=' . my_uuid()
+        );
+    }
+    $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
+    $fst->execute(array($uid));
+    $fs = $fst->fetchAll();
+    $direct = array();
+    $st2 = db()->prepare('SELECT folder_id, COUNT(*) AS c FROM img_images WHERE uid = ? GROUP BY folder_id');
+    $st2->execute(array($uid));
+    foreach ($st2->fetchAll() as $r) {
+        $fid = $r['folder_id'] === null ? 0 : (int)$r['folder_id'];
+        $direct[$fid] = (int)$r['c'];
+    }
+    $parentOf = array();
+    foreach ($fs as $f) $parentOf[(int)$f['id']] = $f['parent_id'] === null ? 0 : (int)$f['parent_id'];
+    $roll = array();
+    foreach ($direct as $fid => $cn) {
+        $cur = $fid; $guard = 0;
+        while ($cur > 0 && $guard++ < 50) {
+            if (!isset($roll[$cur])) $roll[$cur] = 0;
+            $roll[$cur] += $cn;
+            $cur = isset($parentOf[$cur]) ? $parentOf[$cur] : 0;
+        }
+    }
+    $tree = array();
+    foreach ($fs as $f) {
+        $fid = (int)$f['id'];
+        $tree[] = array('id' => $fid,
+            'parent_id' => $f['parent_id'] === null ? 0 : (int)$f['parent_id'],
+            'name' => $f['name'], 'sort_order' => (int)$f['sort_order'],
+            'count' => isset($roll[$fid]) ? $roll[$fid] : 0,
+            'direct_count' => isset($direct[$fid]) ? $direct[$fid] : 0,
+            'created_at' => (int)$f['created_at']);
+    }
+    jout(array('ok' => true, 'images' => $imgs, 'folders' => $tree));
+}
+
 if ($action === 'copybatch') {
     // 复制图片副本（Ctrl+C/V）：物理复制文件（独立生命周期，删副本不影响原图）；超额即停
     $ids = isset($_POST['ids']) ? json_decode($_POST['ids'], true) : array();

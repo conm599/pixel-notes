@@ -24,51 +24,9 @@ if (!$krow) {
     $apiKey = $krow['api_key'];
 }
 
-// 文件夹视图：all=全部 / 0=未归类 / N=指定夹（N 夹内显示子夹+图片，多层浏览）
+// 初始视图（SPA 前端接管：all=全部 / 0=未归类 / N=指定夹；切夹零请求零跳转）
 $folderView = isset($_GET['folder']) ? (string)$_GET['folder'] : 'all';
 $curFolder = ($folderView === 'all') ? null : (int)$folderView;
-
-// 全量文件夹树（对齐便签：多层嵌套/面包屑/当前层子夹）
-$fst = db()->prepare('SELECT id, parent_id, name FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
-$fst->execute(array($uid));
-$allFolders = $fst->fetchAll();
-$parentOf = array(); $childrenOf = array(); $nameOf = array();
-foreach ($allFolders as $f) {
-    $fid = (int)$f['id']; $pid = $f['parent_id'] === null ? 0 : (int)$f['parent_id'];
-    $parentOf[$fid] = $pid; $nameOf[$fid] = $f['name'];
-    $childrenOf[$pid][] = $fid;
-}
-// 当前层子夹（根层在 all/未归类视图显示；夹内显示其子夹）
-$curChildren = array();
-$baseLevel = ($folderView !== 'all' && $folderView !== '0' && $curFolder > 0) ? $curFolder : 0;
-foreach (($childrenOf[$baseLevel] ?? array()) as $cid) $curChildren[] = $cid;
-// 面包屑祖先链（根→当前）
-$crumbs = array();
-if ($folderView !== 'all' && $folderView !== '0' && $curFolder > 0) {
-    $chain = array(); $cur = $curFolder; $guard = 0;
-    while ($cur > 0 && $guard++ < 50) { $chain[] = $cur; $cur = isset($parentOf[$cur]) ? $parentOf[$cur] : 0; }
-    $crumbs = array_reverse($chain);
-}
-// 递归累计计数（对齐便签 roll-up）+ 未归类计数
-$direct = array();
-$dst = db()->prepare('SELECT folder_id, COUNT(*) AS c FROM img_images WHERE uid = ? GROUP BY folder_id');
-$dst->execute(array($uid));
-foreach ($dst->fetchAll() as $r) {
-    $fid = $r['folder_id'] === null ? 0 : (int)$r['folder_id'];
-    $direct[$fid] = (int)$r['c'];
-}
-$parentAll = array();
-foreach ($allFolders as $f) $parentAll[(int)$f['id']] = $f['parent_id'] === null ? 0 : (int)$f['parent_id'];
-$roll = array();
-foreach ($direct as $fid => $cn) {
-    $cur = $fid; $guard = 0;
-    while ($cur > 0 && $guard++ < 50) {
-        if (!isset($roll[$cur])) $roll[$cur] = 0;
-        $roll[$cur] += $cn;
-        $cur = isset($parentAll[$cur]) ? $parentAll[$cur] : 0;
-    }
-}
-$unsortedCnt = isset($direct[0]) ? $direct[0] : 0;
 
 // 图片列表（SPA 全量：视图过滤交给前端 spa.js，切夹零请求零跳转）
 $st = db()->prepare('SELECT id, file, name, size, w, h, created_at, expire_at, hits, share_token, share_until, folder_id FROM img_images WHERE uid = ? ORDER BY id DESC');
@@ -77,7 +35,6 @@ $imgs = $st->fetchAll();
 
 $base = base_url();
 $csrf = csrf_token();
-$expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 604800 => '7 天', 2592000 => '30 天');
 ?>
 <!DOCTYPE html>
 <html lang="zh">
@@ -160,74 +117,6 @@ $expOpts = array(0 => '永不过期', 3600 => '1 小时', 86400 => '1 天', 6048
 
   <div class="grid"></div>
   <div class="empty" style="display:none"><div class="big">☁️</div>这里还没有图片</div>
-  <?php
-    // 全部卡片渲染为字符串，收进 #suiteData 供 SPA 接管（首屏即当前视图，无闪烁）
-    $__cards = array();
-    foreach ($imgs as $img):
-        ob_start();
-        $thumb = $base . 'i.php?id=' . $img['id']; // 静态路径：浏览器可缓存
-        $vUrl = 'view.php?id=' . $img['id'] . '&u=' . $myUuid; // 详情页（带用户专属 uuid）
-        $url = $base . 'i.php?id=' . $img['id'];
-        $expired = $img['expire_at'] > 0 && time() > $img['expire_at'];
-        $shared = !empty($img['share_token']) && ((int)$img['share_until'] === 0 || time() < (int)$img['share_until']);
-        // 下拉框选中档位：由绝对时间戳反算剩余区间
-        $remain = $img['expire_at'] > 0 ? $img['expire_at'] - time() : 0;
-        $selV = 0;
-        if ($remain > 0) {
-            if ($remain <= 3600) $selV = 3600;
-            elseif ($remain <= 86400) $selV = 86400;
-            elseif ($remain <= 604800) $selV = 604800;
-            else $selV = 2592000;
-        }
-        $shareUrl = $shared ? $url . '&t=' . $img['share_token'] : '';
-    ?>
-    <div class="card" data-id="<?php echo (int)$img['id']; ?>"
-         data-folder-id="<?php echo $img['folder_id'] === null ? '0' : (int)$img['folder_id']; ?>"
-         draggable="true"
-         data-name="<?php echo e($img['name']); ?>"
-         data-url="<?php echo e($vUrl); ?>"
-         data-shared="<?php echo $shared ? '1' : '0'; ?>"
-         data-shareurl="<?php echo e($shareUrl); ?>"
-         data-until="<?php echo (int)$img['share_until']; ?>">
-      <div class="thumb-wrap">
-        <label class="pick" title="多选"><input type="checkbox" class="pickbox"></label>
-        <img class="thumb" src="<?php echo e($thumb); ?>" alt="" loading="lazy">
-        <?php if ($shared): ?><span class="share-badge">已分享</span><?php endif; ?>
-      </div>
-      <div class="meta">
-        <div class="m-name" title="<?php echo e($img['name']); ?>"><?php echo e($img['name']); ?></div>
-        <div class="m-sub">
-          <span><?php echo fmt_size($img['size']); ?></span>
-          <span><?php echo $img['w']; ?>×<?php echo $img['h']; ?></span>
-          <span><?php echo (int)$img['hits']; ?> 次浏览</span>
-          <span class="<?php echo $expired ? 'exp-badge' : 'exp-badge off'; ?>">
-            <?php echo $expired ? '已过期' : ($img['expire_at'] > 0 ? '剩 ' . ceil(($img['expire_at'] - time()) / 60) . ' 分钟' : '永久'); ?>
-          </span>
-        </div>
-      </div>
-      <div class="ops">
-        <select class="exp-sel">
-          <?php foreach ($expOpts as $v => $t): ?>
-            <option value="<?php echo $v; ?>" <?php echo $selV == $v ? 'selected' : ''; ?>><?php echo $t; ?></option>
-          <?php endforeach; ?>
-        </select>
-        <button class="sm-btn share-btn"><?php echo $shared ? '更新分享' : '外链'; ?></button>
-        <button class="sm-btn rename-btn">重命名</button>
-        <?php if ($shared): ?><button class="sm-btn danger unshare-btn">停止</button><?php endif; ?>
-        <button class="sm-btn danger del-btn">删除</button>
-      </div>
-    </div>
-    <?php
-        endforeach;
-        $__html = ob_get_clean();
-        $__cards[] = $__html;
-        $__cardsJson = json_encode($__cards, JSON_UNESCAPED_UNICODE);
-    ?>
-  <script type="application/json" id="suiteData">{"curFolder":<?php echo json_encode($curFolder); ?>,"folders":<?php
-    $__tree = array();
-    foreach ($allFolders as $__f) $__tree[] = array('id' => (int)$__f['id'], 'parent_id' => $__f['parent_id'] === null ? 0 : (int)$__f['parent_id'], 'name' => $__f['name']);
-    echo json_encode($__tree, JSON_UNESCAPED_UNICODE);
-  ?>,"cards":<?php echo $__cardsJson; ?>}</script>
 
   <div class="footer">
     陶瓦图床 · 前端压缩 WebP 60% · 图片自动剥离元数据<br>
