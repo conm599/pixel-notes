@@ -448,12 +448,7 @@ document.addEventListener('DOMContentLoaded', function () {
       refreshBulk();
     });
   });
-  // 双击卡片 = 打开详情页（单击已被 Windows 式多选接管：选中/取消）
-  document.addEventListener('dblclick', function (e) {
-    var card = e.target.closest ? e.target.closest('.card') : null;
-    if (!card) return;
-    window.open(BASE + 'view.php?id=' + card.dataset.id + '&u=' + CURRENT_UUID, '_blank');
-  });
+
   var selAll = document.getElementById('selAll');
   if (selAll) selAll.addEventListener('click', function () {
     var all = document.querySelectorAll('.card');
@@ -594,6 +589,48 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 });
 
+/* ===== 全窗口拖放上传（拖文件进页面任意位置；不再必须拖到顶部上传区） ===== */
+(function () {
+  var mask = null, depth = 0;
+  function ensure() {
+    if (mask) return mask;
+    mask = document.createElement('div');
+    mask.id = 'dropMask';
+    mask.innerHTML = '<div class="dm-inner">📥 松手上传到当前文件夹</div>';
+    document.body.appendChild(mask);
+    return mask;
+  }
+  function hasFiles(e) {
+    try { return Array.prototype.indexOf.call(e.dataTransfer ? e.dataTransfer.types : [], 'Files') !== -1; }
+    catch (err) { return false; }
+  }
+  document.addEventListener('dragenter', function (e) {
+    if (!hasFiles(e)) return;
+    depth++;
+    ensure().classList.add('on');
+  });
+  document.addEventListener('dragleave', function () {
+    depth = Math.max(0, depth - 1);
+    if (depth === 0 && mask) mask.classList.remove('on');
+  });
+  document.addEventListener('dragover', function (e) {
+    if (mask && mask.classList.contains('on')) e.preventDefault();   // 允许任意位置 drop
+  });
+  document.addEventListener('drop', function (e) {
+    depth = 0;
+    if (mask) mask.classList.remove('on');
+    // dz 区域自己处理过（避免双触发）
+    if (e.target && e.target.closest && e.target.closest('#dz')) return;
+    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    var files = Array.prototype.slice.call(e.dataTransfer.files);
+    if (files.length) {
+      uploadQueue(files, document.getElementById('expSel').value);
+      toast('已加入队列 ' + files.length + ' 张');
+    }
+  });
+})();
+
 /* ===== Windows 风格图片文件夹（新建/改名/删除/拖拽归类） ===== */
 (function () {
   function fapi(action, data, done) {
@@ -712,6 +749,7 @@ document.addEventListener('DOMContentLoaded', function () {
     },
     api: fapiRaw,
     folderApi: fapiRaw,
+    openDetail: function (id) { window.open(BASE + 'view.php?id=' + id + '&u=' + CURRENT_UUID, '_blank'); },
     bulkShare: function (ids) { if (ids && ids.length) { bulkShareIds(ids); } },
     bulkZip: function (ids) { if (ids && ids.length) { bulkZipIds(ids); } },
     delbatch: function (ids) {

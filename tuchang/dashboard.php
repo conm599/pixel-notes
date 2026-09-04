@@ -42,7 +42,7 @@ $csrf = csrf_token();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=12">
+<link rel="stylesheet" href="css/pixel-blue.css?v=13">
 </head>
 <body>
 <div class="app">
@@ -182,7 +182,7 @@ var API_MAIN_HOST = <?php echo json_encode(siblingHost('tuchang')); ?>;
 var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
 <script src="js/spa.js?v=3"></script>
-<script src="js/selection.js?v=4"></script>
-<script src="js/dashboard.js?v=10"></script>
+<script src="js/selection.js?v=8"></script>
+<script src="js/dashboard.js?v=11"></script>
 </body>
 </html>
