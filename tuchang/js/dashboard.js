@@ -633,19 +633,36 @@ document.addEventListener('DOMContentLoaded', function () {
 
 /* ===== Windows 风格图片文件夹（新建/改名/删除/拖拽归类） ===== */
 (function () {
-  function fapi(action, data, done, retried) {
+  function fapi(action, data, done, stage) {
+    // 三通道容错：fetch → fetch 重试 → XHR 换通道。
+    // 用户线路偶发「请求到达服务端并执行成功，但响应包丢失」——全失败时文案明确提示可能已生效，
+    // 且界面由 refreshFolders 重拉列表，永远按服务器实际状态显示。
+    stage = stage || 0;
     var fd = new FormData();
     fd.append('action', action);
     fd.append('csrf_token', CSRF);
     for (var k in data) fd.append(k, data[k]);
-    fetch(API_MAIN.replace(/\/api\.php$/, '') + '/api.php', { method: 'POST', body: fd })
+    var url = API_MAIN.replace(/\/api\.php$/, '') + '/api.php';
+    var fallback = function () {
+      if (stage === 0) { fapi(action, data, done, 1); return; }          // fetch 重试
+      if (stage === 1) {                                                 // XHR 换通道
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url);
+        xhr.onload = function () { try { done(JSON.parse(xhr.responseText)); } catch (e) { giveUp(); } };
+        xhr.onerror = giveUp;
+        xhr.ontimeout = giveUp;
+        xhr.send(fd);
+        return;
+      }
+      giveUp();
+    };
+    var giveUp = function () {
+      done({ ok: false, err: '网络响应丢失——操作可能已生效，列表已按服务器实际状态刷新' });
+    };
+    fetch(url, { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
       .then(function (r) { done(r); })
-      .catch(function () {
-        // 网络抖动重试一次（HK 线路偶发响应丢失，实际服务端可能已成功）
-        if (!retried) { fapi(action, data, done, true); return; }
-        done({ ok: false, err: '网络错误（若操作未生效请刷新确认）' });
-      });
+      .catch(fallback);
   }
 
   // 新建文件夹
