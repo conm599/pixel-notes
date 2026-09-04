@@ -50,7 +50,7 @@ $csrf = csrf_token();
   <div class="topbar">
     <div class="brand">陶瓦<span>图床</span></div>
     <div class="top-user">
-<?php if (!empty($_SESSION['admin_del_token'])): ?>
+<?php if (!empty($_SESSION['is_admin'])): // 与 adminws 门禁同一标记 ?>
       <a class="link-btn" href="adminws.php" title="管理后台">⚙ 管理</a>
 <?php endif; ?>
       <button type="button" class="link-btn" id="apiToggle" title="开发者 API Key">🔑 API</button>
