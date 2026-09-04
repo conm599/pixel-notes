@@ -680,12 +680,10 @@ document.addEventListener('DOMContentLoaded', function () {
     name = name.trim();
     if (name === '') return toast('名称不能为空');
     var createParent = window.__SPA ? window.__SPA.getCur() : CUR_FOLDER;   // 实时读当前夹（新建落当前层）
-    fapi('folder_create', { name: name, parent_id: createParent === null ? '' : createParent }, function (r, unreliable) {
-      // 无论成败都重拉列表（说实话原则，学便签）：同名冲突时列表里能看到已存在的夹
-      if (window.__SPA) window.__SPA.refreshFolders();
-      else location.reload();
-      if (!r.ok && !unreliable) { toast(r.err || '创建失败'); return; }
-      toast(r.ok ? '已创建「' + r.name + '」' : '已提交（网络响应丢失，按服务器状态刷新）');
+    fapi('folder_create', { name: name, parent_id: createParent === null ? '' : createParent }, function (r) {
+      // 用户定稿：操作后整页刷新（服务器真实状态，零状态同步 bug）；URL 已带 ?folder= 刷新后留在原位
+      toast(r.ok ? '已创建「' + r.name + '」' : (r.err || '创建失败'));
+      setTimeout(function () { location.reload(); }, 500);
     });
   });
 
@@ -704,28 +702,15 @@ document.addEventListener('DOMContentLoaded', function () {
       if (name === null) return;
       name = name.trim();
       if (name === '' || name === cur) return;
-      fapi('folder_rename', { id: fid, name: name }, function (r, unreliable) {
-        // 无论成败都重拉列表（说实话原则）：失败时用户能看到真实名字
-        if (window.__SPA) window.__SPA.refreshFolders();
-        else location.reload();
-        if (!r.ok && !unreliable) { toast(r.err || '失败'); return; }
-        // 成功：立即更新卡片名（重拉后的渲染也带新名）
-        card.querySelector('.f-name').textContent = r.ok ? r.name : name;
-        toast(r.ok ? '已重命名' : '已提交（按服务器状态刷新）');
+      fapi('folder_rename', { id: fid, name: name }, function (r) {
+        toast(r.ok ? '已重命名「' + r.name + '」' : (r.err || '失败'));
+        setTimeout(function () { location.reload(); }, 500);
       });
     } else {
       if (!confirm('删除该文件夹？夹内图片自动回到「未归类」，图片不会删除。')) return;
-      fapi('folder_delete', { id: fid }, function (r, unreliable) {
-        // unreliable + 404「文件夹不存在」= 第一次请求已删除成功（响应丢失，重试撞上已删）
-        if (r.ok || (unreliable && r.err && r.err.indexOf('不存在') !== -1)) {
-          toast('文件夹已删除，内容已上移一级');
-        } else if (!unreliable) {
-          toast(r.err || '失败');
-        } else {
-          toast('网络响应丢失——以列表实际状态为准');
-        }
-        if (window.__SPA) window.__SPA.refreshFolders();
-        else location.reload();
+      fapi('folder_delete', { id: fid }, function (r) {
+        toast(r.ok ? '文件夹已删除，内容已上移一级' : (r.err || '失败'));
+        setTimeout(function () { location.reload(); }, 500);
       });
     }
   });
@@ -749,12 +734,9 @@ document.addEventListener('DOMContentLoaded', function () {
       var cardEl = document.querySelector('.card[data-id="' + id + '"]');
       if (cardEl && cardEl.getAttribute('data-folder-id') === fid) return; // 已在该夹
       fapi('setfolder', { id: id, folder_id: fid }, function (r) {
-        if (!r.ok) return toast(r.err || '移动失败');
-        toast(fid === '0' ? '已移出至未归类' : '已移入「' + (fc.querySelector('.f-name').textContent) + '」');
-        // 非全部视图：卡片已不属于当前视图，直接移除
-        if (CUR_FOLDER !== null && cardEl) cardEl.remove();
-        // 全部视图：更新卡片归属标记
-        if (cardEl) cardEl.setAttribute('data-folder-id', fid);
+        if (!r.ok) { toast(r.err || '移动失败'); setTimeout(function () { location.reload(); }, 500); return; }
+        toast(fid === '0' ? '已移出至未归类' : '已移入文件夹');
+        setTimeout(function () { location.reload(); }, 500);   // 整页刷新按服务器真实状态重渲染
       });
     });
   });
@@ -821,9 +803,8 @@ document.addEventListener('click', function (e) {
       return fetch(API_MAIN, { method: 'POST', body: fd }).then(function (r) { return r.json(); });
     },
     refreshAll: function () {
-      // SPA 局部刷新：完整重拉元数据（list 很轻；图片本体走缓存不重下），选择/剪贴板内存存活
-      if (window.__SPA) window.__SPA.reload();
-      else location.reload();
+      // 用户定稿：写操作（粘贴/删除）后整页刷新，按服务器真实状态重渲染（URL 已带 ?folder=，留在当前夹）
+      location.reload();
     }
     });
   }
