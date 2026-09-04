@@ -5,6 +5,10 @@
 return array(
     'admin_user' => 'admin',            // /admini 面板管理员
     'admin_hash' => '',                 // password_hash(...)，安装向导自动生成
+    // 站点域名（公共部署必填：任意子域名前缀，如 notes.example.com / img.example.com）
+    // 留空 = 动态推导（bianqian./tuchang. 前缀互换，回退 *.naxid.top）
+    'bianqian_host' => '',
+    'tuchang_host' => '',
     // 便签数据库
     'bianqian_db_host' => 'localhost',
     'bianqian_db_port' => '3306',
