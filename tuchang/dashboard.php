@@ -141,9 +141,9 @@ $csrf = csrf_token();
 </div>
 
 <!-- 批量分享结果弹窗 -->
-<div class="modal-mask" id="shareBatchDlg" style="display:none">
+<div class="modal-mask" id="shareBatchDlg" style="display:none" data-overlay="1">
   <div class="modal glass">
-    <button class="modal-x" onclick="closeShareBatch()" aria-label="关闭">✕</button>
+    <button class="modal-x" data-close="shareBatchDlg" aria-label="关闭">✕</button>
     <h3>批量分享完成</h3>
     <div class="share-result" style="margin-top:4px">
       <button class="copy-btn" style="width:100%;margin-bottom:10px;padding:9px" id="copyAllLinks">复制全部链接</button>
@@ -153,9 +153,9 @@ $csrf = csrf_token();
 </div>
 
 <!-- 分享拟态框 -->
-<div class="modal-mask" id="shareDlg" style="display:none">
+<div class="modal-mask" id="shareDlg" style="display:none" data-overlay="1">
   <div class="modal glass">
-    <button class="modal-x" onclick="closeShare()" aria-label="关闭">✕</button>
+    <button class="modal-x" data-close="shareDlg" aria-label="关闭">✕</button>
     <h3 class="share-name">分享图片</h3>
     <label class="share-label">分享时长</label>
     <select class="share-dur" style="width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:var(--ink);font-size:14px;outline:none">
@@ -165,7 +165,7 @@ $csrf = csrf_token();
       <option value="2592000">30 天</option>
       <option value="0">永久有效</option>
     </select>
-    <button class="btn-primary share-go" style="margin-top:16px" onclick="doShare()">创建分享</button>
+    <button class="btn-primary share-go" style="margin-top:16px" id="shareGoBtn">创建分享</button>
     <div class="share-result" style="display:none;margin-top:16px">
       <h3 style="font-size:13px;color:var(--muted);margin-bottom:10px">分享链接（携带 token，未登录访问需 token）</h3>
       <div class="code-grid">
@@ -179,6 +179,28 @@ $csrf = csrf_token();
   </div>
 </div>
 
+<!-- 文件夹分享弹窗 -->
+<div class="modal-mask" id="folderShareDlg" style="display:none" data-overlay="1">
+  <div class="modal glass">
+    <button class="modal-x" data-close="folderShareDlg" aria-label="关闭">✕</button>
+    <h3 class="share-name" id="fsName">文件夹分享</h3>
+    <label class="share-label">分享时长</label>
+    <select class="share-dur" id="fsDur" style="width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:var(--ink);font-size:14px;outline:none">
+      <option value="1">1 小时</option>
+      <option value="24" selected>1 天</option>
+      <option value="168">7 天</option>
+      <option value="720">30 天</option>
+      <option value="0">永久有效</option>
+      <option value="-1">撤销分享（链接失效）</option>
+    </select>
+    <button class="btn-primary" id="fsGo" style="margin-top:16px;width:100%">生成 / 更新链接</button>
+    <div class="share-result" id="fsResult" style="display:none;margin-top:16px">
+      <h3 style="font-size:13px;color:var(--muted);margin-bottom:10px">文件夹链接（含子文件夹，访客只读）</h3>
+      <div class="code-row"><input id="fsUrl" readonly><button class="copy-btn" id="fsCopy">复制</button></div>
+    </div>
+  </div>
+</div>
+
 <script>
 var CSRF = <?php echo json_encode($csrf); ?>;
 var BASE = <?php echo json_encode($base); ?>;
@@ -188,6 +210,6 @@ var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
 <script src="js/spa.js?v=8"></script>
 <script src="js/selection.js?v=9"></script>
-<script src="js/dashboard.js?v=24"></script>
+<script src="js/dashboard.js?v=25"></script>
 </body>
 </html>
