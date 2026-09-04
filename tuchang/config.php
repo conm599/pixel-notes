@@ -76,7 +76,6 @@ function siblingUrl($want, $path) {
     return 'https://' . siblingHost($want) . $path;
 }
 function siblingHost($want) {
-function siblingHost($want) {
     // 1) 显式配置优先（/admini 面板 bianqian_host/tuchang_host，公共部署者的任意子域名）
     $cfg = suite_cfg($want . '_host', '');
     if ($cfg !== '') return $cfg;
