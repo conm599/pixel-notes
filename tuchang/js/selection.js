@@ -177,7 +177,7 @@
     ctx.showToast(done + ' 项' + typ + '完成' + (failed ? '，' + failed + ' 项失败' : ''));
     if (!isCopy) { clipboard = null; saveClipboard(); }   // Windows：剪切粘贴后清空，复制粘贴保留
     exitSelection();
-    ctx.refreshAll();
+    ctx.refreshAll();   // SPA 模式下 ctx.refreshAll 即局部重渲染（见 dashboard.js 注入）
   }
 
   async function selDelete() {
