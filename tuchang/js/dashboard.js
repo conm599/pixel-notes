@@ -470,6 +470,8 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   // 批量分享
+  window.__bulkShareIds = function (ids) { bulkShareIds(ids); };   // 跨 IIFE 桥（selection 注入段调用）
+  window.__bulkZipIds = function (ids) { bulkZipIds(ids); };
   function bulkShareIds(ids) {
     if (ids.length === 0) return;
     var fd = new FormData();
@@ -692,10 +694,28 @@ document.addEventListener('DOMContentLoaded', function () {
   if (bar) bar.addEventListener('click', function (e) {
     var ren = e.target.closest && e.target.closest('.f-ren');
     var del = e.target.closest && e.target.closest('.f-del');
-    if (!ren && !del) return;
+    var shr = e.target.closest && e.target.closest('.f-share');
+    if (!ren && !del && !shr) return;
     e.stopPropagation();
-    var card = (ren || del).closest('.folder-card');
+    var card = (ren || del || shr).closest('.folder-card');
     var fid = card.getAttribute('data-fid');
+    if (shr) {
+      var h = prompt('公开分享此文件夹（含子文件夹），输入有效时长小时数（0=永久，-1=撤销）：', '0');
+      if (h === null) return;
+      h = h.trim();
+      if (h === '') return;
+      fapi('folder_share', { id: fid, hours: h }, function (r, unreliable) {
+        if (window.__SPA) window.__SPA.refreshFolders();
+        if (!r.ok) {
+          if (r.cancelled) toast('已取消文件夹分享');
+          else toast(r.err || '失败');
+          return;
+        }
+        toast('文件夹分享已创建（' + (r.until === 0 ? '永久' : '限时') + '），链接已复制到剪贴板');
+        try { navigator.clipboard.writeText(r.url).then(function(){ toast('链接已复制到剪贴板'); }, function(){}); } catch (e) {}
+      });
+      return;
+    }
     if (ren) {
       var cur = card.querySelector('.f-name').textContent;
       var name = prompt('重命名为：', cur);
@@ -793,8 +813,8 @@ document.addEventListener('click', function (e) {
     api: fapiRaw,
     folderApi: fapiRaw,
     openDetail: function (id) { window.open(BASE + 'view.php?id=' + id + '&u=' + CURRENT_UUID, '_blank'); },
-    bulkShare: function (ids) { if (ids && ids.length) { bulkShareIds(ids); } },
-    bulkZip: function (ids) { if (ids && ids.length) { bulkZipIds(ids); } },
+    bulkShare: function (ids) { if (ids && ids.length) { window.__bulkShareIds(ids); } },
+    bulkZip: function (ids) { if (ids && ids.length) { window.__bulkZipIds(ids); } },
     delbatch: function (ids) {
       var fd = new FormData();
       fd.append('action', 'delbatch');

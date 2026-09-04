@@ -121,7 +121,7 @@
     childrenOf(baseLevel).forEach(function (f) {
       html += '<div class="folder-card fdrop" data-fid="' + f.id + '" data-nav="' + f.id + '">' +
         '<div class="f-icon">📁</div><div class="f-name">' + esc(f.name) + '</div><div class="f-count">' + rollupCount(f.id) + ' 张</div>' +
-        '<div class="f-act"><button type="button" class="f-ren" title="重命名">✏️</button><button type="button" class="f-del" title="删除文件夹">🗑</button></div></div>';
+        '<div class="f-act"><button type="button" class="f-share" title="公开分享">🔗</button><button type="button" class="f-ren" title="重命名">✏️</button><button type="button" class="f-del" title="删除文件夹">🗑</button></div></div>';
     });
     html += '<div class="folder-card folder-new" id="folderNew" title="新建文件夹"><div class="f-icon">＋</div><div class="f-name">新建文件夹</div></div>';
     bar.innerHTML = html;
