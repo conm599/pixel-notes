@@ -1,94 +1,79 @@
 /**
- * 图床 SPA 视图引擎（学便签 app.js 单页模式）
- * - PHP 一次性输出全部图片卡 + 全量文件夹树 JSON（#suiteData）
+ * 图床 SPA 视图引擎 v2（完全学便签：PHP 零卡片渲染，数据驱动全量重建）
+ * - 数据源：api.php?action=list（元数据 JSON，几 KB；不含图片本体）
  * - 进/切文件夹零请求零跳转：客户端按 folder_id 过滤重渲染
- * - 剪贴板/选择/滚动状态全部在内存中存活（便签同体验）
- * - 上传成功插入当前视图；copybatch/setfolder 后重渲染
+ * - 小水管铁律：缩略图 data-src + IntersectionObserver 懒加载，进视口才下载；
+ *   切走的文件夹不加载；看过的图走 i.php immutable 缓存，回看不耗流量
+ * - 剪贴板/选择状态在内存存活（SPA 单页世界）
  */
 (function () {
   'use strict';
-  var D = null;          // {folders:[{id,parent_id,name,count,direct_count}], images:[{id,folder_id,...卡片HTML由PHP预渲染}]}
-  var cards = {};        // imgId -> {el, folderId, name}
-  var curFolder = null;  // null=全部, 0=未归类, N=夹
-  var FOLDERS_KEY = 'tuchang_folders';
+  var state = { images: [], folders: [], cur: null, loaded: false };
+  var grid = null;
+  var io = null;   // 缩略图懒加载观察器
 
-  function boot() {
-    var raw = document.getElementById('suiteData');
-    if (!raw) return;
-    try { D = JSON.parse(raw.textContent); } catch (e) { return; }
-    curFolder = D.curFolder;
-
-    // 收集 PHP 预渲染的全部卡片（含当前视图外的，藏在文档片段里）
-    var frag = document.createDocumentFragment();
-    D.cards.forEach(function (html) {
-      var t = document.createElement('template');
-      t.innerHTML = html.trim();
-      var el = t.content.firstChild;
-      if (el) frag.appendChild(el);
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
-    // 索引
-    frag.querySelectorAll('.card').forEach(function (el) {
-      var id = parseInt(el.getAttribute('data-id'));
-      var fid = parseInt(el.getAttribute('data-folder-id') || '0');
-      cards[id] = { el: el, folderId: fid, name: el.getAttribute('data-name') || '' };
-    });
-    D.cards = null;   // 释放
-
-    bindNav();
-    render();
-    window.__SPA = {
-      render: render,
-      getCur: function () { return curFolder; },
-      // 上传/复制成功的卡片归属当前视图：插入
-      addCard: function (el, folderId) {
-        var id = parseInt(el.getAttribute('data-id'));
-        cards[id] = { el: el, folderId: folderId, name: el.getAttribute('data-name') || '' };
-        if (folderVisible(folderId)) {
-          var grid = document.querySelector('.grid');
-          if (grid) grid.insertBefore(el, grid.firstChild);
-        }
-        renderCounts();
-      },
-      // 移动后刷新归属（setfolder/folder_move/paste）
-      moveCard: function (id, folderId) {
-        if (cards[id]) cards[id].folderId = folderId;
-        render();
-      },
-      removeCard: function (id) {
-        if (cards[id]) { if (cards[id].el.parentNode) cards[id].el.parentNode.removeChild(cards[id].el); delete cards[id]; }
-        renderCounts();
-      },
-      // 文件夹树变化（新建/改名/删除/移动夹）→ 重新拉树（轻量）后重渲染
-      refreshFolders: refreshFolders
-    };
   }
-
-  function folderVisible(fid) {
-    if (curFolder === null) return true;
-    if (curFolder === 0) return fid === 0;
-    return fid === curFolder;
+  function fmtSize(b) {
+    if (b >= 1048576) return (b / 1048576).toFixed(2) + ' MB';
+    if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+    return b + ' B';
   }
-
-  // 当前视图可见卡片序列
-  function visibleCards() {
-    var out = [];
-    Object.keys(cards).forEach(function (k) {
-      if (folderVisible(cards[k].folderId)) out.push(cards[k].el);
-    });
-    out.sort(function (a, b) { return parseInt(b.getAttribute('data-id')) - parseInt(a.getAttribute('data-id')); });
-    return out;
+  function byId(fid) {
+    for (var i = 0; i < state.folders.length; i++) if (state.folders[i].id === fid) return state.folders[i];
+    return null;
   }
-
   function childrenOf(fid) {
-    return D.folders.filter(function (f) { return f.parent_id === (fid === null ? null : fid); });
+    return state.folders.filter(function (f) { return f.parent_id === fid; });
+  }
+  // 递归累计：fid 子树内图片数
+  function rollupCount(fid) {
+    var n = 0;
+    state.images.forEach(function (im) {
+      var cur = im.folder_id, guard = 0;
+      while (cur && cur !== 0 && guard++ < 50) {
+        if (cur === fid) { n++; return; }
+        var f = byId(cur);
+        if (!f) return;
+        cur = f.parent_id;
+      }
+    });
+    return n;
   }
 
-  // ===== 渲染：面包屑 + 文件夹栏 + 网格 =====
+  // ===== 数据加载 =====
+  function load() {
+    var fd = new FormData();
+    fd.append('action', 'list');
+    fd.append('csrf_token', CSRF);
+    return fetch(API_MAIN, { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) { toast(r.err || '加载失败'); return; }
+        state.images = r.images;
+        state.folders = r.folders;
+        state.loaded = true;
+        render();
+      })
+      .catch(function () { toast('网络错误，加载失败'); });
+  }
+
+  // ===== 视图过滤 =====
+  function visibleImages() {
+    if (state.cur === null) return state.images;
+    if (state.cur === 0) return state.images.filter(function (im) { return im.folder_id === 0; });
+    return state.images.filter(function (im) { return im.folder_id === state.cur; });
+  }
+
+  // ===== 渲染 =====
   function render() {
+    if (!grid) grid = document.querySelector('.grid');
     renderCrumbs();
     renderFolderBar();
     renderGrid();
-    renderCounts();
     if (window.PixelSelection) PixelSelection.syncUI();
   }
 
@@ -96,25 +81,23 @@
     var c = document.getElementById('folderCrumbs');
     if (!c) return;
     var html = '';
-    if (curFolder === null) {
+    if (state.cur === null) {
       html = '<span class="crumb on">🗂 全部图片</span>';
-    } else if (curFolder === 0) {
+    } else if (state.cur === 0) {
       html = '<a class="crumb" href="javascript:void(0)" data-nav="all">🗂 全部图片</a><span class="crumb-sep">›</span><span class="crumb on">📥 未归类</span>';
     } else {
-      var chain = [];
-      var cur = curFolder, guard = 0;
-      var byId = {};
-      D.folders.forEach(function (f) { byId[f.id] = f; });
+      var chain = [], cur = state.cur, guard = 0;
       while (cur && guard++ < 50) {
-        if (!byId[cur]) break;
-        chain.unshift(cur);
-        cur = byId[cur].parent_id;
+        var f = byId(cur);
+        if (!f) break;
+        chain.unshift(f);
+        cur = f.parent_id;
       }
       html = '<a class="crumb" href="javascript:void(0)" data-nav="all">🗂 全部图片</a>';
-      chain.forEach(function (fid, i) {
+      chain.forEach(function (f) {
         html += '<span class="crumb-sep">›</span>';
-        if (fid === curFolder) html += '<span class="crumb on">📁 ' + escapeHtml(byId[fid].name) + '</span>';
-        else html += '<a class="crumb" href="javascript:void(0)" data-nav="' + fid + '">📁 ' + escapeHtml(byId[fid].name) + '</a>';
+        if (f.id === state.cur) html += '<span class="crumb on">📁 ' + esc(f.name) + '</span>';
+        else html += '<a class="crumb" href="javascript:void(0)" data-nav="' + f.id + '">📁 ' + esc(f.name) + '</a>';
       });
     }
     c.innerHTML = html;
@@ -123,93 +106,116 @@
   function renderFolderBar() {
     var bar = document.getElementById('folderBar');
     if (!bar) return;
-    var baseLevel = (curFolder !== null && curFolder !== 0) ? curFolder : 0;
     var html = '';
-    if (curFolder !== null && curFolder !== 0) {
-      var byId = {};
-      D.folders.forEach(function (f) { byId[f.id] = f; });
-      var p = byId[curFolder] ? byId[curFolder].parent_id : 0;
+    var inFolder = state.cur !== null && state.cur !== 0;
+    if (inFolder) {
+      var f = byId(state.cur);
+      var p = f ? f.parent_id : 0;
       html += '<div class="folder-card" data-nav="' + (p === null || p === 0 ? 0 : p) + '"><div class="f-icon">↩️</div><div class="f-name">上一级</div></div>';
     }
-    if (curFolder === null) {
-      html += '<div class="folder-card fdrop" data-fid="0" data-nav="0"><div class="f-icon">📥</div><div class="f-name">未归类</div><div class="f-count">0 张</div></div>';
+    if (state.cur === null) {
+      html += '<div class="folder-card fdrop" data-fid="0" data-nav="0"><div class="f-icon">📥</div><div class="f-name">未归类</div><div class="f-count">' + state.images.filter(function (im) { return im.folder_id === 0; }).length + ' 张</div></div>';
     }
-    childrenOf(baseLevel === 0 && curFolder === null ? 0 : baseLevel).forEach(function (f) {
+    var baseLevel = inFolder ? state.cur : 0;
+    childrenOf(baseLevel).forEach(function (f) {
       html += '<div class="folder-card fdrop" data-fid="' + f.id + '" data-nav="' + f.id + '">' +
-        '<div class="f-icon">📁</div><div class="f-name">' + escapeHtml(f.name) + '</div><div class="f-count">' + f.count + ' 张</div>' +
+        '<div class="f-icon">📁</div><div class="f-name">' + esc(f.name) + '</div><div class="f-count">' + rollupCount(f.id) + ' 张</div>' +
         '<div class="f-act"><button type="button" class="f-ren" title="重命名">✏️</button><button type="button" class="f-del" title="删除文件夹">🗑</button></div></div>';
     });
     html += '<div class="folder-card folder-new" id="folderNew" title="新建文件夹"><div class="f-icon">＋</div><div class="f-name">新建文件夹</div></div>';
     bar.innerHTML = html;
-    // 未归类计数
-    var un = bar.querySelector('[data-fid="0"] .f-count');
-    if (un) {
-      var n = 0;
-      Object.keys(cards).forEach(function (k) { if (cards[k].folderId === 0) n++; });
-      un.textContent = n + ' 张';
-    }
-    // 各夹计数（递归：夹内直接图 + 子孙夹）
-    bar.querySelectorAll('.folder-card[data-fid]:not([data-fid="0"])').forEach(function (el) {
-      var fid = parseInt(el.getAttribute('data-fid'));
-      el.querySelector('.f-count').textContent = rollupCount(fid) + ' 张';
-    });
   }
 
-  function rollupCount(fid) {
-    var total = 0;
-    Object.keys(cards).forEach(function (k) {
-      if (inSubtree(cards[k].folderId, fid)) total++;
-    });
-    return total;
-  }
-  // folderId 是否在 fid 的子树内（含自身）
-  function inSubtree(folderId, fid) {
-    if (folderId === fid) return true;
-    var byId = {};
-    D.folders.forEach(function (f) { byId[f.id] = f; });
-    var cur = folderId, guard = 0;
-    while (cur && cur !== 0 && guard++ < 50) {
-      var f = byId[cur];
-      if (!f) return false;
-      cur = f.parent_id;
-      if (cur === fid) return true;
+  function expSelHtml(img) {
+    var v = 0;
+    var remain = img.expire_at > 0 ? img.expire_at - Math.floor(Date.now() / 1000) : 0;
+    if (remain > 0) {
+      if (remain <= 3600) v = 3600;
+      else if (remain <= 86400) v = 86400;
+      else if (remain <= 604800) v = 604800;
+      else v = 2592000;
     }
-    return false;
+    var opts = [[0, '永不过期'], [3600, '1 小时'], [86400, '1 天'], [604800, '7 天'], [2592000, '30 天']]
+      .map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === v ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
+    return '<select class="exp-sel">' + opts + '</select>';
+  }
+
+  function makeCard(img) {
+    var expired = img.expire_at > 0 && img.expire_at <= Math.floor(Date.now() / 1000);
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.setAttribute('data-id', img.id);
+    card.setAttribute('data-folder-id', img.folder_id);
+    card.setAttribute('draggable', 'true');
+    card.setAttribute('data-name', img.name);
+    card.setAttribute('data-url', img.view);
+    card.setAttribute('data-shared', img.shared ? '1' : '0');
+    card.setAttribute('data-shareurl', img.shared ? img.thumb + '&t=' + img.share_token : '');
+    card.setAttribute('data-until', img.share_until);
+    var remainTxt = expired ? '已过期' : (img.expire_at > 0 ? '剩 ' + Math.max(1, Math.ceil((img.expire_at - Math.floor(Date.now() / 1000)) / 60)) + ' 分钟' : '永久');
+    card.innerHTML =
+      '<div class="thumb-wrap">' +
+        '<label class="pick" title="多选"><input type="checkbox" class="pickbox"></label>' +
+        // 小水管铁律：data-src 占位，IntersectionObserver 进视口才真正下载
+        '<img class="thumb" alt="" data-src="' + esc(img.thumb) + '">' +
+        (img.shared ? '<span class="share-badge">已分享</span>' : '') +
+      '</div>' +
+      '<div class="meta"><div class="m-name" title="' + esc(img.name) + '">' + esc(img.name) + '</div>' +
+      '<div class="m-sub"><span>' + fmtSize(img.size) + '</span><span>' + img.w + '×' + img.h + '</span>' +
+      '<span>' + img.hits + ' 次浏览</span>' +
+      '<span class="' + (expired ? 'exp-badge' : 'exp-badge off') + '">' + remainTxt + '</span></div></div>' +
+      '<div class="ops">' + expSelHtml(img) +
+      '<button class="sm-btn share-btn">' + (img.shared ? '更新分享' : '外链') + '</button>' +
+      '<button class="sm-btn rename-btn">重命名</button>' +
+      (img.shared ? '<button class="sm-btn danger unshare-btn">停止</button>' : '') +
+      '<button class="sm-btn danger del-btn">删除</button></div>';
+    return card;
   }
 
   function renderGrid() {
-    var grid = document.querySelector('.grid');
-    if (!grid) return;
-    var vis = visibleCards();
-    grid.innerHTML = '';
+    if (!grid) grid = document.querySelector('.grid');
+    var vis = visibleImages();
     var frag = document.createDocumentFragment();
-    vis.forEach(function (el) { frag.appendChild(el); });
+    vis.forEach(function (img) { frag.appendChild(makeCard(img)); });
+    grid.innerHTML = '';
     grid.appendChild(frag);
+    observeThumbs(grid);   // 懒加载：只观察本次渲染的卡
     // 空态
     var empty = document.querySelector('.empty');
     if (vis.length === 0) {
-      if (!empty) {
-        empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.innerHTML = '<div class="big">☁️</div>这里还没有图片';
-        grid.parentNode.insertBefore(empty, grid.nextSibling);
+      if (empty) empty.style.display = '';
+      else {
+        var d = document.createElement('div');
+        d.className = 'empty';
+        d.innerHTML = '<div class="big">☁️</div>这里还没有图片';
+        grid.parentNode.insertBefore(d, grid.nextSibling);
       }
-    } else if (empty) empty.remove();
-  }
-
-  function renderCounts() {
+    } else if (empty) empty.style.display = 'none';
+    // 计数
     var cnt = document.querySelector('.grid-title .cnt');
-    if (cnt) {
-      var total = Object.keys(cards).length;
-      var vis = visibleCards().length;
-      cnt.textContent = curFolder === null ? total + ' 张 · 点击缩略图可放大查看' : vis + ' 张';
-    }
+    if (cnt) cnt.textContent = (state.cur === null ? state.images.length : vis.length) + ' 张 · 点击缩略图可放大查看';
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
+  // ===== 缩略图懒加载（小水管保护核心） =====
+  function observeThumbs(root) {
+    var imgs = root.querySelectorAll('img.thumb[data-src]');
+    if (!('IntersectionObserver' in window)) {
+      // 老浏览器兜底：直接加载（功能优先）
+      imgs.forEach(function (im) { im.src = im.getAttribute('data-src'); im.removeAttribute('data-src'); });
+      return;
+    }
+    if (!io) {
+      io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (!en.isIntersecting) return;      // 视口外：一个字节都不下载
+          var im = en.target;
+          im.src = im.getAttribute('data-src');
+          im.removeAttribute('data-src');
+          io.unobserve(im);
+        });
+      }, { rootMargin: '250px' });   // 提前 250px 预载，滚动顺滑且不浪费
+    }
+    imgs.forEach(function (im) { io.observe(im); });
   }
 
   // ===== 导航（零跳转） =====
@@ -217,29 +223,38 @@
     document.addEventListener('click', function (e) {
       var nav = e.target.closest && e.target.closest('[data-nav]');
       if (!nav) return;
-      // 文件夹操作按钮不触发导航
       if (e.target.closest('.f-ren, .f-del')) return;
       e.preventDefault();
       var v = nav.getAttribute('data-nav');
-      curFolder = v === 'all' ? null : parseInt(v);
+      state.cur = v === 'all' ? null : parseInt(v);
       window.scrollTo({ top: 0 });
       render();
     });
   }
 
-  // ===== 文件夹树刷新（新建/改名/删除后轻量重拉） =====
-  function refreshFolders() {
-    var fd = new FormData();
-    fd.append('action', 'folder_list');
-    fd.append('csrf_token', CSRF);
-    fetch(API_MAIN, { method: 'POST', body: fd })
-      .then(function (r) { return r.json(); })
-      .then(function (r) {
-        if (r.ok) { D.folders = r.folders; render(); }
-      })
-      .catch(function () { render(); });
-  }
+  // ===== 对外 API =====
+  window.__SPA = {
+    render: render,
+    getCur: function () { return state.cur; },
+    // 上传成功：元数据入模型（卡片按当前视图决定显隐）
+    addImg: function (img) {
+      state.images.unshift(img);
+      render();
+    },
+    // 移动后更新归属
+    moveImg: function (id, folderId) {
+      state.images.forEach(function (im) { if (im.id === parseInt(id)) im.folder_id = folderId; });
+      render();
+    },
+    removeImg: function (id) {
+      state.images = state.images.filter(function (im) { return im.id !== parseInt(id); });
+      render();
+    },
+    // 文件夹增删改 / 批量操作后：完整重拉（元数据轻量；图片走缓存不重下）
+    reload: function () { load(); }
+  };
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { bindNav(); boot2(); });
+  else { bindNav(); boot2(); }
+  function boot2() { load(); }
 })();

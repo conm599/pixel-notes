@@ -67,6 +67,7 @@ function uploadOne(file, expVal) {
     fd.append('name', file.name);
     fd.append('expire', expVal);
     fd.append('share', '0'); // Web 上传保持私有（API 模式默认公开）
+    fd.append('folder_id', window.__SPA ? (window.__SPA.getCur() === null ? 0 : window.__SPA.getCur()) : 0); // 落当前文件夹
     qStatus(st, '上传中…', '');
     uploadTo(API_MAIN, fd, item).catch(function (e) {
       if (e && e.isBiz) throw e; // 业务错误（4xx）直接抛出，不重试
@@ -162,13 +163,18 @@ function insertCard(res) {
     '<div class="ops"><select class="exp-sel">' + expOptsHtml + '</select>' +
     '<button class="sm-btn share-btn">外链</button><button class="sm-btn rename-btn">重命名</button><button class="sm-btn danger del-btn">删除</button></div>';
   if (window.__SPA) {
-    // SPA 模式：登记进视图模型（上传落在当前文件夹视图）
-    card.setAttribute('data-folder-id', window.__SPA.getCur() === null ? '0' : String(window.__SPA.getCur() === 0 ? 0 : window.__SPA.getCur()));
-    window.__SPA.addCard(card, window.__SPA.getCur() === null ? 0 : window.__SPA.getCur());
-    card.remove();   // addCard 内部按可见性自行插入，这里避免双重插入
-  } else {
-    grid.insertBefore(card, grid.firstChild);
+    // SPA 模式：只送元数据，卡片由 spa.js 构建（上传落当前文件夹；全部视图落未归类）
+    var cur = window.__SPA.getCur();
+    var fid = cur === null ? 0 : cur;
+    window.__SPA.addImg({
+      id: res.id, name: res.name || 'image', size: res.size, w: res.w, h: res.h,
+      created_at: Math.floor(Date.now() / 1000), expire_at: 0, hits: 0,
+      folder_id: fid, shared: 0, share_token: '', share_until: 0,
+      thumb: res.url, view: BASE + 'view.php?id=' + res.id + '&u=' + CURRENT_UUID
+    });
+    return;
   }
+  grid.insertBefore(card, grid.firstChild);
 }
 function fmtSize(b) {
   if (b >= 1048576) return (b / 1048576).toFixed(2) + ' MB';
