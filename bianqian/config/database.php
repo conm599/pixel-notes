@@ -376,9 +376,14 @@ function siteParentDomain() {
  * 兄弟站 host：bianqian.<域名> ↔ tuchang.<域名> 动态互推（第二域名下自动生效）
  */
 function siblingHost($want) {
+    // 1) 显式配置优先（/admini 面板 bianqian_host/tuchang_host，公共部署者的任意子域名）
+    $cfg = suite_cfg($want . '_host', '');
+    if ($cfg !== '') return $cfg;
+    // 2) 动态推导：当前 host 前缀互换（bianqian.<域> ↔ tuchang.<域>）
     $h = strtolower(isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '');
     $h = preg_replace('/:\d+$/', '', $h);
     if (preg_match('/^(bianqian|tuchang)\.([a-z0-9.-]+)$/', $h, $m)) return $want . '.' . $m[2];
+    // 3) 回退默认
     return $want . '.naxid.top';
 }
 

@@ -52,6 +52,8 @@ if (!$INSTALLED && isset($_POST['install'])) {
             'admin_user' => $user,
             'admin_hash' => password_hash($pass, PASSWORD_DEFAULT),
             // 便签 DB
+            'bianqian_host' => trim($_POST['bianqian_host'] ?? ''),
+            'tuchang_host' => trim($_POST['tuchang_host'] ?? ''),
             'bianqian_db_host' => trim($_POST['bianqian_db_host'] ?? 'localhost'),
             'bianqian_db_port' => trim($_POST['bianqian_db_port'] ?? '3306'),
             'bianqian_db_name' => trim($_POST['bianqian_db_name'] ?? ''),
@@ -105,7 +107,7 @@ if (!$INSTALLED && isset($_POST['install'])) {
     $err = '密码错误';
 } elseif ($INSTALLED && $logged && isset($_POST['save'])) {
     // ---- 面板保存：读旧值合并（密码留空=不改） ----
-    $keys = array('bianqian_db_host','bianqian_db_port','bianqian_db_name','bianqian_db_user','bianqian_db_pass',
+    $keys = array('bianqian_host','tuchang_host','bianqian_db_host','bianqian_db_port','bianqian_db_name','bianqian_db_user','bianqian_db_pass',
         'tuchang_db_host','tuchang_db_name','tuchang_db_user','tuchang_db_pass',
         'tuchang_invite_code','tuchang_admin_pass','tuchang_user_quota','tuchang_max_upload','tuchang_max_compressed',
         'tuchang_max_dim','tuchang_cron_key','tuchang_preferred_host',
@@ -137,6 +139,9 @@ if (!$INSTALLED && isset($_POST['install'])) {
 }
 
 $FIELDS = array(
+    '站点域名（公共部署）' => array(
+        'bianqian_host' => '便签完整域名', 'tuchang_host' => '图床完整域名',
+    ),
     '便签数据库' => array(
         'bianqian_db_host' => '主机', 'bianqian_db_port' => '端口', 'bianqian_db_name' => '库名',
         'bianqian_db_user' => '用户', 'bianqian_db_pass' => '密码',
@@ -197,6 +202,9 @@ button.ghost { background: var(--panel); color: var(--txt); border-color: var(--
       <label>用户名</label><input type="text" name="admin_user" required value="admin">
       <label>密码（≥8 位）</label><input type="password" name="admin_pass" required minlength="8">
       <label>确认密码</label><input type="password" name="admin_pass2" required minlength="8">
+      <h2>站点域名（公共部署必填；留空=动态推导 bianqian./tuchang. 前缀）</h2>
+      <label>便签完整域名（如 notes.example.com）</label><input type="text" name="bianqian_host" placeholder="留空=bianqian.&lt;当前域名&gt;">
+      <label>图床完整域名（如 img.example.com）</label><input type="text" name="tuchang_host" placeholder="留空=tuchang.&lt;当前域名&gt;">
       <h2>便签数据库</h2>
       <label>主机</label><input type="text" name="bianqian_db_host" value="localhost">
       <label>端口</label><input type="text" name="bianqian_db_port" value="3306">
