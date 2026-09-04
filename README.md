@@ -34,8 +34,9 @@ pixel-suite/
 
 ## 现行版本号
 
-- 便签：md.js v40 / pixel.css v57 / app.js v78
-- 图床：pixel-blue.css v6 / dashboard.js v3 / view.js v2
+- 便签：md.js v41 / pixel.css v59 / app.js v78 / selection.js v5 / ai-direct.js v15 / tutorial-data v1
+- 图床：pixel-blue.css v13 / dashboard.js v21 / view.js v3 / spa.js v7 / api.php（含 folder 系列与 GET 白名单）
+- 配置：/admini/ 面板（suite-config.php 22 项；env PSU_* > 文件 > 代码默认）
 
 ## 部署
 
