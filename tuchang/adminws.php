@@ -37,7 +37,7 @@ if ($isAdmin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])
     if ($action === 'setquota') {
         $target = (int)$_POST['target'];
         $mb = (float)$_POST['quota_mb'];
-        if ($target > 0 && $mb >= 0 && $mb <= 512) {
+        if ($target > 0 && $mb >= 0 && $mb <= 102400) {   // 上限 100GB（quota_b 已改 BIGINT 防溢出）
             $bytes = (int)round($mb * 1048576);
             db()->prepare('UPDATE img_users SET quota_b = ? WHERE id = ?')->execute(array($bytes, $target));
             $msg = '配额已更新';
@@ -197,7 +197,7 @@ td .uuid { font-family: ui-monospace, monospace; font-size: 11px; color: var(--t
               <input type="hidden" name="csrf_token" value="<?php echo e($csrf); ?>">
               <input type="hidden" name="action" value="setquota">
               <input type="hidden" name="target" value="<?php echo (int)$u['id']; ?>">
-              <input class="q-inp" type="number" name="quota_mb" min="0" max="512" step="1" value="<?php echo round($quota / 1048576); ?>">
+              <input class="q-inp" type="number" name="quota_mb" min="0" max="102400" step="1" value="<?php echo round($quota / 1048576); ?>">
               <span class="q-unit">MB</span>
               <button class="sm-btn" type="submit">保存</button>
             </form>
