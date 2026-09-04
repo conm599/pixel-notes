@@ -412,10 +412,13 @@ if ($isApi) {
 
 // ============ 网页登录会话模式 ============
 if (!is_logged_in()) jerr('未登录', 401);
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') jerr('方法不允许', 405);
+$method = $_SERVER['REQUEST_METHOD'];
+if ($method !== 'POST' && $method !== 'GET') jerr('方法不允许', 405);
 if (!csrf_ok()) jerr('CSRF 校验失败', 403);
 
-$action = isset($_POST['action']) ? $_POST['action'] : '';
+$action = isset($_POST['action']) ? $_POST['action'] : (isset($_GET['action']) ? $_GET['action'] : '');   // GET 支持：只读操作走 GET 绕开线路丢包
+// GET 仅放行只读操作（线路 POST 响应偶发丢包的规避通道）；写操作一律 POST
+if ($method === 'GET' && !in_array($action, array('list', 'folder_list'), true)) jerr('写操作请使用 POST', 405);
 $uid = (int)$_SESSION['uid'];
 cleanup_expired();
 

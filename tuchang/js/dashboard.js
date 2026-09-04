@@ -635,8 +635,9 @@ document.addEventListener('DOMContentLoaded', function () {
 (function () {
   function fapi(action, data, done, stage) {
     // 三通道容错：fetch → fetch 重试 → XHR 换通道。
-    // 用户线路偶发「请求到达服务端并执行成功，但响应包丢失」——全失败时文案明确提示可能已生效，
-    // 且界面由 refreshFolders 重拉列表，永远按服务器实际状态显示。
+    // 关键语义：stage>0 = 前一次请求响应丢失后的重试——此时服务端【很可能已执行过一次】，
+    // 重试拿到的业务错误（同名已存在/文件夹不存在等）多为「首次已成功」的证据，
+    // 一律按 unreliable 处理：done(r, true)，调用方重拉真实状态、不报错误。
     stage = stage || 0;
     var fd = new FormData();
     fd.append('action', action);
@@ -648,37 +649,36 @@ document.addEventListener('DOMContentLoaded', function () {
       if (stage === 1) {                                                 // XHR 换通道
         var xhr = new XMLHttpRequest();
         xhr.open('POST', url);
-        xhr.onload = function () { try { done(JSON.parse(xhr.responseText)); } catch (e) { giveUp(); } };
-        xhr.onerror = giveUp;
-        xhr.ontimeout = giveUp;
+        xhr.onload = function () { try { done(JSON.parse(xhr.responseText), true); } catch (e) { done({ ok: false, err: '网络响应丢失' }, true); } };
+        xhr.onerror = function () { done({ ok: false, err: '网络响应丢失' }, true); };
         xhr.send(fd);
         return;
       }
-      giveUp();
-    };
-    var giveUp = function () {
-      done({ ok: false, err: '网络响应丢失——操作可能已生效，列表已按服务器实际状态刷新' });
+      done({ ok: false, err: '网络响应丢失' }, true);
     };
     fetch(url, { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
-      .then(function (r) { done(r); })
+      .then(function (r) { done(r, false); })
       .catch(fallback);
   }
 
-  // 新建文件夹
-  var newBtn = document.getElementById('folderNew');
-  if (newBtn) newBtn.addEventListener('click', function () {
+  // 新建文件夹（document 委托：SPA 重建 folderBar 后依然有效）
+  var newBtnLock = 0;
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest || !e.target.closest('#folderNew')) return;
+    e.stopPropagation();
+    if (Date.now() - newBtnLock < 800) return;   // 防抖：双击不双发
+    newBtnLock = Date.now();
     var name = prompt('文件夹名称（≤60 字）：', '');
     if (name === null) return;
     name = name.trim();
     if (name === '') return toast('名称不能为空');
-    fapi('folder_create', { name: name, parent_id: CUR_FOLDER === null ? '' : CUR_FOLDER }, function (r) {
-      if (r.ok) {
-        toast('已创建「' + r.name + '」');
-        if (window.__SPA) window.__SPA.refreshFolders();
-        else location.reload();
-      }
-      else toast(r.err || '创建失败');
+    var createParent = window.__SPA ? window.__SPA.getCur() : CUR_FOLDER;   // 实时读当前夹（新建落当前层）
+    fapi('folder_create', { name: name, parent_id: createParent === null ? '' : createParent }, function (r, unreliable) {
+      if (!r.ok && !unreliable) { toast(r.err || '创建失败'); return; }
+      toast(r.ok ? '已创建「' + r.name + '」' : '已提交（网络响应丢失，按服务器状态刷新）');
+      if (window.__SPA) window.__SPA.refreshFolders();
+      else location.reload();
     });
   });
 
@@ -697,21 +697,27 @@ document.addEventListener('DOMContentLoaded', function () {
       if (name === null) return;
       name = name.trim();
       if (name === '' || name === cur) return;
-      fapi('folder_rename', { id: fid, name: name }, function (r) {
-        if (r.ok) {
-          toast('已重命名');
-          if (window.__SPA) window.__SPA.refreshFolders();
-        }
-        else toast(r.err || '失败');
+      fapi('folder_rename', { id: fid, name: name }, function (r, unreliable) {
+        if (!r.ok && !unreliable) { toast(r.err || '失败'); return; }
+        // 成功：立即更新卡片名；并重拉树同步 SPA 数据（防下次渲染回退旧名）
+        card.querySelector('.f-name').textContent = r.ok ? r.name : name;
+        toast(r.ok ? '已重命名' : '已提交（按服务器状态刷新）');
+        if (window.__SPA) window.__SPA.refreshFolders();
+        else location.reload();
       });
     } else {
       if (!confirm('删除该文件夹？夹内图片自动回到「未归类」，图片不会删除。')) return;
-      fapi('folder_delete', { id: fid }, function (r) {
-        if (r.ok) {
+      fapi('folder_delete', { id: fid }, function (r, unreliable) {
+        // unreliable + 404「文件夹不存在」= 第一次请求已删除成功（响应丢失，重试撞上已删）
+        if (r.ok || (unreliable && r.err && r.err.indexOf('不存在') !== -1)) {
           toast('文件夹已删除，内容已上移一级');
-          if (window.__SPA) window.__SPA.refreshFolders();   // SPA 重拉树重渲染（含被删夹的图片归属）
-          else location.reload();
-        } else toast(r.err || '失败');
+        } else if (!unreliable) {
+          toast(r.err || '失败');
+        } else {
+          toast('网络响应丢失——以列表实际状态为准');
+        }
+        if (window.__SPA) window.__SPA.refreshFolders();
+        else location.reload();
       });
     }
   });
