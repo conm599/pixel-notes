@@ -54,7 +54,7 @@ $csrf = csrf_token();
       <a class="link-btn" href="adminws.php" title="管理后台">⚙ 管理</a>
 <?php endif; ?>
       <button type="button" class="link-btn" id="apiToggle" title="开发者 API Key">🔑 API</button>
-      <a class="link-btn" href="<?php echo e('https://' . siblingHost('bianqian') . '/index.php'); ?>" title="返回便签">🏠 便签</a>
+      <a class="link-btn" href="<?php echo e(siblingUrl('bianqian', '/index.php')); ?>" title="返回便签">🏠 便签</a>
       <div class="avatar"><?php echo e(strtoupper(substr($uname, 0, 1))); ?></div>
       <span><?php echo e($uname); ?></span>
       <a class="link-btn" href="logout.php">退出</a>
@@ -207,7 +207,7 @@ $csrf = csrf_token();
 var CSRF = <?php echo json_encode($csrf); ?>;
 var BASE = <?php echo json_encode($base); ?>;
 var CURRENT_UUID = <?php echo json_encode($myUuid); ?>;
-var API_MAIN_HOST = <?php echo json_encode(siblingHost('tuchang')); ?>;
+var API_MAIN_HOST_URL = <?php echo json_encode(rtrim(siblingUrl('tuchang', ''), '/')); ?>;
 var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
 <script src="js/spa.js?v=8"></script>
