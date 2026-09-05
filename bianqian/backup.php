@@ -263,6 +263,8 @@ $pending = isset($_SESSION['pn_backup_raw'], $_SESSION['pn_backup_stats']);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 数据备份与迁移</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
+    <link rel="icon" href="favicon.ico">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
 <body>
     <nav class="navbar">

@@ -176,6 +176,8 @@ $PASS_KEYS = array('bianqian_db_pass', 'tuchang_db_pass', 'tuchang_admin_pass', 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pixel Suite 配置中心</title>
+<link rel="icon" href="../favicon.ico">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <style>
 :root { --bg:#0a0e18; --panel:#101828; --line:#2a3a55; --acc:#7aa5e0; --acc2:#9fc3f0; --txt:#e8eef8; --mut:#8fa0b8; --ok:#6fd08f; --err:#f87171; }
 * { box-sizing: border-box; }

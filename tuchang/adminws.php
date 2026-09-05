@@ -88,6 +88,8 @@ if (!$isAdmin) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>管理后台 · 陶瓦图床</title>
     <link rel="stylesheet" href="css/pixel-blue.css?v=13">
+    <link rel="icon" href="favicon.ico">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
     </head>
     <body class="auth-page">
     <div class="glass auth-card">

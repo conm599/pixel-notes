@@ -43,6 +43,8 @@ $csrf = csrf_token();
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
 <link rel="stylesheet" href="css/pixel-blue.css?v=13">
+<link rel="icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
 <body>
 <div class="app">
