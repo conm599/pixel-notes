@@ -83,6 +83,8 @@ $until = $folder ? (int)$folder['share_until'] : 0;
 <meta name="robots" content="noindex, nofollow">
 <title>分享的文件夹 · 陶瓦图床</title>
 <link rel="stylesheet" href="css/pixel-blue.css?v=13">
+<link rel="icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
 .fshare-wrap { max-width: 1100px; margin: 0 auto; padding: 26px 18px 60px; }
 .fshare-head { text-align: center; margin-bottom: 22px; }

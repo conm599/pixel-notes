@@ -44,6 +44,8 @@ if ($remain > 0) {
 <title><?php echo e($img['name']); ?> · 陶瓦图床</title>
 
 <link rel="stylesheet" href="css/pixel-blue.css?v=13">
+<link rel="icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
 <body class="view-mode">
 <div class="view">
