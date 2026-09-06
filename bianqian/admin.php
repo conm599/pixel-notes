@@ -104,7 +104,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Key 允许留空 = 不修改（掩码占位）
         $keyPlaceholder = '••••••••（保持不变）';
-        if ($key === '' || $key === $keyPlaceholder) $key = null;
+        // 表单回显的是部分掩码（前6+•×8+尾4）；旧版只认空串/占位符，掩码串会被当成新 key
+        // 存库冲掉真 key（改模型/地址保存一次即坏）。修复：凡含 • 的一律视为未修改——真 key 不可能含 •。
+        if ($key === '' || $key === $keyPlaceholder || strpos($key, '•') !== false) $key = null;
 
         if ($base !== '' && !preg_match('#^https://#i', $base)) {
             $error = '接口地址必须以 https:// 开头';
