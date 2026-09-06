@@ -90,6 +90,20 @@ function siblingHost($want) {
     // 3) 回退默认
     return $want . '.naxid.top';
 }
+// 便签↔图床联动 CORS：仅放行同套件来源（同 host / 兄弟站 / 显式配置的便签域 / 本地开发），返回可回显的 Origin 或空串
+function corsOriginOk() {
+    $o = isset($_SERVER['HTTP_ORIGIN']) ? trim($_SERVER['HTTP_ORIGIN']) : '';
+    if ($o === '' || !preg_match('#^https?://#i', $o)) return '';
+    $oh = strtolower((string)parse_url($o, PHP_URL_HOST));
+    if ($oh === '') return '';
+    $self = strtolower(preg_replace('/:\d+$/', '', isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : ''));
+    if ($oh === $self) return $o;                                   // 同域（含本地不同端口）
+    if (strcasecmp($oh, siblingHost('bianqian')) === 0) return $o;  // 兄弟站
+    $cfg = suite_cfg('bianqian_url', '');
+    if ($cfg !== '' && strcasecmp($oh, strtolower((string)parse_url($cfg, PHP_URL_HOST))) === 0) return $o; // 显式配置
+    if (TAWA_LOCAL_HTTP && in_array($oh, array('localhost', '127.0.0.1'), true)) return $o;                 // 本地双端口
+    return '';
+}
 
 // ================= Session 安全 =================
 session_set_cookie_params(array(

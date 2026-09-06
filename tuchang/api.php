@@ -4,6 +4,18 @@ define('TAWA_IMG', true);
 require __DIR__ . '/config.php';
 
 header('Content-Type: application/json; charset=utf-8');
+
+// ==== CORS（便签↔图床联动：仅放行同套件来源；会话 Cookie 同站自动携带） ====
+$corsOrigin = corsOriginOk();
+if ($corsOrigin !== '') {
+    header('Access-Control-Allow-Origin: ' . $corsOrigin);
+    header('Access-Control-Allow-Credentials: true');
+    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type');
+    header('Vary: Origin');
+    if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(204); exit; }
+}
+
 function jout($data) {
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
@@ -37,6 +49,16 @@ function ensureApiFolder($uid) {
     if ($row) return (int)$row['id'];
     db()->prepare('INSERT INTO img_folders (uid, parent_id, name, sort_order, created_at) VALUES (?, NULL, ?, 0, ?)')
        ->execute(array($uid, 'api', time()));
+    return (int)db()->lastInsertId();
+}
+// 确保便签归档夹存在（根级，名「便签」），返回其 id（便签↔图床联动；用户删了下次上传自动重建）
+function ensureNotesFolder($uid) {
+    $st = db()->prepare('SELECT id FROM img_folders WHERE uid = ? AND parent_id IS NULL AND name = ?');
+    $st->execute(array($uid, '便签'));
+    $row = $st->fetch();
+    if ($row) return (int)$row['id'];
+    db()->prepare('INSERT INTO img_folders (uid, parent_id, name, sort_order, created_at) VALUES (?, NULL, ?, 0, ?)')
+       ->execute(array($uid, '便签', time()));
     return (int)db()->lastInsertId();
 }
 // 新建/移动时的 parent 校验（返回 null=根；出错返回错误文案）
@@ -410,10 +432,55 @@ if ($isApi) {
     jerr('未知操作', 400);
 }
 
+// ============ 内部端点（便签↔图床联动：服务端对服务端，X-Internal-Key 共享密钥鉴权，无会话） ============
+// 供便签 api/notes.php 保存 diff 后调用：释放（30 天反悔期）/ 恢复（引用复活）。密钥两站同源（suite_cfg internal_key）
+if (isset($_GET['action']) && $_GET['action'] === 'internal_imgs' || isset($_POST['action']) && $_POST['action'] === 'internal_imgs') {
+    $key = isset($_SERVER['HTTP_X_INTERNAL_KEY']) ? $_SERVER['HTTP_X_INTERNAL_KEY'] : '';
+    $expected = suite_cfg('internal_key', '');
+    if ($expected === '' || !hash_equals($expected, (string)$key)) jerr('拒绝访问', 403);
+    $op = isset($_POST['op']) ? $_POST['op'] : '';
+    // 便签侧只知道 pn_uid：经 img_users.pn_uid 映射换算成本站 img uid
+    $puid = (int)(isset($_POST['pn_uid']) ? $_POST['pn_uid'] : 0);
+    $tokens = array();
+    if (isset($_POST['tokens'])) {
+        $dec = json_decode((string)$_POST['tokens'], true);
+        if (is_array($dec)) $tokens = $dec;
+    }
+    $tokens = array_values(array_filter($tokens, function ($t) {
+        return is_string($t) && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $t);
+    }));
+    if ($puid <= 0 || !$tokens) jerr('参数错误');
+    $mst = db()->prepare('SELECT id FROM img_users WHERE pn_uid = ?');
+    $mst->execute(array($puid));
+    $mrow = $mst->fetch();
+    if (!$mrow) jerr('用户不存在', 404);
+    $iuid = (int)$mrow['id'];
+    if ($op === 'grace') {
+        // 释放：仅「永久」图 → 30 天反悔期（不覆盖用户在图床自设的有效期）
+        $st = db()->prepare('UPDATE img_images SET expire_at = ? WHERE uid = ? AND share_token = ? AND expire_at = 0');
+        $n = 0;
+        foreach ($tokens as $t) { $st->execute(array(time() + 30 * 86400, $iuid, $t)); $n += $st->rowCount(); }
+        jout(array('ok' => true, 'op' => 'grace', 'affected' => $n));
+    }
+    if ($op === 'restore') {
+        // 恢复：引用复活（Ctrl+Z / 重贴）→ 回到永久
+        $st = db()->prepare('UPDATE img_images SET expire_at = 0 WHERE uid = ? AND share_token = ?');
+        $n = 0;
+        foreach ($tokens as $t) { $st->execute(array($iuid, $t)); $n += $st->rowCount(); }
+        jout(array('ok' => true, 'op' => 'restore', 'affected' => $n));
+    }
+    jerr('未知操作', 400);
+}
+
 // ============ 网页登录会话模式 ============
 if (!is_logged_in()) jerr('未登录', 401);
 $method = $_SERVER['REQUEST_METHOD'];
 if ($method !== 'POST' && $method !== 'GET') jerr('方法不允许', 405);
+// CSRF 播种端点（便签联动）：必须在 csrf_ok 之前——它本身就是首次取 token 的通道；只读 + no-store
+if ($method === 'GET' && isset($_GET['action']) && $_GET['action'] === 'csrf') {
+    header('Cache-Control: no-store, max-age=0');
+    jout(array('ok' => true, 'csrf' => csrf_token()));
+}
 if (!csrf_ok()) jerr('CSRF 校验失败', 403);
 
 $action = isset($_POST['action']) ? $_POST['action'] : (isset($_GET['action']) ? $_GET['action'] : '');   // GET 支持：只读操作走 GET 绕开线路丢包
@@ -654,6 +721,7 @@ if ($action === 'setfolder') {
 
 // ============ 上传 ============
 if ($action === 'upload') {
+    if (!rate_check('up' . $uid, 30, 600)) jerr('上传太频繁，请 10 分钟后再试', 429);
     if (!isset($_FILES['img']) || !is_uploaded_file($_FILES['img']['tmp_name'])) {
         jerr('未收到文件');
     }
@@ -706,6 +774,7 @@ if ($action === 'upload') {
 
     $name = isset($_POST['name']) ? trim(substr(strip_tags($_POST['name']), 0, 200)) : 'image';
     if ($name === '') $name = 'image';
+    if (!mb_check_encoding($name, 'UTF-8')) jerr('名称编码错误'); // 冗余守卫：脏编码入库名称直接拒收，避免 500
     $exp = 0;
     if (isset($_POST['expire'])) {
         $v = (int)$_POST['expire'];
@@ -721,6 +790,10 @@ if ($action === 'upload') {
             $fst->execute(array($fv, $uid));
             if ($fst->fetch()) $folderId = $fv;
         }
+    }
+    // 便签联动：folder=notes → 自动归档到「便签」夹（无则创建；与 API 模式的 api 夹同模式）
+    if ($folderId === null && isset($_POST['folder']) && $_POST['folder'] === 'notes') {
+        $folderId = ensureNotesFolder($uid);
     }
     $ins = db()->prepare('INSERT INTO img_images (uid, name, file, size, w, h, created_at, expire_at, folder_id) VALUES (?,?,?,?,?,?,?,?,?)');
     $ins->execute(array($uid, $name, $file, $size, $w, $h, time(), $exp, $folderId));
