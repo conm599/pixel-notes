@@ -757,15 +757,16 @@
         return;
       }
       saveBusy = true; btnSaveNew.disabled = true; btnSaveNew.textContent = '💾 保存中…';
+      var saveId = editingId;   // 锁存本次保存目标：hideEditor 会清空 editingId，原位替换必须用保存前的 id
       try {
         var r = await api('PUT', {
-          id: editingId,
+          id: saveId,
           title: title,
           content: content,
           color: selectedColor
         });
         if (r.success) {
-          var n = notesById[editingId];
+          var n = notesById[saveId];
           if (n) {
             n.title = title;
             n.content = content;
@@ -776,7 +777,7 @@
           hideEditor();
           showToast('💾 已保存', 'success');
           // 原位替换整张卡片：用最新数据重建，保持卡片在网格中的位置不变
-          var oldCard = notesGrid.querySelector('.note-card[data-id="' + editingId + '"]');
+          var oldCard = notesGrid.querySelector('.note-card[data-id="' + saveId + '"]');
           if (oldCard && n) {
             var freshCard = createNoteCard(n);
             oldCard.parentNode.replaceChild(freshCard, oldCard);
@@ -3642,13 +3643,19 @@
     var m = location.hash.match(/^#folder=(\d+)$/);
     if (m) currentFolderId = parseInt(m[1], 10);
   })();
-  // 便签↔图床联动初始化（配置由 index.php 注入：tuchangBase / policyHtml / policyVer）
-  if (typeof ImgBridge !== 'undefined' && window.IMG_BRIDGE) {
+  // 便签↔图床联动初始化（配置由 index.php 的 JSON 数据块 imgBridgeCfg 注入：tuchangBase / policyHtml / policyVer；
+  // CSP script-src 'self' 禁内联可执行脚本，故不能用 window 变量，这里解析数据块）
+  var imgCfg = {};
+  try {
+    var imgCfgEl = document.getElementById('imgBridgeCfg');
+    if (imgCfgEl) imgCfg = JSON.parse(imgCfgEl.textContent || '{}') || {};
+  } catch (e) { imgCfg = {}; } // 配置块异常时联动静默关闭，不影响便签本体
+  if (typeof ImgBridge !== 'undefined' && imgCfg.tuchangBase) {
     ImgBridge.init({
-      tuchangBase: window.IMG_BRIDGE.tuchangBase,
+      tuchangBase: imgCfg.tuchangBase,
       notesApi: 'api/notes.php',
-      policyHtml: window.IMG_BRIDGE.policyHtml,
-      policyVer: window.IMG_BRIDGE.policyVer,
+      policyHtml: imgCfg.policyHtml,
+      policyVer: imgCfg.policyVer,
       toast: showToast
     });
   }
