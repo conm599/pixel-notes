@@ -3,14 +3,18 @@
 if (!defined('TAWA_IMG')) { http_response_code(403); exit; }
 
 // ================= 强制 HTTPS（防降级 / 中间人攻击） =================
+// [本地开发] PSU_LOCAL_HTTP=1（php -S http 环境）跳过强制跳转、放宽 Cookie secure；生产不设该变量零影响
+define('TAWA_LOCAL_HTTP', getenv('PSU_LOCAL_HTTP') === '1');
 $isHttps = !empty($_SERVER['HTTPS']) || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
-if (!$isHttps) {
+if (!$isHttps && !TAWA_LOCAL_HTTP) {
     $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
     $uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/';
     header('Location: https://' . $host . $uri, true, 301);
     exit;
 }
-header('Strict-Transport-Security: max-age=31536000');
+if (!TAWA_LOCAL_HTTP) {
+    header('Strict-Transport-Security: max-age=31536000');
+}
 
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
@@ -73,7 +77,7 @@ function cookieParentDomain() {
 function siblingUrl($want, $path) {
     $cfg = suite_cfg($want . '_url', '');
     if ($cfg !== '') return rtrim($cfg, '/') . $path;
-    return 'https://' . siblingHost($want) . $path;
+    return (TAWA_LOCAL_HTTP ? 'http' : 'https') . '://' . siblingHost($want) . $path;
 }
 function siblingHost($want) {
     // 1) 显式配置优先（/admini 面板 bianqian_host/tuchang_host，公共部署者的任意子域名）
@@ -92,14 +96,14 @@ session_set_cookie_params(array(
     'lifetime' => 86400, // 登录态 Cookie 24H（配合服务端 gc_maxlifetime 同值）
     'httponly' => true,
     'samesite' => 'Lax',
-    'secure'   => true,
+    'secure'   => !TAWA_LOCAL_HTTP,
     'domain'   => cookieParentDomain() // 动态父域：自动适配第二域名
 ));
 // 账号统一过渡：无条件清除 host-only 会话 Cookie 残留（图床会话依赖父域 Cookie，host-only 旧 Cookie 排前会被优先误读）
 if (isset($_COOKIE[session_name()])) {
     setcookie(session_name(), '', array(
         'expires' => time() - 3600, 'path' => '/',
-        'secure' => true, 'httponly' => true, 'samesite' => 'Lax'
+        'secure' => !TAWA_LOCAL_HTTP, 'httponly' => true, 'samesite' => 'Lax'
     ));
 }
 if (defined('TAWA_NO_SESSION')) {
@@ -112,7 +116,7 @@ if (defined('TAWA_NO_SESSION')) {
     if (!empty($_SESSION['uid'])) {
         setcookie(session_name(), session_id(), array(
             'expires' => time() + 86400, 'path' => '/', 'domain' => cookieParentDomain(),
-            'secure' => true, 'httponly' => true, 'samesite' => 'Lax'
+            'secure' => !TAWA_LOCAL_HTTP, 'httponly' => true, 'samesite' => 'Lax'
         ));
     }
 }
