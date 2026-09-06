@@ -38,7 +38,7 @@
       cache: 'no-store'
     });
     if (resp.status === 401) {
-      window.location.href = 'login.php';
+      await check401();   // 先向服务端复核会话，真失效才跳登录（防瞬时假 401 踢人）
       throw new Error('未登录');
     }
     var raw = await resp.text();
@@ -46,6 +46,25 @@
     try { result = JSON.parse(raw); }
     catch (e) { throw new Error('服务器响应异常 (HTTP ' + resp.status + ')'); }
     return result;
+  }
+
+  // 401 复核（治「莫名其妙被弹回登录页」）：收到 401 先打 auth check 确认会话真的失效；
+  // 服务端说还活着（瞬时假 401：网络抖动/网关瞬断等）就留在本页提示重试，绝不弹登录页。
+  async function check401() {
+    try {
+      var r = await fetch('api/auth.php', {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'check' })
+      });
+      var j = null;
+      try { j = JSON.parse(await r.text()); } catch (e) { j = null; }
+      if (j && j.success) { showToast('🔐 登录状态有效（刚才是瞬时故障），请重试刚才的操作', 'info'); return true; }
+    } catch (e) { /* 复核失败按真失效处理 */ }
+    window.location.href = 'login.php';
+    return false;
   }
 
   // 便签/文件夹数据引用给 ai-direct.js 的 TOOL 块（浏览器端执行同逻辑）
@@ -227,7 +246,7 @@
       credentials: 'include',
       cache: 'no-store'
     });
-    if (resp.status === 401) { window.location.href = 'login.php'; throw new Error('未登录'); }
+    if (resp.status === 401) { await check401(); throw new Error('未登录'); }
     var result = await resp.json();
     return result;
   }
@@ -1662,7 +1681,7 @@
       cache: 'no-store'
     });
     if (resp.status === 401) {
-      window.location.href = 'login.php';
+      await check401();   // 真失效才跳登录（aiApi）
       throw new Error('未登录');
     }
     var raw = await resp.text();
@@ -1688,7 +1707,7 @@
       cache: 'no-store'
     });
     if (resp.status === 401) {
-      window.location.href = 'login.php';
+      await check401();   // 真失效才跳登录（aiApiStream）
       throw new Error('未登录');
     }
     var ct = resp.headers.get('Content-Type') || '';
@@ -2710,6 +2729,7 @@
         }
       } catch (e) {
         clearUp();
+        hideStream();   // v9 修复：流式浮层必须收起，否则任何中途错误都会卡在「正在生成/回复中」
         var msg = String(e.message || '网络错误');
         status.textContent = '❌ ' + msg;
         status.style.display = 'block';
@@ -2851,7 +2871,7 @@
           cache: 'no-store',
           body: JSON.stringify({ action: 'changepass', oldpass: oldInp.value, newpass: newInp.value })
         });
-        if (resp.status === 401) { window.location.href = 'login.php'; return; }
+        if (resp.status === 401) { await check401(); return; }
         var r = await resp.json();
         if (r.success) {
           showToast('✅ ' + r.message, 'success');
@@ -2983,7 +3003,7 @@
         cache: 'no-store',
         body: JSON.stringify(data)
       });
-      if (resp.status === 401) { window.location.href = 'login.php'; throw new Error('请先登录'); }
+      if (resp.status === 401) { await check401(); throw new Error('请先登录'); }
       return resp.json();
     }
 

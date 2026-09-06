@@ -118,7 +118,7 @@ function aiOut($payload) {
  * 必须在澄清解析与替换块提取之后使用，不得提前。
  */
 function aiCleanOutput($text) {
-    $t = preg_replace('/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/i', '', (string)$text);
+    $t = preg_replace('/<<<(?:SEARCH|REPLACE|END|CLARIFY|SKIP)>>>/i', '', (string)$text);
     // 剥推理模型的思考标签（<think>...</think>、<thinking>...</thinking>），含未闭合的残留头
     $t = preg_replace('/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/i', '', $t);
     return trim((string)$t);
@@ -215,7 +215,80 @@ function aiApplyBlock($content, $search, $replace, $doneRanges = array()) {
 }
 
 /**
- * 顺序应用多个替换块（protocol v8 块隔离）：
+ * SKIP 锚匹配替换（protocol v9，与 js/ai-direct.js matchAndApply 的 SKIP 分支逐字一致）：
+ * SEARCH 含一个 <<<SKIP>>>，切出首锚/尾锚；定位 = 「首锚起点、尾锚终点」的成对跨度，整体替换为 REPLACE。
+ * 两级匹配：L1 首尾锚精确子串成对唯一；L2 首锚的首行 + 尾锚的末行（行尾空白归一）成对唯一。
+ * 成对唯一才应用（与 v8 唯一性标准一致），命中与 $doneRanges 相交无效（块隔离沿用）。
+ * 成功返回 array('c'=>新内容, 'old'=>array(旧区间), 'new'=>array(新区间))，失败返回 null。
+ */
+function aiApplySkipBlock($content, $search, $replace, $doneRanges = array()) {
+    if (!is_string($content) || $search === '') return null;
+    $parts = preg_split('/<<<SKIP>>>/i', $search);
+    if (count($parts) !== 2) return null; // 无 SKIP 或多个 SKIP 都不支持（prompt 限最多一个）
+    $head = rtrim($parts[0], "\n");
+    $tail = ltrim($parts[1], "\n");
+    if ($head === '' && $tail === '') return null;
+    $blockedF = function ($rng) use ($doneRanges) {
+        foreach ($doneRanges as $dr) { if (aiRangeOverlap($rng, $dr)) return true; }
+        return false;
+    };
+    $apply = function ($a, $b) use ($content, $replace) {
+        $newC = substr_replace($content, $replace, $a, $b - $a);
+        return array('c' => $newC, 'old' => array($a, $b), 'new' => array($a, $a + strlen($replace)));
+    };
+    // L1：精确子串成对（头锚起点 × 其后的尾锚终点），全组合唯一才应用
+    $heads = array();
+    if ($head === '') {
+        $heads[] = 0;
+    } else {
+        $p = 0;
+        while (($p = strpos($content, $head, $p)) !== false) { $heads[] = $p; $p += 1; }
+    }
+    $valid = array();
+    foreach ($heads as $h) {
+        if ($tail === '') { if (!$blockedF(array($h, strlen($content)))) $valid[] = array($h, strlen($content)); continue; }
+        $q = $h + strlen($head);
+        while (($t = strpos($content, $tail, $q)) !== false) {
+            $end = $t + strlen($tail);
+            if (!$blockedF(array($h, $end))) $valid[] = array($h, $end);
+            $q = $t + 1;
+        }
+    }
+    if (count($valid) === 1) return $apply($valid[0][0], $valid[0][1]);
+    // L2：行锚——首锚首行 / 尾锚末行（行尾空白归一），行对唯一才应用
+    if ($head === '' || $tail === '') return null;
+    $hLine = aiRtrimLine(strtok($head, "\n"));
+    $tLines = explode("\n", $tail);
+    $tLine = aiRtrimLine((string)end($tLines));
+    if ($hLine === '' || $tLine === '') return null;
+    $lines = explode("\n", $content);
+    $n = count($lines);
+    $starts = array(); $ends = array();
+    foreach ($lines as $i => $ln) {
+        $rl = aiRtrimLine($ln);
+        if ($rl === $hLine) $starts[] = $i;
+        if ($rl === $tLine) $ends[] = $i;
+    }
+    if (count($starts) === 0 || count($ends) === 0) return null;
+    // 行号 → 字符偏移（一次算好）
+    $lineOff = array();
+    $off = 0;
+    foreach ($lines as $li => $ln) { $lineOff[$li] = $off; $off += strlen($ln) + 1; }
+    $valid2 = array();
+    foreach ($starts as $i) {
+        foreach ($ends as $j) {
+            if ($j < $i) continue;
+            $a = $lineOff[$i];
+            $b = ($j + 1 < $n) ? $lineOff[$j + 1] : strlen($content);
+            if (!$blockedF(array($a, $b))) $valid2[] = array($a, $b);
+        }
+    }
+    if (count($valid2) === 1) return $apply($valid2[0][0], $valid2[0][1]);
+    return null;
+}
+
+/**
+ * 顺序应用多个替换块（protocol v8 块隔离 / v9 SKIP 锚）：
  * 维护已替换区间列表；每次替换后把位于替换点之后的旧区间按长度差平移，
  * 保证后续块的 SEARCH 永远只在「未被前序块改动的原文区域」定位。
  * 返回 array('content'=>, 'applied'=>, 'failed'=>, 'bad'=>)
@@ -225,7 +298,11 @@ function aiApplyBlocksSeq($content, $blocks) {
     $applied = 0; $failed = 0; $bad = array();
     foreach ($blocks as $blk) {
         $search = $blk[0]; $replace = $blk[1];
-        $res = aiApplyBlock($content, $search, $replace, $done);
+        if (stripos($search, '<<<SKIP>>>') !== false) {
+            $res = aiApplySkipBlock($content, $search, $replace, $done);   // v9：SKIP 锚块
+        } else {
+            $res = aiApplyBlock($content, $search, $replace, $done);
+        }
         if ($res === null) { $failed++; $bad[] = $search; continue; }
         $content = $res['c'];
         $delta = ($res['new'][1] - $res['new'][0]) - ($res['old'][1] - $res['old'][0]);
@@ -390,7 +467,10 @@ function ownEndpoint($baseUrl) {
     // 只接受 http/https
     if (stripos($base, 'https://') !== 0 && stripos($base, 'http://') !== 0) return '';
     if (!aiEndpointHostSafe($base, $pinIp)) return '';
-    aiPinCache($base, $pinIp);   // 记住已验证 IP，请求阶段钉 CURLOPT_RESOLVE
+    // 记住已验证 IP，请求阶段钉 CURLOPT_RESOLVE；键 = 主机名（与 aiChat 读取侧同键，v9 修复：旧版键不一致致钉取永远失效）
+    $ph = @parse_url($base);
+    $phost = ($ph && !empty($ph['host'])) ? strtolower(trim((string)$ph['host'], '[]')) : '';
+    if ($phost !== '') aiPinCache($phost, $pinIp);
     $base = rtrim($base, '/');
     if (substr($base, -17) === '/chat/completions') return $base;
     return $base . '/chat/completions';
@@ -401,6 +481,7 @@ function ownEndpoint($baseUrl) {
  * $onDelta 非空时走流式（stream:true），逐 token 回调转发；上游不支持流式则自动降级为整段返回（结果不变）
  */
 function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null, $onDelta = null) {
+    global $AI_SSE;   // SSE 保活心跳需要感知是否已在事件流模式（sseStart 置位）
     $payloadArr = array(
         'model' => $model,
         'messages' => $messages,
@@ -432,8 +513,7 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
         );
         if ($onDelta !== null) {
             // 流式：WRITEFUNCTION 逐块解析上游 SSE 的 data 行，提取 delta.content 即时回调
-            $sseBuf = ''; $raw = '';
-            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $data) use (&$sseBuf, &$text, &$raw, $onDelta) {
+            $sseBuf = ''; $raw = '';            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $data) use (&$sseBuf, &$text, &$raw, $onDelta) {
                 if ($data === '') return 0;
                 $raw .= $data;
                 $sseBuf .= $data;
@@ -456,13 +536,30 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
         } else {
             $opts[CURLOPT_RETURNTRANSFER] = true;
         }
-        // DNS rebinding 防护：把校验阶段已验证的 IP 钉进 curl（连接阶段不再二次解析，杜绝 TOCTOU）
+        // DNS rebinding 防护：把校验阶段已验证的 IP 钉进 curl（连接阶段不再二次解析，杜绝 TOCTOU）。
+        // 缓存键 = 主机名（ownEndpoint 写入侧同键；v9 修复：旧版误读未定义的 $base，钉取静默失效）
         $pp = @parse_url($url);
-        $pinIp = ($pp && !empty($pp['host'])) ? aiPinCache($base) : null;
+        $rhost = ($pp && !empty($pp['host'])) ? strtolower(trim((string)$pp['host'], '[]')) : '';
+        $pinIp = ($rhost !== '') ? aiPinCache($rhost) : null;
         if ($pinIp) {
-            $rhost = strtolower(trim((string)$pp['host'], '[]'));
             $rport = isset($pp['port']) ? (int)$pp['port'] : ((isset($pp['scheme']) && $pp['scheme'] === 'http') ? 80 : 443);
             $opts[CURLOPT_RESOLVE] = array($rhost . ':' . $rport . ':' . $pinIp);
+        }
+        if ($onDelta !== null && !empty($AI_SSE)) {
+            // SSE 保活心跳（protocol v9）：模型 TTFT/长思考期间上游零字节，nginx proxy_read_timeout（默认 60s）
+            // 会掐断客户端连接 → 前端「正在回复中」卡死。curl 进度回调约每秒触发，每 15s 输一条 SSE 注释行
+            //（": hb" 开头，前端按「无 event 块」忽略），让连接持续有字节流动。首 token 后照发，开销可忽略。
+            $hbLast = 0;
+            $opts[CURLOPT_NOPROGRESS] = false;
+            $opts[CURLOPT_PROGRESSFUNCTION] = function () use (&$hbLast) {
+                $now = microtime(true);
+                if ($now - $hbLast >= 15) {
+                    $hbLast = $now;
+                    echo ': hb ' . $now . "\n\n";
+                    @flush();
+                }
+                return 0;
+            };
         }
         curl_setopt_array($ch, $opts);
         $body = curl_exec($ch);
@@ -559,6 +656,11 @@ function bumpKeyUsage($keyId, $period, $used) {
 
 try {
     if (!isset($_SESSION['user_id'])) {
+        // 登录态诊断（治「莫名弹回登录」）：401 时留一行取证，进 nginx error log，便于回溯是会话丢失还是瞬时光断
+        error_log('[ai401] sid=' . session_id()
+            . ' cookie=' . (isset($_COOKIE[session_name()]) ? '1' : '0')
+            . ' keys=' . implode('|', array_keys($_SESSION ?: array()))
+            . ' ip=' . (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '-'));
         jsonOut(array('success' => false, 'message' => '请先登录'), 401);
     }
     $uid = (int)$_SESSION['user_id'];
@@ -1515,7 +1617,8 @@ try {
             . "<<<REPLACE>>>\n"
             . "（修改后的文字）\n"
             . "<<<END>>>\n"
-            . "可以有多个替换块，按顺序排列。SEARCH 段尽量短且在全文中唯一。\n"
+            . "可以有多个替换块，按顺序排列。\n"
+            . "【SEARCH 最小化（硬性规则，治 token 浪费）】SEARCH 只放「定位所需的最短锚点」：通常是要修改的那一句/那一行，最多加一行紧邻上下文，严禁为了保险复制整段、整节或大段原文——SEARCH 明显长于 REPLACE 属于浪费，必须改用更短锚点。要定位的位置在很长段落/列表中部时，用 SKIP 省略中段：SEARCH 写成「首行锚点」一行 + 一行 <<<SKIP>>> + 「尾行锚点」一行（每个 SEARCH 最多一个 <<<SKIP>>>），首尾锚点必须是原文中逐字存在的行；引擎会圈定首尾锚点之间的整个跨度整体替换为 REPLACE，所以 REPLACE 必须包含该跨度改写后的完整内容。\n"
             . "B. 全文重写：仅当指令要求整体重构、全文翻译、全文总结、从零创作时，才直接输出完整的新便签全文。\n"
             . "C. 澄清提问（只要存在任何疑问就必须使用，优先级最高，出现时必须只输出这个）：\n"
             . "<<<CLARIFY>>>\n"
@@ -1531,6 +1634,7 @@ try {
             . "5. 便签标题不在你负责范围内，只编辑正文\n"
             . "6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n"
             . "7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问\n"
+            . "8. SEARCH 锚点最小化：能一句/一行定位就不用多行；长跨度用 <<<SKIP>>> 省略中段（见 A 格式说明）。复制大段原文进 SEARCH 是严重浪费，禁止\n"
             . "【工具调用（可选，仅限需要查看其他便签或文件夹内容时）】\n"
             . "你可以调用工具查看文件夹结构或某条便签的内容（只读），调用格式：\n"
             . "<<<TOOL>>>\n"

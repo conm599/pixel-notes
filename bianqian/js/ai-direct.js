@@ -4,7 +4,7 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
- * 实现以 protocol.md v8 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
+ * 实现以 protocol.md v9 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / SKIP 锚 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
  *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
@@ -39,7 +39,8 @@
       + '<<<REPLACE>>>\n'
       + '（修改后的文字）\n'
       + '<<<END>>>\n'
-      + '可以有多个替换块，按顺序排列。SEARCH 段尽量短且在全文中唯一。\n'
+      + '可以有多个替换块，按顺序排列。\n'
+      + '【SEARCH 最小化（硬性规则，治 token 浪费）】SEARCH 只放「定位所需的最短锚点」：通常是要修改的那一句/那一行，最多加一行紧邻上下文，严禁为了保险复制整段、整节或大段原文——SEARCH 明显长于 REPLACE 属于浪费，必须改用更短锚点。要定位的位置在很长段落/列表中部时，用 SKIP 省略中段：SEARCH 写成「首行锚点」一行 + 一行 <<<SKIP>>> + 「尾行锚点」一行（每个 SEARCH 最多一个 <<<SKIP>>>），首尾锚点必须是原文中逐字存在的行；引擎会圈定首尾锚点之间的整个跨度整体替换为 REPLACE，所以 REPLACE 必须包含该跨度改写后的完整内容。\n'
       + 'B. 全文重写：仅当指令要求整体重构、全文翻译、全文总结、从零创作时，才直接输出完整的新便签全文。\n'
       + 'C. 澄清提问（当且仅当指令有歧义、缺关键信息或者你拿不准用户到底要改成什么样时使用，优先级最高，出现时必须只输出这个）：\n'
       + '<<<CLARIFY>>>\n'
@@ -54,6 +55,8 @@
       + '4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n'
       + '5. 便签标题不在你负责范围内，只编辑正文\n'
       + '6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n'
+      + '7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问\n'
+      + '8. SEARCH 锚点最小化：能一句/一行定位就不用多行；长跨度用 <<<SKIP>>> 省略中段（见 A 格式说明）。复制大段原文进 SEARCH 是严重浪费，禁止\n'
       + '【工具调用（可选）】当你需要查看便签所在文件夹或其他文件夹里有什么时，可以调用工具。输出格式：\n'
       + '<<<TOOL>>>\n'
       + '{"name":"list_folder","path":"工作/项目A"}  —— 查看指定路径文件夹的便签清单；查看主页根层级用 {"name":"list_folder","path":"主页"}\n'
@@ -241,7 +244,9 @@
     while ((m = re.exec(text)) !== null) {
       var search = m[1].replace(/\r\n/g, '\n').replace(/\n+$/, '');
       var replace = m[2].replace(/\r\n/g, '\n').replace(/\n+$/, '');
-      var res = matchAndApply(result, search, replace, done);
+      var res;
+      if (/<<<SKIP>>>/i.test(search)) res = matchSkipApply(result, search, replace, done);   // v9：SKIP 锚块
+      else res = matchAndApply(result, search, replace, done);
       if (res !== null) {
         result = res.c;
         var delta = (res.new[1] - res.new[0]) - (res.old[1] - res.old[0]);
@@ -258,6 +263,76 @@
     return { result: result, applied: applied, failed: failed, bad: bad, hasBlocks: applied + failed > 0 };
   }
 
+  // SKIP 锚匹配替换（protocol v9，与 api/ai.php aiApplySkipBlock 逐字一致）：
+  // SEARCH 含一个 <<<SKIP>>>，切首锚/尾锚；定位「首锚起点、尾锚终点」成对跨度，整体替换为 REPLACE。
+  // L1 首尾锚精确子串成对唯一；L2 首锚首行+尾锚末行行尾空白归一成对唯一；块隔离（doneRanges）沿用。
+  function matchSkipApply(content, search, replace, doneRanges) {
+    doneRanges = doneRanges || [];
+    var parts = String(search).split(/<<<SKIP>>>/i);
+    if (parts.length !== 2) return null;
+    var head = parts[0].replace(/\n+$/, '');
+    var tail = parts[1].replace(/^\n+/, '');
+    if (head === '' && tail === '') return null;
+    function blocked(a, b) {
+      for (var di = 0; di < doneRanges.length; di++) {
+        if (a < doneRanges[di][1] && doneRanges[di][0] < b) return true;
+      }
+      return false;
+    }
+    // L1：精确子串成对（头锚起点 × 其后的尾锚终点），全组合唯一才应用
+    var heads = [];
+    if (head === '') heads.push(0);
+    else { var p0 = content.indexOf(head); while (p0 !== -1) { heads.push(p0); p0 = content.indexOf(head, p0 + 1); } }
+    var valid = [];
+    for (var hi = 0; hi < heads.length; hi++) {
+      var h = heads[hi];
+      if (tail === '') { if (!blocked(h, content.length)) valid.push([h, content.length]); continue; }
+      var q = h + head.length;
+      var t = content.indexOf(tail, q);
+      while (t !== -1) {
+        var end = t + tail.length;
+        if (!blocked(h, end)) valid.push([h, end]);
+        q = t + 1;
+        t = content.indexOf(tail, q);
+      }
+    }
+    if (valid.length === 1) {
+      var a = valid[0][0], b = valid[0][1];
+      return { c: content.slice(0, a) + replace + content.slice(b), old: [a, b], new: [a, a + replace.length] };
+    }
+    // L2：行锚——首锚首行 / 尾锚末行（行尾空白归一），行对唯一才应用
+    if (head === '' || tail === '') return null;
+    var hLine = rtrimLine(head.split('\n')[0]);
+    var tLines = tail.split('\n');
+    var tLine = rtrimLine(tLines[tLines.length - 1]);
+    if (!hLine || !tLine) return null;
+    var lines = content.split('\n');
+    var starts = [], ends = [];
+    for (var i = 0; i < lines.length; i++) {
+      var rl = rtrimLine(lines[i]);
+      if (rl === hLine) starts.push(i);
+      if (rl === tLine) ends.push(i);
+    }
+    if (!starts.length || !ends.length) return null;
+    var lineOff = [], off = 0;
+    for (var li = 0; li < lines.length; li++) { lineOff[li] = off; off += lines[li].length + 1; }
+    var valid2 = [];
+    for (var si = 0; si < starts.length; si++) {
+      for (var ei = 0; ei < ends.length; ei++) {
+        var i2 = starts[si], j2 = ends[ei];
+        if (j2 < i2) continue;
+        var a2 = lineOff[i2];
+        var b2 = (j2 + 1 < lines.length) ? lineOff[j2 + 1] : content.length;
+        if (!blocked(a2, b2)) valid2.push([a2, b2]);
+      }
+    }
+    if (valid2.length === 1) {
+      var a3 = valid2[0][0], b3 = valid2[0][1];
+      return { c: content.slice(0, a3) + replace + content.slice(b3), old: [a3, b3], new: [a3, a3 + replace.length] };
+    }
+    return null;
+  }
+
   // 单轮请求：返回 { ok, text, message }（ok=false 时 message 为错误说明）
   // onDelta 提供时走流式（stream:true），逐 token 回调；上游不支持流式时自动降级为整段返回（结果不变）
   async function callOnce(proxy, target, apiKey, model, messages, extra, onDelta) {
@@ -269,19 +344,34 @@
       }
     }
     if (onDelta) payload.stream = true;
+    // 空闲看门狗（protocol v9）：直连路径没有任何超时，代理挂死/模型排队时前端永远「正在生成」。
+    // 连续 90 秒没有任何字节（连接建立前或流中途）就 abort 并给出明确错误；每收到数据重置计时。
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var idleTimer = null, idleFired = false;
+    function armIdle() {
+      if (!ctrl) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(function () { idleFired = true; try { ctrl.abort(); } catch (e2) {} }, 90000);
+    }
+    function disarmIdle() { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } }
     var resp;
     try {
+      armIdle();
       resp = await fetch(proxy + '/' + target, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + apiKey
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: ctrl ? ctrl.signal : undefined
       });
     } catch (e) {
+      disarmIdle();
+      if (idleFired) return { ok: false, message: '上游连续 90 秒没有任何响应，已中断（可重试，或检查透明代理/模型服务状态）' };
       return { ok: false, message: '无法连接你的透明代理（检查地址是否正确、Worker 是否已部署）' };
     }
+    if (!onDelta) disarmIdle(); // 非流式在下方整段读取，仍有浏览器默认超时兜底；流式则继续由读循环喂狗
 
     // 流式：ReadableStream 逐块解析上游 SSE，提取 delta.content 即时回调
     if (onDelta && resp.ok && resp.body && typeof resp.body.getReader === 'function') {
@@ -297,6 +387,7 @@
           if (rd.done) break;
           var chunk = dec.decode(rd.value, { stream: true });
           if (!chunk) continue;
+          armIdle();   // 有字节流动即重置空闲看门狗
           raw += chunk;
           sseBuf += chunk;
           var nl;
@@ -316,7 +407,7 @@
             if (delta) { text += delta; sawDelta = true; onDelta(delta); }
           }
         }
-        if (sawDelta) return { ok: true, text: text };
+        if (sawDelta) { disarmIdle(); return { ok: true, text: text }; }
         // 收到 200 但没有任何 content 增量：上游不支持流式（整段 JSON），往下按整段解析
         if (raw.indexOf('"reasoning_content"') !== -1) {
           return { ok: false, message: '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens' };
@@ -334,6 +425,8 @@
         }
         return { ok: false, message: 'AI 返回了空内容', empty: true };
       } catch (e) {
+        disarmIdle();
+        if (idleFired) return { ok: false, message: '上游连续 90 秒没有任何响应，已中断（可重试，或检查透明代理/模型服务状态）' };
         return { ok: false, message: '读取流式响应失败：' + String(e.message || e) };
       }
     }
