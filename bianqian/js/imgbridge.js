@@ -2,7 +2,7 @@
  * 便签↔图床联动桥（唯一联动入口）
  * 流程：同意检查 → 上传到图床「便签」夹 → 永久分享 → 组 i.php 直链
  * 三入口汇入本模块：编辑器粘贴(PC) / 编辑器「🖼图片」按钮(三端) / AI 对话框粘贴+🖼按钮
- * 依赖：index.php 注入 window.IMG_BRIDGE = { tuchangBase, policyVer, policyHtml }；app.js 注入 toast
+ * 依赖：index.php 注入 JSON 数据块 #imgBridgeCfg = { tuchangBase, policyVer, policyHtml }（CSP 禁内联脚本）；app.js 解析后经 init 注入
  */
 var ImgBridge = (function () {
     'use strict';
