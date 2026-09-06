@@ -415,9 +415,10 @@ function startSecureSession() {
     ));
     ini_set('session.gc_maxlifetime', '86400'); // 登录态服务端 24H（滑动）
     session_start();
-    // 账号统一过渡：无条件清除旧 host-only 会话 Cookie 残留（它排在父域 Cookie 前被 PHP 优先读取，
+    // 账号统一过渡：清除旧 host-only 会话 Cookie 残留（它排在父域 Cookie 前被 PHP 优先读取，
     // 指向的却是迁移/重置前的旧会话——不清则老用户登录死循环）。已登录则同时重发父域 Cookie。
-    if (isset($_COOKIE[session_name()])) {
+    // 父域为空（localhost / IP 直连）时会话 Cookie 本就是 host-only，清理会误删活会话 → 登录弹回死循环，必须跳过。
+    if (isset($_COOKIE[session_name()]) && siteParentDomain() !== '') {
         setcookie(session_name(), '', array(
             'expires' => time() - 3600, 'path' => '/',
             'secure' => !SUITE_LOCAL_HTTP, 'httponly' => true, 'samesite' => 'Lax'
