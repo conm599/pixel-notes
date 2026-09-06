@@ -1288,3 +1288,78 @@ body.marquee-selecting .note-card, body.marquee-selecting .folder-card { cursor:
   color: #4af0ff;
   cursor: help;
 }
+
+/* ============ 便签↔图床联动（imgbridge） ============ */
+.imgbridge-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 20, 0.78);
+  z-index: 21000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.imgbridge-modal {
+  background: var(--bg-panel, #12122a);
+  border: 2px solid var(--border-glow, #4a4aff);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.6);
+  max-width: 460px;
+  width: 100%;
+  max-height: 86vh;
+  overflow: auto;
+  padding: 14px;
+  image-rendering: pixelated;
+}
+.imgbridge-title {
+  font-family: var(--font-main);
+  font-size: 11px;
+  color: var(--accent, #ff6b9d);
+  margin-bottom: 10px;
+  letter-spacing: 1px;
+}
+.imgbridge-body {
+  font-size: 13px;
+  color: var(--text-primary, #e8e8ff);
+  line-height: 1.7;
+}
+.imgbridge-body ul { margin: 6px 0 6px 18px; padding: 0; }
+.imgbridge-body li { margin: 4px 0; }
+.imgbridge-body b { color: var(--note-yellow, #ffd866); }
+.imgbridge-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.imgbridge-btns button {
+  font-family: var(--font-main);
+  font-size: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: var(--bg-card, #1a1a3e);
+  color: var(--text-primary, #e8e8ff);
+  border: 2px solid var(--border-color, #2a2a5a);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+.imgbridge-btns button:active { transform: translate(2px, 2px); box-shadow: none; }
+.imgbridge-btns button.ib-ok { border-color: var(--accent, #ff6b9d); color: var(--accent, #ff6b9d); }
+.imgbridge-btns button.ib-never { border-color: var(--danger, #ff4466); color: var(--danger, #ff4466); }
+/* AI 对话框动态附件按钮 */
+.imgbridge-attach {
+  display: inline-block;
+  margin: 4px 0 0 2px;
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--bg-card, #1a1a3e);
+  color: var(--accent2, #4af0ff);
+  border: 2px solid var(--accent2, #4af0ff);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+.imgbridge-attach:active { transform: translate(2px, 2px); box-shadow: none; }
+/* 正文里的图床图片（已有 .md-img 基础样式，这里补联动图一致性） */
+.md-body img.md-img { max-width: 100%; }
+@media (max-width: 480px) {
+  .imgbridge-btns button { flex: 1 1 100%; }
+}

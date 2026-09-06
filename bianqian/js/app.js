@@ -472,7 +472,8 @@
       ['☑', 'task', '任务 - [ ] '],
       ['❝', 'quote', '引用 > '],
       ['🔗', 'link', '链接 [文字](网址)'],
-      ['🖼', 'img', '图片 ![描述](网址)']
+      ['🖼', 'img', '图片 ![描述](网址)'],
+      ['📤', 'imgup', '上传图片到图床（自动转直链；粘贴图片同样生效）']
     ];
     defs.forEach(function (d) {
       var b = mkBtn(d[0], d[2]);
@@ -493,6 +494,18 @@
           case 'quote': linePrefix(ta, '> '); break;
           case 'link': surround(ta, '[', '](https://)'); break;
           case 'img': surround(ta, '![', '](https://)'); break;
+          case 'imgup':
+            // 便签↔图床联动：选图上传 → 自动转直链（三端同链路，含手机相册）
+            if (typeof ImgBridge === 'undefined') { showToast('❌ 图床联动模块未加载', 'error'); break; }
+            var up = document.createElement('input');
+            up.type = 'file';
+            up.accept = 'image/*';
+            up.addEventListener('change', function () {
+              if (!up.files || !up.files[0]) return;
+              ImgBridge.insert(ta, up.files[0]);
+            });
+            up.click();
+            break;
         }
       });
       bar.appendChild(b);
@@ -729,6 +742,11 @@
   var saveBusy = false; // 防重复提交锁：网络慢时连点/误点只发一次请求
   btnSaveNew.addEventListener('click', async function () {
     if (saveBusy) return;
+    // 便签↔图床联动：图片上传进行中禁止保存（防占位符落库）
+    if (typeof ImgBridge !== 'undefined' && ImgBridge.isBusy()) {
+      showToast('⏳ 图片还在上传到图床，稍等一下喵', 'error');
+      return;
+    }
     var title = newTitle.value.trim();
     var content = newContent.value.trim();
 
@@ -3192,6 +3210,12 @@
 
   var btnTutorial = document.getElementById('btnTutorial');
   if (btnTutorial) btnTutorial.addEventListener('click', openTutorial);
+  // 便签↔图床联动：设置入口（查看/修改同意状态）
+  var btnImgBridge = document.getElementById('btnImgBridge');
+  if (btnImgBridge) btnImgBridge.addEventListener('click', function () {
+    if (typeof ImgBridge === 'undefined') { showToast('❌ 图床联动模块未加载', 'error'); return; }
+    ImgBridge.manage();
+  });
 
   // ============== 渲染强调色自定义（设置菜单入口，存 localStorage） ==============
   var MD_COLORS_KEY = 'pixel_notes_md_colors';
@@ -3618,6 +3642,16 @@
     var m = location.hash.match(/^#folder=(\d+)$/);
     if (m) currentFolderId = parseInt(m[1], 10);
   })();
+  // 便签↔图床联动初始化（配置由 index.php 注入：tuchangBase / policyHtml / policyVer）
+  if (typeof ImgBridge !== 'undefined' && window.IMG_BRIDGE) {
+    ImgBridge.init({
+      tuchangBase: window.IMG_BRIDGE.tuchangBase,
+      notesApi: 'api/notes.php',
+      policyHtml: window.IMG_BRIDGE.policyHtml,
+      policyVer: window.IMG_BRIDGE.policyVer,
+      toast: showToast
+    });
+  }
   loadFolders().then(function () { loadNotes(); checkPendingClassify(); });
   PixelSelection.init({
     notesGrid: notesGrid,
