@@ -113,8 +113,9 @@ session_set_cookie_params(array(
     'secure'   => !TAWA_LOCAL_HTTP,
     'domain'   => cookieParentDomain() // 动态父域：自动适配第二域名
 ));
-// 账号统一过渡：无条件清除 host-only 会话 Cookie 残留（图床会话依赖父域 Cookie，host-only 旧 Cookie 排前会被优先误读）
-if (isset($_COOKIE[session_name()])) {
+// 账号统一过渡：清除 host-only 会话 Cookie 残留（图床会话依赖父域 Cookie，host-only 旧 Cookie 排前会被优先误读）
+// 父域为空（localhost / IP 直连）时会话 Cookie 本就是 host-only，清理会误删活会话，必须跳过。
+if (isset($_COOKIE[session_name()]) && cookieParentDomain() !== '') {
     setcookie(session_name(), '', array(
         'expires' => time() - 3600, 'path' => '/',
         'secure' => !TAWA_LOCAL_HTTP, 'httponly' => true, 'samesite' => 'Lax'

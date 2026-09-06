@@ -275,7 +275,8 @@ try {
         $_SESSION['user_id'] = (int)$user['id'];
         $_SESSION['username'] = $user['username'];
         // 账号统一过渡：清除可能残留的旧 host-only 会话 Cookie（与父域新 Cookie 并存会让 PHP 读到旧会话）
-        if (isset($_COOKIE['PHPSESSID'])) {
+        // 父域为空（localhost / IP 直连）时新会话 Cookie 本就是 host-only，删除会清掉刚发的登录态 → 登录弹回，必须跳过。
+        if (isset($_COOKIE['PHPSESSID']) && siteParentDomain() !== '') {
             setcookie('PHPSESSID', '', array('expires' => time() - 3600, 'path' => '/', 'secure' => true, 'httponly' => true, 'samesite' => 'Lax'));
         }
 
