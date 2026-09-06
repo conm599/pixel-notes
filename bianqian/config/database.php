@@ -18,6 +18,9 @@ function suite_cfg($key, $default) {
     return isset($GLOBALS['SUITE_CFG'][$key]) && $GLOBALS['SUITE_CFG'][$key] !== '' ? $GLOBALS['SUITE_CFG'][$key] : $default;
 }
 
+// [本地开发] PSU_LOCAL_HTTP=1（php -S http 环境）：Cookie secure 放宽、siblingUrl 走 http；生产不设该变量零影响
+define('SUITE_LOCAL_HTTP', getenv('PSU_LOCAL_HTTP') === '1');
+
 // DB 凭证：环境变量 PSU_*/PIXEL_* > suite-config.php（/admini 面板管理）> 默认值
 define('DB_HOST', suite_cfg('bianqian_db_host', 'localhost'));
 define('DB_PORT', suite_cfg('bianqian_db_port', '3306'));
@@ -380,7 +383,7 @@ function siteParentDomain() {
 function siblingUrl($want, $path) {
     $cfg = suite_cfg($want . '_url', '');
     if ($cfg !== '') return rtrim($cfg, '/') . $path;
-    return 'https://' . siblingHost($want) . $path;
+    return (SUITE_LOCAL_HTTP ? 'http' : 'https') . '://' . siblingHost($want) . $path;
 }
 function siblingHost($want) {
     // 1) 显式配置优先（/admini 面板 bianqian_host/tuchang_host，公共部署者的任意子域名）
@@ -399,7 +402,7 @@ function startSecureSession() {
         'lifetime' => 86400,
         'path' => '/',
         'domain' => siteParentDomain(),   // 动态父域：自动适配第二域名（tuchang 图床同会话）
-        'secure' => true,      // 站点已强制 HTTPS（301）
+        'secure' => !SUITE_LOCAL_HTTP,    // 站点已强制 HTTPS（301）；本地 http 开发放宽
         'httponly' => true,    // JS 无法读取会话 Cookie
         'samesite' => 'Lax',   // 缓解 CSRF
     ));
@@ -410,12 +413,12 @@ function startSecureSession() {
     if (isset($_COOKIE[session_name()])) {
         setcookie(session_name(), '', array(
             'expires' => time() - 3600, 'path' => '/',
-            'secure' => true, 'httponly' => true, 'samesite' => 'Lax'
+            'secure' => !SUITE_LOCAL_HTTP, 'httponly' => true, 'samesite' => 'Lax'
         )); // 清 host-only 残留（不影响 domain=.naxid.top 的父域 Cookie）
         if (!empty($_SESSION['user_id'])) {
             setcookie(session_name(), session_id(), array(
                 'expires' => time() + 86400, 'path' => '/', 'domain' => siteParentDomain(),
-                'secure' => true, 'httponly' => true, 'samesite' => 'Lax'
+                'secure' => !SUITE_LOCAL_HTTP, 'httponly' => true, 'samesite' => 'Lax'
             ));
         }
     }
