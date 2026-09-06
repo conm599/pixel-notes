@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=59">
+    <link rel="stylesheet" href="css/pixel.css?v=60">
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
@@ -38,6 +38,7 @@ if (!isset($_SESSION['user_id'])) {
                 <button type="button" id="btnSettings" class="btn btn-outline btn-xs" title="设置">⚙️ 设置</button>
                 <div id="settingsMenu" class="settings-menu" style="display:none;">
                     <button type="button" id="btnTutorial" class="settings-menu-item">📖 新手教程</button>
+                    <button type="button" id="btnImgBridge" class="settings-menu-item">🖼 图床图片</button>
                     <button type="button" id="btnMdColors" class="settings-menu-item">🎨 渲染颜色</button>
                     <a href="https://github.com/conm599/pixel-notes" target="_blank" rel="noopener" class="settings-menu-item">⭐ GitHub 开源地址</a>
                     <button type="button" id="btnChangePass" class="settings-menu-item">🔑 更改密码</button>
@@ -119,6 +120,12 @@ if (!isset($_SESSION['user_id'])) {
     <script src="js/Sortable.min.js"></script>
     <script src="js/ai-direct.js?v=15"></script>
     <script src="js/selection.js?v=5"></script>
-    <script src="js/app.js?v=79"></script>
+    <script>window.IMG_BRIDGE = {
+        tuchangBase: <?php echo json_encode(siblingUrl('tuchang', '/'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES); ?>,
+        policyVer: <?php echo (int)suite_cfg('img_policy_ver', 1); ?>,
+        policyHtml: <?php echo json_encode('<p>图片将上传到你的图床账户「便签」文件夹：</p><ul><li>上传后自动转为<b>可公开访问</b>的图片链接（拿到链接即可查看）</li><li>图片随便签存续；<b>从便签删除后，图床仍保留 30 天</b>供反悔，到期自动清理</li><li>需要长期保留的图片，请到图床把它改为「永久」或自定义时长</li><li>在图床删除图片后，便签中该处将显示占位图</li><li>单张 ≤10MB（自动压缩为 WebP），占用图床配额</li><li>禁止上传违法违规内容；可在图床随时管理或删除</li></ul>', JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE); ?>;
+    };</script>
+    <script src="js/imgbridge.js?v=1"></script>
+    <script src="js/app.js?v=80"></script>
 </body>
 </html>
