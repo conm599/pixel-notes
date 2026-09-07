@@ -47,11 +47,13 @@ pixel-suite/
 - adminws.php 密令门禁逻辑**一行不动**
 - 便签协议 protocol.md 是唯一事实源；改 css/js 必须 bump 引用 `?v=`（VPS HK 缓存 8H），HTML 必须 no-store
 
-## 现行版本号
+## 现行版本号 (v8.2)
 
-- 便签：md.js v41 / pixel.css v59 / app.js v78 / selection.js v5 / ai-direct.js v15 / tutorial-data v1
-- 图床：pixel-blue.css v13 / dashboard.js v21 / view.js v3 / spa.js v7 / api.php（含 folder 系列与 GET 白名单）
-- 配置：/admini/ 面板（suite-config.php 22 项；env PSU_* > 文件 > 代码默认）
+- 便签：md.js v41 / pixel.css v60 / app.js v85 / selection.js v5 / ai-direct.js v16 / tutorial-data v1 / imgbridge.js v3
+- 图床：pixel-blue.css v13 / dashboard.js v25 / view.js v3 / spa.js v8 / api.php（含 folder 系列与 GET 白名单 + 联动 imgbridge 内部端点）
+- 配置：/admini/ 面板（suite-config.php 22 项 + internal_key；env PSU_* > 文件 > 代码默认）
+- 协议：protocol.md v9（SEARCH 锚点最小化 + `<<<SKIP>>>` 省略锚 + SSE 心跳 + 直连 90s 看门狗）
+- 联动：便签↔图床图片联动（粘贴/选中直接上图床）已上线，双 Cookie 抢救 + 401 复核 + 审计日志
 
 ## 部署
 
