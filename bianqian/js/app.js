@@ -61,7 +61,8 @@
       });
       var j = null;
       try { j = JSON.parse(await r.text()); } catch (e) { j = null; }
-      if (j && j.success) { showToast('🔐 登录状态有效（刚才是瞬时故障），请重试刚才的操作', 'info'); return true; }
+      // 注意：check 未登录时也返回 success:true（logged_in:false），判据必须是 logged_in
+      if (j && j.success && j.logged_in) { showToast('🔐 登录状态有效（刚才是瞬时故障），请重试刚才的操作', 'info'); return true; }
     } catch (e) { /* 复核失败按真失效处理 */ }
     window.location.href = 'login.php';
     return false;
