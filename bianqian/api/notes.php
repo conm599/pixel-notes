@@ -25,6 +25,15 @@ function jsonResponse($data, $code = 200) {
 
 try {
     if (!isset($_SESSION['user_id'])) {
+        // 登录态取证（同 ai.php [ai401]）：会话文件死状进 nginx error log，便于回溯「莫名弹回登录」
+        $sessPath = ini_get('session.save_path') ?: sys_get_temp_dir();
+        $sessFile = $sessPath . '/sess_' . session_id();
+        $st = @is_file($sessFile) ? @filesize($sessFile) : -1;
+        error_log('[notes401] sid=' . session_id()
+            . ' cookie=' . (isset($_COOKIE[session_name()]) ? '1' : '0')
+            . ' sessBytes=' . $st
+            . ' keys=' . implode('|', array_keys($_SESSION ?: array()))
+            . ' ua=' . (isset($_SERVER['HTTP_USER_AGENT']) ? substr($_SERVER['HTTP_USER_AGENT'], 0, 40) : '-'));
         jsonResponse(array('success' => false, 'message' => '请先登录'), 401);
     }
 
