@@ -415,6 +415,7 @@ function startSecureSession() {
     ));
     ini_set('session.gc_maxlifetime', '86400'); // 登录态服务端 24H（滑动）
     session_start();
+    pnRescueDoubleCookie();
     // 账号统一过渡：清除旧 host-only 会话 Cookie 残留（它排在父域 Cookie 前被 PHP 优先读取，
     // 指向的却是迁移/重置前的旧会话——不清则老用户登录死循环）。已登录则同时重发父域 Cookie。
     // 父域为空（localhost / IP 直连）时会话 Cookie 本就是 host-only，清理会误删活会话 → 登录弹回死循环，必须跳过。
@@ -431,6 +432,36 @@ function startSecureSession() {
         }
     }
 }
+
+// 双 Cookie 抢救（治手机 WebView / 多标签并发竞态）：浏览器同时持有「host-only 旧 Cookie（空会话）
+//  + 父域新 Cookie（真登录）」，PHP 按头部顺序优先取 host-only 那个 → 读到空会话 → 401 弹登录。
+// 修正：当前会话无 user_id 时，扫描 Cookie 头里所有 PHPSESSID 候选，
+// 找一个会话文件存在且非空且含 user_id|i: 的，切换会话 id 再开一次。
+// 数据不复制不合并，只换指针；无候选时静默不动（行为与旧逻辑一致，对无此问题的浏览器零影响）。
+function pnRescueDoubleCookie() {
+    if (!empty($_SESSION['user_id'])) return;
+    if (empty($_SERVER['HTTP_COOKIE']) || strpos($_SERVER['HTTP_COOKIE'], 'PHPSESSID=') === false) return;
+    if (!preg_match_all('/PHPSESSID\s*=\s*([A-Za-z0-9,-]{20,128})/', $_SERVER['HTTP_COOKIE'], $mm)) return;
+    $candidates = array_unique($mm[1]);
+    if (count($candidates) < 2) return;
+    $cur = session_id();
+    $dir = session_save_path();
+    if ($dir === '' || $dir === false) $dir = sys_get_temp_dir();
+    foreach ($candidates as $alt) {
+        if ($alt === $cur) continue;
+        $f = rtrim($dir, '/') . '/sess_' . $alt;
+        if (!is_file($f)) continue;
+        $content = @file_get_contents($f);
+        if ($content === false || $content === '') continue;
+        if (strpos($content, 'user_id|i:') === false && strpos($content, 'uid|i:') === false) continue;
+        session_write_close();
+        session_id($alt);
+        session_start();
+        error_log('[sess-rescue] 双Cookie抢救切换 → ' . $alt . ' uid=' . (isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : (isset($_SESSION['uid']) ? (int)$_SESSION['uid'] : 0)));
+        return;
+    }
+}
+
 
 /**
  * 客户端 IP

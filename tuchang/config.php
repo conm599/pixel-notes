@@ -124,15 +124,43 @@ if (isset($_COOKIE[session_name()]) && cookieParentDomain() !== '') {
 if (defined('TAWA_NO_SESSION')) {
     session_cache_limiter('');
     // 图片出口：仅恢复已有会话（不新建，避免 Set-Cookie 破坏浏览器缓存）
-    if (isset($_COOKIE[session_name()])) session_start();
+    if (isset($_COOKIE[session_name()])) { session_start(); tawaRescueDoubleCookie(); }
 } else {
     session_start();
+    tawaRescueDoubleCookie();
     // 滑动续期：已登录每次请求重发 24H Cookie（否则固定 24H 后即使一直活跃也会掉线）
     if (!empty($_SESSION['uid'])) {
         setcookie(session_name(), session_id(), array(
             'expires' => time() + 86400, 'path' => '/', 'domain' => cookieParentDomain(),
             'secure' => !TAWA_LOCAL_HTTP, 'httponly' => true, 'samesite' => 'Lax'
         ));
+    }
+}
+
+// 双 Cookie 抢救（与便签同源）：手机 WebView 或旧 host-only Cookie 残留 + 父域 Cookie 并存时，
+// PHP 按头部顺序宿主优先 → 拿到空会话 → 上传时「请先登录」。修正：无身份时扫描 Cookie 头
+// 全部 PHPSESSID 候选，命中一个含 uid|i: 或 user_id|i: 的会话文件就切换过去。
+function tawaRescueDoubleCookie() {
+    if (!empty($_SESSION['uid']) || !empty($_SESSION['user_id'])) return;
+    if (empty($_SERVER['HTTP_COOKIE']) || strpos($_SERVER['HTTP_COOKIE'], 'PHPSESSID=') === false) return;
+    if (!preg_match_all('/PHPSESSID\s*=\s*([A-Za-z0-9,-]{20,128})/', $_SERVER['HTTP_COOKIE'], $mm)) return;
+    $candidates = array_unique($mm[1]);
+    if (count($candidates) < 2) return;
+    $cur = session_id();
+    $dir = session_save_path();
+    if ($dir === '' || $dir === false) $dir = sys_get_temp_dir();
+    foreach ($candidates as $alt) {
+        if ($alt === $cur) continue;
+        $f = rtrim($dir, '/') . '/sess_' . $alt;
+        if (!is_file($f)) continue;
+        $content = @file_get_contents($f);
+        if ($content === false || $content === '') continue;
+        if (strpos($content, 'uid|i:') === false && strpos($content, 'user_id|i:') === false) continue;
+        session_write_close();
+        session_id($alt);
+        session_start();
+        error_log('[sess-rescue] 图床双Cookie切换 → ' . $alt);
+        return;
     }
 }
 
