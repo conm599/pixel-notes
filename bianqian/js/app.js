@@ -520,9 +520,13 @@
             var up = document.createElement('input');
             up.type = 'file';
             up.accept = 'image/*';
+            // 手机 Chrome：未挂载到 DOM 的 <input type=file> 偶发 click 不振起原生选择器 → 挂上再点
+            up.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;';
+            document.body.appendChild(up);
             up.addEventListener('change', function () {
-              if (!up.files || !up.files[0]) return;
-              ImgBridge.insert(ta, up.files[0]);
+              var f = up.files && up.files[0];
+              up.remove();
+              if (f) ImgBridge.insert(ta, f);
             });
             up.click();
             break;

@@ -278,9 +278,13 @@ var ImgBridge = (function () {
             var inp = document.createElement('input');
             inp.type = 'file';
             inp.accept = 'image/*';
+            // 手机 Chrome：未挂载到 DOM 的 <input type=file> 偶发 click 不振起原生选择器 → 挂上再点
+            inp.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;';
+            document.body.appendChild(inp);
             inp.addEventListener('change', function () {
-                if (!inp.files || !inp.files[0]) return;
-                insertPicking(ta, inp.files[0]);
+                var f = inp.files && inp.files[0];
+                inp.remove();
+                if (f) insertPicking(ta, f);
             });
             inp.click();
         });
