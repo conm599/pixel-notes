@@ -18,6 +18,8 @@ if (!isset($_SESSION['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
     <link rel="stylesheet" href="css/pixel.css?v=60">
+    <link rel="stylesheet" href="css/icons.css?v=1">
+    <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
@@ -28,25 +30,26 @@ if (!isset($_SESSION['user_id'])) {
             <span class="icon">🎮</span> PIXEL NOTES
         </a>
         <div class="navbar-user">
-            <span>👤 <?= htmlspecialchars($_SESSION['username']) ?></span>
+            <span><i class="ic ic-user"></i> <?= htmlspecialchars($_SESSION['username']) ?></span>
             <?php if (isAdminUser()): ?>
-                <a href="admin.php" class="btn btn-outline btn-xs">⚙️ 管理</a>
+                <a href="admin.php" class="btn btn-outline btn-xs"><i class="ic ic-gear"></i> 管理</a>
             <?php endif; ?>
-            <a href="tts.php" class="btn btn-outline btn-xs">🔊 朗读</a>
-            <a href="<?php echo htmlspecialchars(siblingUrl('tuchang', '/dashboard.php'), ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-outline btn-xs" target="_blank" rel="noopener">🖼 图床</a>
+            <a href="tts.php" class="btn btn-outline btn-xs"><i class="ic ic-speaker"></i> 朗读</a>
+            <a href="<?php echo htmlspecialchars(siblingUrl('tuchang', '/dashboard.php'), ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-outline btn-xs" target="_blank" rel="noopener"><i class="ic ic-image"></i> 图床</a>
             <div class="nav-settings-wrap">
-                <button type="button" id="btnSettings" class="btn btn-outline btn-xs" title="设置">⚙️ 设置</button>
+                <button type="button" id="btnSettings" class="btn btn-outline btn-xs" title="设置"><i class="ic ic-gear"></i> 设置</button>
                 <div id="settingsMenu" class="settings-menu" style="display:none;">
                     <button type="button" id="btnTutorial" class="settings-menu-item">📖 新手教程</button>
                     <button type="button" id="btnImgBridge" class="settings-menu-item">🖼 图床图片</button>
                     <button type="button" id="btnMdColors" class="settings-menu-item">🎨 渲染颜色</button>
+                    <button type="button" id="btnIconset" class="settings-menu-item">图标风格：混合</button>
                     <a href="https://github.com/conm599/pixel-notes" target="_blank" rel="noopener" class="settings-menu-item">⭐ GitHub 开源地址</a>
                     <button type="button" id="btnChangePass" class="settings-menu-item">🔑 更改密码</button>
                     <button type="button" id="btnDeleteAccount" class="settings-menu-item settings-menu-danger">🗑 注销账号</button>
                 </div>
             </div>
             <form method="post" action="logout.php" style="display:inline;margin:0;">
-                <button type="submit" class="btn btn-outline btn-xs">退出</button>
+                <button type="submit" class="btn btn-outline btn-xs"><i class="ic ic-exit"></i> 退出</button>
             </form>
         </div>
     </nav>
@@ -64,9 +67,9 @@ if (!isset($_SESSION['user_id'])) {
                     <input type="text" id="searchInput" class="search-input" placeholder="🔍 搜索便签 / 文件夹..." autocomplete="off">
                     <div id="searchPanel" class="search-panel" style="display:none"></div>
                 </div>
-                <button id="btnAiOrganize" class="btn btn-outline btn-sm">✨ AI 整理</button>
-                <button id="btnNewFolder" class="btn btn-outline btn-sm">📁 新建文件夹</button>
-                <button id="btnNewNote" class="btn btn-primary btn-sm">＋ 新建便签</button>
+                <button id="btnAiOrganize" class="btn btn-outline btn-sm"><i class="ic ic-sparkle"></i> AI 整理</button>
+                <button id="btnNewFolder" class="btn btn-outline btn-sm"><i class="ic ic-folder"></i> 新建文件夹</button>
+                <button id="btnNewNote" class="btn btn-primary btn-sm"><i class="ic ic-plus-pink"></i> 新建便签</button>
             </div>
         </div>
 
@@ -97,7 +100,7 @@ if (!isset($_SESSION['user_id'])) {
                     </div>
                 </div>
                 <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;">
-                    <button id="btnAiEdit" class="btn btn-outline btn-sm btn-ai" type="button">🤖 AI</button>
+                    <button id="btnAiEdit" class="btn btn-outline btn-sm btn-ai" type="button"><i class="ic ic-sparkle"></i> AI</button>
                     <button id="btnPreviewNew" class="btn btn-outline btn-sm" type="button">👁 预览</button>
                     <button id="btnSaveNew" class="btn btn-primary btn-sm" type="button">💾 保存</button>
                     <button id="btnCancelNew" class="btn btn-danger btn-sm" type="button">取消</button>

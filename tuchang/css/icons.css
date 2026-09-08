@@ -1,0 +1,34 @@
+/* Pixel Suite 图标系统 v1
+   依赖 <html data-iconset="mix|v1|v2">（缺省 = mix），由 js/iconset.js 维护；
+   资源 assets/icons/{v1,v2}/*.webp 透明像素图，改图标须 bump 本文件 ?v= */
+.ic{display:inline-block;width:16px;height:16px;background:center/contain no-repeat;image-rendering:pixelated;vertical-align:-3px}
+.ic-22{width:22px;height:22px;vertical-align:-4px}
+.ic-lg{width:48px;height:48px;vertical-align:middle}
+
+/* —— 默认混合：设置/AI 线稿，其余实心 —— */
+.ic-user{background-image:url(../assets/icons/v1/user.32.webp)}
+.ic-gear{background-image:url(../assets/icons/v2/gear.32.webp)}
+.ic-speaker{background-image:url(../assets/icons/v1/speaker.32.webp)}
+.ic-image{background-image:url(../assets/icons/v1/image.32.webp)}
+.ic-exit{background-image:url(../assets/icons/v1/exit.32.webp)}
+.ic-sparkle{background-image:url(../assets/icons/v2/sparkle.32.webp)}
+.ic-folder{background-image:url(../assets/icons/v1/folder.32.webp)}
+.ic-plus{background-image:url(../assets/icons/v1/plus.32.webp)}
+.ic-plus-pink{background-image:url(../assets/icons/v1/plus_pink.32.webp)}
+.ic-image.ic-lg{background-image:url(../assets/icons/v1/image.128.webp)}
+
+/* —— 用户选「经典实心」全套 v1 —— */
+html[data-iconset="v1"] .ic-gear{background-image:url(../assets/icons/v1/gear.32.webp)}
+html[data-iconset="v1"] .ic-sparkle{background-image:url(../assets/icons/v1/sparkle.32.webp)}
+
+/* —— 用户选「线稿」全套 v2 —— */
+html[data-iconset="v2"] .ic-user{background-image:url(../assets/icons/v2/user.32.webp)}
+html[data-iconset="v2"] .ic-gear{background-image:url(../assets/icons/v2/gear.32.webp)}
+html[data-iconset="v2"] .ic-speaker{background-image:url(../assets/icons/v2/speaker.32.webp)}
+html[data-iconset="v2"] .ic-image{background-image:url(../assets/icons/v2/image.32.webp)}
+html[data-iconset="v2"] .ic-exit{background-image:url(../assets/icons/v2/exit.32.webp)}
+html[data-iconset="v2"] .ic-sparkle{background-image:url(../assets/icons/v2/sparkle.32.webp)}
+html[data-iconset="v2"] .ic-folder{background-image:url(../assets/icons/v2/folder.32.webp)}
+html[data-iconset="v2"] .ic-plus{background-image:url(../assets/icons/v2/plus.32.webp)}
+html[data-iconset="v2"] .ic-plus-pink{background-image:url(../assets/icons/v2/plus_pink.32.webp)}
+html[data-iconset="v2"] .ic-image.ic-lg{background-image:url(../assets/icons/v2/image.128.webp)}
