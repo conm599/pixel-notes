@@ -32,3 +32,89 @@ html[data-iconset="v2"] .ic-folder{background-image:url(../assets/icons/v2/folde
 html[data-iconset="v2"] .ic-plus{background-image:url(../assets/icons/v2/plus.32.webp)}
 html[data-iconset="v2"] .ic-plus-pink{background-image:url(../assets/icons/v2/plus_pink.32.webp)}
 html[data-iconset="v2"] .ic-image.ic-lg{background-image:url(../assets/icons/v2/image.128.webp)}
+
+/* —— 批量二：登录/卡片/工具/状态（默认 mix 用 v1）—— */
+.ic-lock{background-image:url(../assets/icons/v1/lock.32.webp)}
+.ic-mail{background-image:url(../assets/icons/v1/mail.32.webp)}
+.ic-play{background-image:url(../assets/icons/v1/play.32.webp)}
+.ic-book{background-image:url(../assets/icons/v1/book.32.webp)}
+.ic-palette{background-image:url(../assets/icons/v1/palette.32.webp)}
+.ic-star{background-image:url(../assets/icons/v1/star.32.webp)}
+.ic-key{background-image:url(../assets/icons/v1/key.32.webp)}
+.ic-trash{background-image:url(../assets/icons/v1/trash.32.webp)}
+.ic-pencil{background-image:url(../assets/icons/v1/pencil.32.webp)}
+.ic-link{background-image:url(../assets/icons/v1/link.32.webp)}
+.ic-pin{background-image:url(../assets/icons/v1/pin.32.webp)}
+.ic-home{background-image:url(../assets/icons/v1/home.32.webp)}
+.ic-eye{background-image:url(../assets/icons/v1/eye.32.webp)}
+.ic-save{background-image:url(../assets/icons/v1/save.32.webp)}
+.ic-search{background-image:url(../assets/icons/v1/search.32.webp)}
+.ic-note{background-image:url(../assets/icons/v1/note.32.webp)}
+.ic-upload{background-image:url(../assets/icons/v1/upload.32.webp)}
+.ic-download{background-image:url(../assets/icons/v1/download.32.webp)}
+.ic-back{background-image:url(../assets/icons/v1/back.32.webp)}
+.ic-close{background-image:url(../assets/icons/v1/close.32.webp)}
+.ic-copy{background-image:url(../assets/icons/v1/copy.32.webp)}
+.ic-scissors{background-image:url(../assets/icons/v1/scissors.32.webp)}
+.ic-paste{background-image:url(../assets/icons/v1/paste.32.webp)}
+.ic-checkall{background-image:url(../assets/icons/v1/checkall.32.webp)}
+.ic-ban{background-image:url(../assets/icons/v1/ban.32.webp)}
+.ic-box{background-image:url(../assets/icons/v1/box.32.webp)}
+.ic-recycle{background-image:url(../assets/icons/v1/recycle.32.webp)}
+.ic-plug{background-image:url(../assets/icons/v1/plug.32.webp)}
+.ic-send{background-image:url(../assets/icons/v1/send.32.webp)}
+.ic-mic{background-image:url(../assets/icons/v1/mic.32.webp)}
+.ic-subtitle{background-image:url(../assets/icons/v1/subtitle.32.webp)}
+.ic-film{background-image:url(../assets/icons/v1/film.32.webp)}
+.ic-music{background-image:url(../assets/icons/v1/music.32.webp)}
+.ic-cloud{background-image:url(../assets/icons/v1/cloud.32.webp)}
+.ic-skull{background-image:url(../assets/icons/v1/skull.32.webp)}
+.ic-gamepad{background-image:url(../assets/icons/v1/gamepad.32.webp)}
+.ic-grid{background-image:url(../assets/icons/v1/grid.32.webp)}
+.ic-save-pink{background-image:url(../assets/icons/v1/save_pink.32.webp)}
+.ic-play-pink{background-image:url(../assets/icons/v1/play_pink.32.webp)}
+.ic-key-pink{background-image:url(../assets/icons/v1/key_pink.32.webp)}
+.ic-upload-pink{background-image:url(../assets/icons/v1/upload_pink.32.webp)}
+
+/* —— 线稿全套补齐（批量二 v2）—— */
+html[data-iconset="v2"] .ic-lock{background-image:url(../assets/icons/v2/lock.32.webp)}
+html[data-iconset="v2"] .ic-mail{background-image:url(../assets/icons/v2/mail.32.webp)}
+html[data-iconset="v2"] .ic-play{background-image:url(../assets/icons/v2/play.32.webp)}
+html[data-iconset="v2"] .ic-book{background-image:url(../assets/icons/v2/book.32.webp)}
+html[data-iconset="v2"] .ic-palette{background-image:url(../assets/icons/v2/palette.32.webp)}
+html[data-iconset="v2"] .ic-star{background-image:url(../assets/icons/v2/star.32.webp)}
+html[data-iconset="v2"] .ic-key{background-image:url(../assets/icons/v2/key.32.webp)}
+html[data-iconset="v2"] .ic-trash{background-image:url(../assets/icons/v2/trash.32.webp)}
+html[data-iconset="v2"] .ic-pencil{background-image:url(../assets/icons/v2/pencil.32.webp)}
+html[data-iconset="v2"] .ic-link{background-image:url(../assets/icons/v2/link.32.webp)}
+html[data-iconset="v2"] .ic-pin{background-image:url(../assets/icons/v2/pin.32.webp)}
+html[data-iconset="v2"] .ic-home{background-image:url(../assets/icons/v2/home.32.webp)}
+html[data-iconset="v2"] .ic-eye{background-image:url(../assets/icons/v2/eye.32.webp)}
+html[data-iconset="v2"] .ic-save{background-image:url(../assets/icons/v2/save.32.webp)}
+html[data-iconset="v2"] .ic-search{background-image:url(../assets/icons/v2/search.32.webp)}
+html[data-iconset="v2"] .ic-note{background-image:url(../assets/icons/v2/note.32.webp)}
+html[data-iconset="v2"] .ic-upload{background-image:url(../assets/icons/v2/upload.32.webp)}
+html[data-iconset="v2"] .ic-download{background-image:url(../assets/icons/v2/download.32.webp)}
+html[data-iconset="v2"] .ic-back{background-image:url(../assets/icons/v2/back.32.webp)}
+html[data-iconset="v2"] .ic-close{background-image:url(../assets/icons/v2/close.32.webp)}
+html[data-iconset="v2"] .ic-copy{background-image:url(../assets/icons/v2/copy.32.webp)}
+html[data-iconset="v2"] .ic-scissors{background-image:url(../assets/icons/v2/scissors.32.webp)}
+html[data-iconset="v2"] .ic-paste{background-image:url(../assets/icons/v2/paste.32.webp)}
+html[data-iconset="v2"] .ic-checkall{background-image:url(../assets/icons/v2/checkall.32.webp)}
+html[data-iconset="v2"] .ic-ban{background-image:url(../assets/icons/v2/ban.32.webp)}
+html[data-iconset="v2"] .ic-box{background-image:url(../assets/icons/v2/box.32.webp)}
+html[data-iconset="v2"] .ic-recycle{background-image:url(../assets/icons/v2/recycle.32.webp)}
+html[data-iconset="v2"] .ic-plug{background-image:url(../assets/icons/v2/plug.32.webp)}
+html[data-iconset="v2"] .ic-send{background-image:url(../assets/icons/v2/send.32.webp)}
+html[data-iconset="v2"] .ic-mic{background-image:url(../assets/icons/v2/mic.32.webp)}
+html[data-iconset="v2"] .ic-subtitle{background-image:url(../assets/icons/v2/subtitle.32.webp)}
+html[data-iconset="v2"] .ic-film{background-image:url(../assets/icons/v2/film.32.webp)}
+html[data-iconset="v2"] .ic-music{background-image:url(../assets/icons/v2/music.32.webp)}
+html[data-iconset="v2"] .ic-cloud{background-image:url(../assets/icons/v2/cloud.32.webp)}
+html[data-iconset="v2"] .ic-skull{background-image:url(../assets/icons/v2/skull.32.webp)}
+html[data-iconset="v2"] .ic-gamepad{background-image:url(../assets/icons/v2/gamepad.32.webp)}
+html[data-iconset="v2"] .ic-grid{background-image:url(../assets/icons/v2/grid.32.webp)}
+html[data-iconset="v2"] .ic-save-pink{background-image:url(../assets/icons/v2/save_pink.32.webp)}
+html[data-iconset="v2"] .ic-play-pink{background-image:url(../assets/icons/v2/play_pink.32.webp)}
+html[data-iconset="v2"] .ic-key-pink{background-image:url(../assets/icons/v2/key_pink.32.webp)}
+html[data-iconset="v2"] .ic-upload-pink{background-image:url(../assets/icons/v2/upload_pink.32.webp)}

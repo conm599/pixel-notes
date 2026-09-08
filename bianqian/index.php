@@ -18,7 +18,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
     <link rel="stylesheet" href="css/pixel.css?v=60">
-    <link rel="stylesheet" href="css/icons.css?v=1">
+    <link rel="stylesheet" href="css/icons.css?v=2">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -39,13 +39,13 @@ if (!isset($_SESSION['user_id'])) {
             <div class="nav-settings-wrap">
                 <button type="button" id="btnSettings" class="btn btn-outline btn-xs" title="设置"><i class="ic ic-gear"></i> 设置</button>
                 <div id="settingsMenu" class="settings-menu" style="display:none;">
-                    <button type="button" id="btnTutorial" class="settings-menu-item">📖 新手教程</button>
-                    <button type="button" id="btnImgBridge" class="settings-menu-item">🖼 图床图片</button>
-                    <button type="button" id="btnMdColors" class="settings-menu-item">🎨 渲染颜色</button>
+                    <button type="button" id="btnTutorial" class="settings-menu-item"><i class="ic ic-book"></i> 新手教程</button>
+                    <button type="button" id="btnImgBridge" class="settings-menu-item"><i class="ic ic-image"></i> 图床图片</button>
+                    <button type="button" id="btnMdColors" class="settings-menu-item"><i class="ic ic-palette"></i> 渲染颜色</button>
                     <button type="button" id="btnIconset" class="settings-menu-item">图标风格：混合</button>
-                    <a href="https://github.com/conm599/pixel-notes" target="_blank" rel="noopener" class="settings-menu-item">⭐ GitHub 开源地址</a>
-                    <button type="button" id="btnChangePass" class="settings-menu-item">🔑 更改密码</button>
-                    <button type="button" id="btnDeleteAccount" class="settings-menu-item settings-menu-danger">🗑 注销账号</button>
+                    <a href="https://github.com/conm599/pixel-notes" target="_blank" rel="noopener" class="settings-menu-item"><i class="ic ic-star"></i> GitHub 开源地址</a>
+                    <button type="button" id="btnChangePass" class="settings-menu-item"><i class="ic ic-key"></i> 更改密码</button>
+                    <button type="button" id="btnDeleteAccount" class="settings-menu-item settings-menu-danger"><i class="ic ic-trash"></i> 注销账号</button>
                 </div>
             </div>
             <form method="post" action="logout.php" style="display:inline;margin:0;">
@@ -59,7 +59,7 @@ if (!isset($_SESSION['user_id'])) {
         <!-- 工具栏 -->
         <div class="toolbar">
             <div class="toolbar-left">
-                <span class="toolbar-title" id="toolbarTitle">📝 我的便签</span>
+                <span class="toolbar-title" id="toolbarTitle"><i class="ic ic-note"></i> 我的便签</span>
                 <span class="folder-crumb" id="folderCrumb"></span>
             </div>
             <div class="toolbar-actions">
@@ -101,8 +101,8 @@ if (!isset($_SESSION['user_id'])) {
                 </div>
                 <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;">
                     <button id="btnAiEdit" class="btn btn-outline btn-sm btn-ai" type="button"><i class="ic ic-sparkle"></i> AI</button>
-                    <button id="btnPreviewNew" class="btn btn-outline btn-sm" type="button">👁 预览</button>
-                    <button id="btnSaveNew" class="btn btn-primary btn-sm" type="button">💾 保存</button>
+                    <button id="btnPreviewNew" class="btn btn-outline btn-sm" type="button"><i class="ic ic-eye"></i> 预览</button>
+                    <button id="btnSaveNew" class="btn btn-primary btn-sm" type="button"><i class="ic ic-save-pink"></i> 保存</button>
                     <button id="btnCancelNew" class="btn btn-danger btn-sm" type="button">取消</button>
                 </div>
             </div>
@@ -122,13 +122,13 @@ if (!isset($_SESSION['user_id'])) {
 
     <script src="js/Sortable.min.js"></script>
     <script src="js/ai-direct.js?v=16"></script>
-    <script src="js/selection.js?v=5"></script>
+    <script src="js/selection.js?v=6"></script>
     <!-- 联动配置以 JSON 数据块注入（CSP script-src 'self' 禁止内联可执行脚本，数据块不执行不受限）；app.js 解析后传给 ImgBridge -->
     <script type="application/json" id="imgBridgeCfg">{"tuchangBase": <?php echo json_encode(siblingUrl('tuchang', '/'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES); ?>,
         "policyVer": <?php echo (int)suite_cfg('img_policy_ver', 1); ?>,
         "policyHtml": <?php echo json_encode('<p>图片将上传到你的图床账户「便签」文件夹：</p><ul><li>上传后自动转为<b>可公开访问</b>的图片链接（拿到链接即可查看）</li><li>图片随便签存续；<b>从便签删除后，图床仍保留 30 天</b>供反悔，到期自动清理</li><li>需要长期保留的图片，请到图床把它改为「永久」或自定义时长</li><li>在图床删除图片后，便签中该处将显示占位图</li><li>单张 ≤10MB（自动压缩为 WebP），占用图床配额</li><li>禁止上传违法违规内容；可在图床随时管理或删除</li></ul>', JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE); ?>
     }</script>
-    <script src="js/imgbridge.js?v=3"></script>
-    <script src="js/app.js?v=85"></script>
+    <script src="js/imgbridge.js?v=4"></script>
+    <script src="js/app.js?v=86"></script>
 </body>
 </html>

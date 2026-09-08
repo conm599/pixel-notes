@@ -18,13 +18,15 @@ if (isset($_SESSION['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>注册 - Pixel Notes</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
+    <link rel="stylesheet" href="css/icons.css?v=2">
+    <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
 <body>
     <div class="auth-container">
         <div class="auth-box">
-            <h1>🎮<br>PIXEL NOTES</h1>
+            <h1><i class="ic ic-gamepad ic-22"></i><br>PIXEL NOTES</h1>
             <p class="subtitle">开始你的冒险！</p>
 
             <div id="errorMsg" class="error-msg" style="display:none;"></div>
@@ -61,7 +63,7 @@ if (isset($_SESSION['user_id'])) {
                     <input type="password" id="password" class="form-input" placeholder="至少 8 个字符" required minlength="8" autocomplete="new-password">
                 </div>
                 <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">🎉 创建账户</button>
+                    <button type="submit" class="btn btn-primary"><i class="ic ic-plus-pink"></i> 创建账户</button>
                 </div>
             </form>
             <p class="auth-link">已有账户？<a href="login.php">点此登录</a></p>

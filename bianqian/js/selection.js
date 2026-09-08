@@ -35,15 +35,15 @@
     bar.className = 'sel-bar';
     bar.style.display = 'none';
     bar.innerHTML = '<span class="sel-count"></span>'
-      + '<button type="button" class="sel-btn sel-cut" title="Ctrl+X">✂️ 剪切</button>'
-      + '<button type="button" class="sel-btn sel-copy" title="Ctrl+C">📋 复制</button>'
-      + '<button type="button" class="sel-btn sel-paste" title="Ctrl+V">📥 粘贴</button>'
+      + '<button type="button" class="sel-btn sel-cut" title="Ctrl+X"><i class="ic ic-scissors"></i> 剪切</button>'
+      + '<button type="button" class="sel-btn sel-copy" title="Ctrl+C"><i class="ic ic-copy"></i> 复制</button>'
+      + '<button type="button" class="sel-btn sel-paste" title="Ctrl+V"><i class="ic ic-paste"></i> 粘贴</button>'
       + '<button type="button" class="sel-btn sel-swap" title="恰好选中 2 张便签时可用">⇄ 对调</button>'
-      + '<button type="button" class="sel-btn sel-all" title="Ctrl+A">☑️ 全选</button>'
-      + '<button type="button" class="sel-btn sel-del">🗑 删除</button>'
-      + '<button type="button" class="sel-btn sel-exit" title="Esc">✕ 取消选择</button>'
+      + '<button type="button" class="sel-btn sel-all" title="Ctrl+A"><i class="ic ic-checkall"></i> 全选</button>'
+      + '<button type="button" class="sel-btn sel-del"><i class="ic ic-trash"></i> 删除</button>'
+      + '<button type="button" class="sel-btn sel-exit" title="Esc"><i class="ic ic-close"></i> 取消选择</button>'
       + '<span class="sel-clip-info"></span>'
-      + '<button type="button" class="sel-btn sel-clip-clear">🚫 清空剪贴板</button>';
+      + '<button type="button" class="sel-btn sel-clip-clear"><i class="ic ic-ban"></i> 清空剪贴板</button>';
     document.body.appendChild(bar);
     bar.querySelector('.sel-cut').addEventListener('click', function () { selCut(); });
     bar.querySelector('.sel-copy').addEventListener('click', function () { selCopy(); });

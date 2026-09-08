@@ -160,7 +160,7 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 管理面板</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
-    <link rel="stylesheet" href="css/icons.css?v=1">
+    <link rel="stylesheet" href="css/icons.css?v=2">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -180,7 +180,7 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
 
     <div class="main-container">
         <div class="toolbar">
-            <span class="toolbar-title">⚙️ AI 接口配置</span>
+            <span class="toolbar-title"><i class="ic ic-gear"></i> AI 接口配置</span>
             <div class="toolbar-actions">
                 <span class="md-hint">OpenAI 兼容接口 · Key 仅存服务端</span>
             </div>
@@ -229,15 +229,15 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
 
             <div class="form-row">
             <div class="form-group" style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;">
-                <button type="submit" class="btn btn-primary btn-sm">💾 保存配置</button>
-                <button type="button" id="btnTestAi" class="btn btn-outline btn-sm">🔌 测试连接</button>
+                <button type="submit" class="btn btn-primary btn-sm"><i class="ic ic-save-pink"></i> 保存配置</button>
+                <button type="button" id="btnTestAi" class="btn btn-outline btn-sm"><i class="ic ic-plug"></i> 测试连接</button>
                 <span id="testResult" class="md-hint"></span>
             </div>
         </div>
         </form>
 
         <div class="toolbar" style="margin-top:28px;">
-            <span class="toolbar-title">🔑 AI 密钥管理（发放给用户）</span>
+            <span class="toolbar-title"><i class="ic ic-key"></i> AI 密钥管理（发放给用户）</span>
             <div class="toolbar-actions">
                 <span class="md-hint">配额按北京时间每日 8:00 重置</span>
             </div>
@@ -246,7 +246,7 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
         <?php if (!empty($newKey)): ?>
             <div class="ai-admin-msg ok">
                 ✅ 新密钥已生成：<code class="ai-key-code"><?= htmlspecialchars($newKey) ?></code>
-                <button type="button" class="btn btn-outline btn-xs ai-copy-key" data-key="<?= htmlspecialchars($newKey) ?>">📋 复制</button>
+                <button type="button" class="btn btn-outline btn-xs ai-copy-key" data-key="<?= htmlspecialchars($newKey) ?>"><i class="ic ic-copy"></i> 复制</button>
                 <span class="md-hint">仅此次显示完整密钥，请立即复制保存并发给用户</span>
             </div>
         <?php endif; ?>
@@ -268,7 +268,7 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
                     <input type="text" name="bind_user" class="form-input" placeholder="用户名，留空则谁拿到都能用" maxlength="50">
                 </div>
                 <div class="form-group" style="display:flex;align-items:flex-end;">
-                    <button type="submit" class="btn btn-primary btn-sm">🔑 生成密钥</button>
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="ic ic-key-pink"></i> 生成密钥</button>
                 </div>
             </div>
             <div class="md-hint">「推送到账号」填了用户名：密钥自动绑定该账号，该用户登录后无需输入即可使用，其他人拿到也无效；留空：通用密钥，发给谁谁手动填入即可。</div>
@@ -296,7 +296,7 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
             ?>
                 <tr class="<?= $k['enabled'] ? '' : 'disabled-row' ?>">
                     <td><code class="ai-key-code"><?= htmlspecialchars($mask) ?></code>
-                        <button type="button" class="btn btn-outline btn-xs ai-copy-key" data-key="<?= htmlspecialchars($k['akey']) ?>">📋</button>
+                        <button type="button" class="btn btn-outline btn-xs ai-copy-key" data-key="<?= htmlspecialchars($k['akey']) ?>"><i class="ic ic-copy"></i></button>
                     </td>
                     <td><?= htmlspecialchars($k['remark'] !== '' ? $k['remark'] : '—') ?></td>
                     <td><?= $k['user_id'] > 0 ? '👤 ' . htmlspecialchars((string)$k['bind_name']) : '通用' ?></td>
@@ -306,7 +306,7 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
                         <form method="post" style="display:inline;" class="key-confirm" data-confirm="确定<?= $k['enabled'] ? '禁用' : '启用' ?>这把密钥？&#10;<?= $k['enabled'] ? '禁用后使用该密钥的用户将立即无法调用 AI。' : '启用后该密钥恢复可用。' ?>">
                             <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
                             <input type="hidden" name="kid" value="<?= (int)$k['id'] ?>">
-                            <button type="submit" name="op" value="togglekey" class="btn btn-outline btn-xs"><?= $k['enabled'] ? '🚫 禁用' : '▶️ 启用' ?></button>
+                            <button type="submit" name="op" value="togglekey" class="btn btn-outline btn-xs"><?= $k['enabled'] ? '<i class="ic ic-ban"></i> 禁用' : '<i class="ic ic-play"></i> 启用' ?></button>
                         </form>
                         <form method="post" style="display:inline;" class="key-confirm" data-confirm="确定将该密钥的今日用量清零？&#10;（<?= $used ?> → 0，该密钥用户今天会重新获得完整额度）">
                             <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
@@ -364,9 +364,9 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
             </div>
             <div class="form-row">
                 <div class="form-group" style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;">
-                    <button type="submit" class="btn btn-primary btn-sm">💾 保存邮件配置</button>
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="ic ic-save-pink"></i> 保存邮件配置</button>
                     <input type="email" id="testMailTo" class="form-input" style="max-width:240px;" placeholder="测试收件邮箱">
-                    <button type="button" id="btnTestMail" class="btn btn-outline btn-sm">📨 测试发信</button>
+                    <button type="button" id="btnTestMail" class="btn btn-outline btn-sm"><i class="ic ic-send"></i> 测试发信</button>
                     <span id="mailResult" class="md-hint"></span>
                 </div>
             </div>
@@ -376,6 +376,6 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
 
     <div id="toast" class="toast" style="display:none;"></div>
 
-    <script src="js/admin.js?v=4"></script>
+    <script src="js/admin.js?v=5"></script>
 </body>
 </html>

@@ -83,9 +83,9 @@
     if (!c) return;
     var html = '';
     if (state.cur === null) {
-      html = '<span class="crumb on">🗂 全部图片</span>';
+      html = '<span class="crumb on"><i class="ic ic-grid"></i>全部图片</span>';
     } else if (state.cur === 0) {
-      html = '<a class="crumb" href="javascript:void(0)" data-nav="all">🗂 全部图片</a><span class="crumb-sep">›</span><span class="crumb on">📥 未归类</span>';
+      html = '<a class="crumb" href="javascript:void(0)" data-nav="all"><i class="ic ic-grid"></i>全部图片</a><span class="crumb-sep">›</span><span class="crumb on"><i class="ic ic-paste"></i>未归类</span>';
     } else {
       var chain = [], cur = state.cur, guard = 0;
       while (cur && guard++ < 50) {
@@ -94,7 +94,7 @@
         chain.unshift(f);
         cur = f.parent_id;
       }
-      html = '<a class="crumb" href="javascript:void(0)" data-nav="all">🗂 全部图片</a>';
+      html = '<a class="crumb" href="javascript:void(0)" data-nav="all"><i class="ic ic-grid"></i>全部图片</a>';
       chain.forEach(function (f) {
         html += '<span class="crumb-sep">›</span>';
         if (f.id === state.cur) html += '<span class="crumb on">📁 ' + esc(f.name) + '</span>';
@@ -112,16 +112,16 @@
     if (inFolder) {
       var f = byId(state.cur);
       var p = f ? f.parent_id : 0;
-      html += '<div class="folder-card" data-nav="' + (p === null || p === 0 ? 0 : p) + '"><div class="f-icon">↩️</div><div class="f-name">上一级</div></div>';
+      html += '<div class="folder-card" data-nav="' + (p === null || p === 0 ? 0 : p) + '"><div class="f-icon"><i class="ic ic-back"></i></div><div class="f-name">上一级</div></div>';
     }
     if (state.cur === null) {
-      html += '<div class="folder-card fdrop" data-fid="0" data-nav="0"><div class="f-icon">📥</div><div class="f-name">未归类</div><div class="f-count">' + state.images.filter(function (im) { return im.folder_id === 0; }).length + ' 张</div></div>';
+      html += '<div class="folder-card fdrop" data-fid="0" data-nav="0"><div class="f-icon"><i class="ic ic-paste"></i></div><div class="f-name">未归类</div><div class="f-count">' + state.images.filter(function (im) { return im.folder_id === 0; }).length + ' 张</div></div>';
     }
     var baseLevel = inFolder ? state.cur : 0;
     childrenOf(baseLevel).forEach(function (f) {
       html += '<div class="folder-card fdrop" data-fid="' + f.id + '" data-nav="' + f.id + '">' +
-        '<div class="f-icon">📁</div><div class="f-name">' + esc(f.name) + '</div><div class="f-count">' + rollupCount(f.id) + ' 张</div>' +
-        '<div class="f-act"><button type="button" class="f-share" title="公开分享">🔗</button><button type="button" class="f-ren" title="重命名">✏️</button><button type="button" class="f-del" title="删除文件夹">🗑</button></div></div>';
+        '<div class="f-icon"><i class="ic ic-folder"></i></div><div class="f-name">' + esc(f.name) + '</div><div class="f-count">' + rollupCount(f.id) + ' 张</div>' +
+        '<div class="f-act"><button type="button" class="f-share" title="公开分享"><i class="ic ic-link"></i></button><button type="button" class="f-ren" title="重命名"><i class="ic ic-pencil"></i></button><button type="button" class="f-del" title="删除文件夹"><i class="ic ic-trash"></i></button></div></div>';
     });
     html += '<div class="folder-card folder-new" id="folderNew" title="新建文件夹"><div class="f-icon">＋</div><div class="f-name">新建文件夹</div></div>';
     bar.innerHTML = html;
@@ -181,7 +181,7 @@
       var empty = document.querySelector('.empty');
       if (empty) {
         empty.style.display = '';
-        empty.innerHTML = '<div class="big">📁</div>共 ' + state.images.length + ' 张图片 · 点击上方文件夹进入查看';
+        empty.innerHTML = '<div class="big"><i class="ic ic-folder"></i></div>共 ' + state.images.length + ' 张图片 · 点击上方文件夹进入查看';
       }
       return;
     }
@@ -196,11 +196,11 @@
     if (vis.length === 0) {
       if (empty) {
         empty.style.display = '';
-        empty.innerHTML = '<div class="big">☁️</div>这里还没有图片';
+        empty.innerHTML = '<div class="big"><i class="ic ic-cloud"></i></div>这里还没有图片';
       } else {
         var d = document.createElement('div');
         d.className = 'empty';
-        d.innerHTML = '<div class="big">☁️</div>这里还没有图片';
+        d.innerHTML = '<div class="big"><i class="ic ic-cloud"></i></div>这里还没有图片';
         grid.parentNode.insertBefore(d, grid.nextSibling);
       }
     } else if (empty) empty.style.display = 'none';

@@ -83,6 +83,7 @@ $until = $folder ? (int)$folder['share_until'] : 0;
 <meta name="robots" content="noindex, nofollow">
 <title>分享的文件夹 · 陶瓦图床</title>
 <link rel="stylesheet" href="css/pixel-blue.css?v=13">
+<link rel="stylesheet" href="css/icons.css?v=2">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
@@ -116,7 +117,7 @@ $until = $folder ? (int)$folder['share_until'] : 0;
 <body>
 <div class="fshare-wrap">
 <?php if (!$folder): ?>
-  <div class="fshare-empty"><div class="big">💀</div>分享不存在或已过期</div>
+  <div class="fshare-empty"><div class="big"><i class="ic ic-skull ic-lg"></i></div>分享不存在或已过期</div>
 <?php else: ?>
   <div class="fshare-head">
     <h1>📁 <?php echo htmlspecialchars($folder['name'], ENT_QUOTES, 'UTF-8'); ?></h1>

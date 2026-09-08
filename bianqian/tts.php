@@ -18,7 +18,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>朗读工坊 - Pixel Notes</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
-    <link rel="stylesheet" href="css/icons.css?v=1">
+    <link rel="stylesheet" href="css/icons.css?v=2">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -37,7 +37,7 @@ if (!isset($_SESSION['user_id'])) {
 
     <div class="main-container">
         <div class="toolbar">
-            <span class="toolbar-title">🎙 文字转语音</span>
+            <span class="toolbar-title"><i class="ic ic-mic"></i> 文字转语音</span>
             <div class="toolbar-actions">
                 <select id="notePicker" class="tts-select" title="从便签导入文本">
                     <option value="">📄 从便签导入...</option>
@@ -73,7 +73,7 @@ if (!isset($_SESSION['user_id'])) {
             </div>
 
             <div class="tts-actions">
-                <button id="btnSpeak" class="btn btn-primary" type="button">▶ 生成语音</button>
+                <button id="btnSpeak" class="btn btn-primary" type="button"><i class="ic ic-play-pink"></i> 生成语音</button>
                 <button id="btnClear" class="btn btn-outline" type="button">清空</button>
             </div>
         </div>
@@ -81,17 +81,17 @@ if (!isset($_SESSION['user_id'])) {
         <!-- 结果区 -->
         <div id="ttsResult" class="tts-panel tts-result" style="display:none;">
             <div class="tts-result-head">
-                <span class="tts-result-title">🎵 生成的语音</span>
+                <span class="tts-result-title"><i class="ic ic-music"></i> 生成的语音</span>
                 <span class="tts-result-btns">
-                    <a id="btnDownload" class="btn btn-outline btn-xs" download="pixel-tts.mp3" style="display:none;">⬇ 下载 MP3</a>
-                    <button id="btnSrt" class="btn btn-outline btn-xs" type="button" title="逐字时间轴字幕文件">💬 字幕 SRT</button>
-                    <button id="btnVideo" class="btn btn-outline btn-xs" type="button" title="带卡拉OK字幕画面（实时录制，时长≈音频）">🎬 生成视频</button>
-                    <a id="btnVideoDl" class="btn btn-outline btn-xs" style="display:none;">⬇ 下载视频</a>
+                    <a id="btnDownload" class="btn btn-outline btn-xs" download="pixel-tts.mp3" style="display:none;"><i class="ic ic-download"></i> 下载 MP3</a>
+                    <button id="btnSrt" class="btn btn-outline btn-xs" type="button" title="逐字时间轴字幕文件"><i class="ic ic-subtitle"></i> 字幕 SRT</button>
+                    <button id="btnVideo" class="btn btn-outline btn-xs" type="button" title="带卡拉OK字幕画面（实时录制，时长≈音频）"><i class="ic ic-film"></i> 生成视频</button>
+                    <a id="btnVideoDl" class="btn btn-outline btn-xs" style="display:none;"><i class="ic ic-download"></i> 下载视频</a>
                 </span>
             </div>
             <audio id="ttsAudio" class="tts-audio" controls preload="metadata"></audio>
             <div id="recStatus" class="tts-rec-status" style="display:none;">🎬 录制中…</div>
-            <div class="tts-sub-title">💬 逐字字幕 <span class="tts-sub-note">（估算时间轴 · 点击文字可跳转）</span></div>
+            <div class="tts-sub-title"><i class="ic ic-subtitle"></i> 逐字字幕 <span class="tts-sub-note">（估算时间轴 · 点击文字可跳转）</span></div>
             <div id="ttsSubtitles" class="tts-subtitles md-body"></div>
         </div>
 
@@ -105,6 +105,6 @@ if (!isset($_SESSION['user_id'])) {
     <!-- Toast -->
     <div id="toast" class="toast" style="display:none;"></div>
 
-    <script src="js/tts.js?v=11"></script>
+    <script src="js/tts.js?v=12"></script>
 </body>
 </html>

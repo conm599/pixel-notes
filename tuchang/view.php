@@ -44,6 +44,7 @@ if ($remain > 0) {
 <title><?php echo e($img['name']); ?> · 陶瓦图床</title>
 
 <link rel="stylesheet" href="css/pixel-blue.css?v=13">
+<link rel="stylesheet" href="css/icons.css?v=2">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
@@ -120,7 +121,7 @@ if ($remain > 0) {
     </div>
 
     <div class="v-actions">
-      <a class="link-btn" href="dashboard.php" style="text-align:center">← 返回图库</a>
+      <a class="link-btn" href="dashboard.php" style="text-align:center"><i class="ic ic-back"></i> 返回图库</a>
       <button class="v-btn ghost" onclick="window.close()">关闭标签页</button>
     </div>
   </div>

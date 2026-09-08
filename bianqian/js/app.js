@@ -114,14 +114,14 @@
     var bar = document.getElementById('folderCrumb');
     if (!bar) return;
     bar.innerHTML = '';
-    var home = mkEl('a', 'crumb', '🏠 主页');
+    var home = mkEl('a', 'crumb', '<i class="ic ic-home"></i> 主页');
     home.addEventListener('click', function () { switchFolder(null); });
     bar.appendChild(home);
     var chain = folderChain(currentFolderId);
     chain.forEach(function (f, i) {
       bar.appendChild(mkEl('span', 'crumb-sep', '/'));
       var isLast = (i === chain.length - 1);
-      var link = mkEl('a', 'crumb' + (isLast ? ' current' : ''), '📁 ' + f.name);
+      var link = mkEl('a', 'crumb' + (isLast ? ' current' : ''), '<i class="ic ic-folder"></i> ' + f.name);
       if (!isLast) {
         var fid = f.id;
         link.addEventListener('click', function () { switchFolder(fid); });
@@ -144,13 +144,13 @@
       notesGrid.innerHTML = '<div class="loading">加载中...</div>';
       var result = await api('GET');
       if (!result.success) {
-        notesGrid.innerHTML = '<div class="empty-state"><div class="icon">💀</div><p>加载失败</p></div>';
+        notesGrid.innerHTML = '<div class="empty-state"><div class="icon"><i class="ic ic-skull ic-lg"></i></div><p>加载失败</p></div>';
         return;
       }
       renderNotes(result.notes);
     } catch (err) {
       if (String(err.message).indexOf('未登录') === -1) {
-        notesGrid.innerHTML = '<div class="empty-state"><div class="icon">💀</div><p>网络错误</p></div>';
+        notesGrid.innerHTML = '<div class="empty-state"><div class="icon"><i class="ic ic-skull ic-lg"></i></div><p>网络错误</p></div>';
       }
     }
   }
@@ -226,16 +226,28 @@
   function mkEl(tag, cls, text) {
     var el = document.createElement(tag);
     if (cls) el.className = cls;
-    if (text != null) el.textContent = text;
+    if (text != null) {
+      // 以 <i 开头的字面量是内部图标标记（ic-*），走 innerHTML；其余一律 textContent 防注入
+      if (text.indexOf('<i ') === 0) el.innerHTML = text;
+      else el.textContent = text;
+    }
     return el;
   }
 
   function mkBtn(label, title) {
     var b = document.createElement('button');
     b.type = 'button';
-    b.textContent = label;
+    if (label && label.indexOf('<i ') === 0) b.innerHTML = label;
+    else b.textContent = label;
     if (title) b.title = title;
     return b;
+  }
+
+  // 图标 + 纯文本（text 走 createTextNode，安全拼接用户内容）
+  function setIconText(el, iconName, text) {
+    if (!el) return;
+    el.innerHTML = '<i class="ic ic-' + iconName + '"></i> ';
+    el.appendChild(document.createTextNode(text));
   }
 
   // ============== 文件夹 API ==============
@@ -256,7 +268,7 @@
   function createFolderCard(folder) {
     var card = mkEl('div', 'folder-card');
     card.setAttribute('data-folder-id', folder.id);
-    var icon = mkEl('div', 'folder-icon', '📁');
+    var icon = mkEl('div', 'folder-icon', '<i class="ic ic-folder"></i>');
     var name = mkEl('div', 'folder-name', folder.name);
     var count = mkEl('div', 'folder-count', folder.note_count + ' 条便签');
     card.appendChild(icon);
@@ -299,11 +311,11 @@
       menu.appendChild(item);
     }
 
-    addItem('在里面新建子文件夹', '📂+', function () { promptNewFolder(folder.id); });
-    addItem('改名', '✏️', function () { promptRenameFolder(folder); });
-    addItem('移动到…', '↪️', function () { promptMoveFolder(folder); });
-    addItem('分享', '🔗', function () { openShareDialog(folder.id, foldersById[folder.id] || folder, 'folder'); });
-    addItem('删除（内容上移）', '🗑', function () { promptDeleteFolder(folder); });
+    addItem('在里面新建子文件夹', '<i class="ic ic-folder"></i>', function () { promptNewFolder(folder.id); });
+    addItem('改名', '<i class="ic ic-pencil"></i>', function () { promptRenameFolder(folder); });
+    addItem('移动到…', '<i class="ic ic-back"></i>', function () { promptMoveFolder(folder); });
+    addItem('分享', '<i class="ic ic-link"></i>', function () { openShareDialog(folder.id, foldersById[folder.id] || folder, 'folder'); });
+    addItem('删除（内容上移）', '<i class="ic ic-trash"></i>', function () { promptDeleteFolder(folder); });
 
     document.body.appendChild(menu);
     folderMenuEl = menu;
@@ -489,11 +501,11 @@
       ['{ }', 'codeblock', '代码块'],
       ['•', 'ul', '无序列表 - '],
       ['1.', 'ol', '有序列表 1. '],
-      ['☑', 'task', '任务 - [ ] '],
+      ['<i class="ic ic-checkall"></i>', 'task', '任务 - [ ] '],
       ['❝', 'quote', '引用 > '],
-      ['🔗', 'link', '链接 [文字](网址)'],
-      ['🖼', 'img', '图片 ![描述](网址)'],
-      ['📤', 'imgup', '上传图片到图床（自动转直链；粘贴图片同样生效）']
+      ['<i class="ic ic-link"></i>', 'link', '链接 [文字](网址)'],
+      ['<i class="ic ic-image"></i>', 'img', '图片 ![描述](网址)'],
+      ['<i class="ic ic-upload"></i>', 'imgup', '上传图片到图床（自动转直链；粘贴图片同样生效）']
     ];
     defs.forEach(function (d) {
       var b = mkBtn(d[0], d[2]);
@@ -583,25 +595,25 @@
     meta.appendChild(mkEl('span', null, '🕐 ' + (note.updated_at || '')));
     var actions = mkEl('div', 'note-actions');
 
-    var editBtn = mkBtn('✏️ 编辑', '编辑这篇便签');
+    var editBtn = mkBtn('<i class="ic ic-pencil"></i> 编辑', '编辑这篇便签');
     editBtn.addEventListener('click', function () { openEditorForNote(note.id); });
 
     // 从 share_token 构建 share_url（参考图床 view.php 的做法，不依赖 API 返回 share_url）
     var _shareUrl = note.share_url || (note.share_token && String(note.share_token).length === 36 ? location.origin + '/share.php?t=' + note.share_token : '');
-    var shareBtn = mkBtn(_shareUrl ? '🌐 分享' : '🔗 分享', _shareUrl ? '管理公开分享' : '生成公开分享链接');
+    var shareBtn = mkBtn(_shareUrl ? '🌐 分享' : '<i class="ic ic-link"></i> 分享', _shareUrl ? '管理公开分享' : '生成公开分享链接');
     if (_shareUrl) { shareBtn.classList.add('btn-shared'); card._shareUrl = _shareUrl; }
     shareBtn.addEventListener('click', function () { openShareDialog(note.id, card); });
 
-    var pinBtn = mkBtn(note.pinned ? '📌 已顶' : '📌 置顶', '置顶/取消置顶');
+    var pinBtn = mkBtn(note.pinned ? '<i class="ic ic-pin"></i> 已顶' : '<i class="ic ic-pin"></i> 置顶', '置顶/取消置顶');
     pinBtn.addEventListener('click', function () { togglePin(card); });
 
-    var colorBtn = mkBtn('🎨', '切换颜色');
+    var colorBtn = mkBtn('<i class="ic ic-palette"></i>', '切换颜色');
     colorBtn.addEventListener('click', function () { cycleColor(card); });
 
-    var moveBtn = mkBtn('📁', '移动到文件夹');
+    var moveBtn = mkBtn('<i class="ic ic-folder"></i>', '移动到文件夹');
     moveBtn.addEventListener('click', function (e) { e.stopPropagation(); promptMoveNote(note); });
 
-    var delBtn = mkBtn('🗑 删除', '删除便签');
+    var delBtn = mkBtn('<i class="ic ic-trash"></i> 删除', '删除便签');
     delBtn.addEventListener('click', function () { deleteNote(card); });
 
     actions.appendChild(editBtn);
@@ -622,7 +634,7 @@
     if (nd.scrollHeight > nd.clientHeight + 6) {
       nd.classList.add('clamped');
       if (!rm) {
-        rm = mkBtn('📖 阅读全文', '点击查看完整内容');
+        rm = mkBtn('<i class="ic ic-book"></i> 阅读全文', '点击查看完整内容');
         rm.className = 'read-more';
         rm.addEventListener('click', function () {
           if (window.PixelSelection && window.PixelSelection.isActive()) return;   // 选择模式：点击不打开
@@ -667,9 +679,9 @@
     newContent.value = '';
     newPreview.style.display = 'none';
     newPreview.innerHTML = '';
-    if (btnPreviewNew) btnPreviewNew.textContent = '👁 预览';
+    if (btnPreviewNew) btnPreviewNew.innerHTML = '<i class="ic ic-eye"></i> 预览';
     if (editorMode) editorMode.textContent = '';
-    btnSaveNew.textContent = '💾 保存';
+    btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存';
     // 取消卡片高亮
     document.querySelectorAll('.note-card.editing-source').forEach(function (c) {
       c.classList.remove('editing-source');
@@ -682,8 +694,8 @@
     if (newNoteForm.style.display === 'none' || newNoteForm.style.display === '') {
       editingId = null;
       newNoteForm.classList.remove('edit-mode');
-      if (editorMode) editorMode.textContent = '🆕 新建便签';
-      btnSaveNew.textContent = '💾 保存';
+      if (editorMode) editorMode.innerHTML = '<i class="ic ic-plus"></i> 新建便签';
+      btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存';
       setColorPicker('yellow');
       newNoteForm.style.display = 'block';
       newNoteForm.scrollIntoView({ behavior: 'smooth' });
@@ -731,8 +743,8 @@
     newTitle.value = note.title;
     newContent.value = note.content;
     setColorPicker(note.color);
-    if (editorMode) editorMode.textContent = '✏️ 正在编辑：' + (note.title || '无标题');
-    btnSaveNew.textContent = '💾 保存修改';
+    setIconText(editorMode, 'pencil', '正在编辑：' + (note.title || '无标题'));
+    btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存修改';
     newNoteForm.classList.add('edit-mode');
     newNoteForm.style.display = 'block';
     newNoteForm.scrollIntoView({ behavior: 'smooth' });
@@ -754,10 +766,10 @@
       if (newPreview.style.display === 'none') {
         newPreview.innerHTML = window.PixelMD.render(newContent.value || '*(空)*');
         newPreview.style.display = 'block';
-        btnPreviewNew.textContent = '👁 隐藏预览';
+        btnPreviewNew.innerHTML = '<i class="ic ic-eye"></i> 隐藏预览';
       } else {
         newPreview.style.display = 'none';
-        btnPreviewNew.textContent = '👁 预览';
+        btnPreviewNew.innerHTML = '<i class="ic ic-eye"></i> 预览';
       }
     });
   }
@@ -1016,8 +1028,8 @@
     var modal = mkEl('div', 'md-modal classify-modal');
 
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '✨ AI 整理助手'));
-    var closeBtn = mkBtn('✕ 关闭', '关闭');
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-sparkle"></i> AI 整理助手'));
+    var closeBtn = mkBtn('<i class="ic ic-close"></i> 关闭', '关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeClassifyDialog);
     head.appendChild(closeBtn);
@@ -1042,7 +1054,7 @@
     });
     oneClickWrap.appendChild(oneClickBtn);
 
-    var undoBtn = mkBtn('↩️ 撤销上次整理', '撤销本会话最近一次 AI 整理（仅限本次浏览器会话）');
+    var undoBtn = mkBtn('<i class="ic ic-back"></i> 撤销上次整理', '撤销本会话最近一次 AI 整理（仅限本次浏览器会话）');
     undoBtn.id = 'btnUndoAiOff';
     undoBtn.className = 'btn btn-outline btn-sm';
     undoBtn.disabled = true;   // 常驻但禁用态起步：无日志时灰显"无可撤销"，有日志时点亮
@@ -1063,7 +1075,7 @@
     sendBtn.className = 'btn btn-outline btn-sm';
     sendBtn.addEventListener('click', submitChat);
 
-    var clearHistBtn = mkBtn('🗑 清对话', '清空对话记录（本页重启后保留）');
+    var clearHistBtn = mkBtn('<i class="ic ic-trash"></i> 清对话', '清空对话记录（本页重启后保留）');
     clearHistBtn.className = 'btn btn-outline btn-sm';
     clearHistBtn.addEventListener('click', function () { clearAiChats(); chatLog.innerHTML = ''; renderChatBubble(chatLog, 'assistant', '对话已清空。'); });
 
@@ -1267,8 +1279,8 @@
     overlay.style.zIndex = '20100';   // 必须高于 AI 整理聊天框（20000），否则方案预览被聊天框遮挡、视觉上“夹在中间”
     var modal = mkEl('div', 'md-modal');
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '✨ AI 整理方案预览（确认后执行）'));
-    var closeBtn = mkBtn('✕ 关闭', '关闭');
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-sparkle"></i> AI 整理方案预览（确认后执行）'));
+    var closeBtn = mkBtn('<i class="ic ic-close"></i> 关闭', '关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeClassifyPreview);
     head.appendChild(closeBtn);
@@ -1285,7 +1297,7 @@
     });
     Object.keys(groups).forEach(function (path) {
       var grp = mkEl('div', 'classify-group');
-      grp.appendChild(mkEl('div', 'classify-path', '📁 ' + path));
+      grp.appendChild(mkEl('div', 'classify-path', '<i class="ic ic-folder"></i> ' + path));
       var ul = mkEl('ul', 'classify-notes');
       groups[path].forEach(function (o) {
         var it = byId[o.id];
@@ -1308,7 +1320,7 @@
     var renames = ops.filter(function (o) { return o.op === 'rename'; });
     if (renames.length) {
       var grpR = mkEl('div', 'classify-group');
-      grpR.appendChild(mkEl('div', 'classify-path', '✏️ 重命名'));
+      grpR.appendChild(mkEl('div', 'classify-path', '<i class="ic ic-pencil"></i> 重命名'));
       var ulR = mkEl('ul', 'classify-notes');
       renames.forEach(function (o) { ulR.appendChild(mkEl('li', null, '• ' + o.path + ' → ' + o.new_name)); });
       grpR.appendChild(ulR);
@@ -1317,7 +1329,7 @@
     var delFolders = ops.filter(function (o) { return o.op === 'delete_folder'; });
     if (delFolders.length) {
       var grpDF = mkEl('div', 'classify-group');
-      grpDF.appendChild(mkEl('div', 'classify-path', '🗑 删除文件夹（内容上移）'));
+      grpDF.appendChild(mkEl('div', 'classify-path', '<i class="ic ic-trash"></i> 删除文件夹（内容上移）'));
       var ulDF = mkEl('ul', 'classify-notes');
       delFolders.forEach(function (o) { ulDF.appendChild(mkEl('li', null, '• ' + o.path)); });
       grpDF.appendChild(ulDF);
@@ -1326,7 +1338,7 @@
     var delNotes = ops.filter(function (o) { return o.op === 'delete_note'; });
     if (delNotes.length) {
       var grpDN = mkEl('div', 'classify-group');
-      grpDN.appendChild(mkEl('div', 'classify-path', '🗑 删除便签'));
+      grpDN.appendChild(mkEl('div', 'classify-path', '<i class="ic ic-trash"></i> 删除便签'));
       var ulDN = mkEl('ul', 'classify-notes');
       delNotes.forEach(function (o) {
         var it = byId[o.id];
@@ -1350,7 +1362,7 @@
     var colors = ops.filter(function (o) { return o.op === 'color'; });
     if (colors.length) {
       var grpC = mkEl('div', 'classify-group');
-      grpC.appendChild(mkEl('div', 'classify-path', '🎨 修改颜色'));
+      grpC.appendChild(mkEl('div', 'classify-path', '<i class="ic ic-palette"></i> 修改颜色'));
       var ulC = mkEl('ul', 'classify-notes');
       colors.forEach(function (o) {
         var it = byId[o.id];
@@ -1362,7 +1374,7 @@
     var pins = ops.filter(function (o) { return o.op === 'pin'; });
     if (pins.length) {
       var grpP = mkEl('div', 'classify-group');
-      grpP.appendChild(mkEl('div', 'classify-path', '📌 置顶'));
+      grpP.appendChild(mkEl('div', 'classify-path', '<i class="ic ic-pin"></i> 置顶'));
       var ulP = mkEl('ul', 'classify-notes');
       pins.forEach(function (o) {
         var it = byId[o.id];
@@ -1502,7 +1514,7 @@
     var modal = mkEl('div', 'md-modal share-modal');
 
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', isFolder ? '📁 分享文件夹' : '🔗 分享便签'));
+    head.appendChild(mkEl('div', 'md-modal-title', isFolder ? '<i class="ic ic-folder"></i> 分享文件夹' : '<i class="ic ic-link"></i> 分享便签'));
     var closeBtn = mkBtn('✖ 关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeShareDialog);
@@ -1530,7 +1542,7 @@
     var statusBadge = mkEl('div', 'share-status-badge');
     var statusLink = mkEl('div', 'share-link-box');
     var statusInfo = mkEl('div', 'share-status-info');
-    var copyBtn = mkBtn('📋 复制链接');
+    var copyBtn = mkBtn('<i class="ic ic-copy"></i> 复制链接');
     copyBtn.className = 'btn btn-primary btn-xs';
 
     statusArea.appendChild(statusBadge);
@@ -1545,7 +1557,7 @@
     var foot = mkEl('div', 'md-modal-foot');
     var genBtn = mkBtn('⚡ 生成链接');
     genBtn.className = 'btn btn-primary btn-xs';
-    var cancelShareBtn = mkBtn('🚫 取消分享');
+    var cancelShareBtn = mkBtn('<i class="ic ic-ban"></i> 取消分享');
     cancelShareBtn.className = 'btn btn-danger btn-xs';
     cancelShareBtn.style.display = 'none';
 
@@ -1594,7 +1606,7 @@
       // 同步更新卡片上的分享按钮（仅便签模式）
       if (card && !isFolder) {
         var sb = card.querySelector('button[title="管理公开分享"], button[title="生成公开分享链接"]');
-        if (sb) { sb.textContent = '🔗 分享'; sb.title = '生成公开分享链接'; sb.classList.remove('btn-shared'); }
+        if (sb) { sb.innerHTML = '<i class="ic ic-link"></i> 分享'; sb.title = '生成公开分享链接'; sb.classList.remove('btn-shared'); }
       }
     }
 
@@ -1898,7 +1910,7 @@
     var body = mkEl('div', 'md-modal-body');
 
     var box1 = mkEl('div', 'policy-box');
-    box1.appendChild(mkEl('div', 'policy-title', '🔒 隐私政策'));
+    box1.appendChild(mkEl('div', 'policy-title', '<i class="ic ic-lock"></i> 隐私政策'));
     ['· 你编辑的便签内容和你的指令会被发送到 AI 服务商（平台密钥模式走平台配置的上游；自有 Key 模式经代理直连你填写的服务商）完成处理。',
      '· 你自己填写的 API Key 默认只保存在你当前浏览器的本地存储中，服务器不保存、不记录；仅当你主动勾选「跨端同步」时才会保存到服务器。',
      '· 你的风格偏好、AI 设置同样遵循上述存储规则。',
@@ -1906,7 +1918,7 @@
     ].forEach(function (t) { box1.appendChild(mkEl('div', 'policy-line', t)); });
 
     var box2 = mkEl('div', 'policy-box');
-    box2.appendChild(mkEl('div', 'policy-title', '📋 使用政策'));
+    box2.appendChild(mkEl('div', 'policy-title', '<i class="ic ic-copy"></i> 使用政策'));
     ['· 平台密钥由管理员发放，有每日用量限制（北京时间 8:00 重置），禁止共享、转卖或滥用。',
      '· 自有 Key 不填代理时经平台代理转发，每账号每日限 500 次；填写自己的透明代理后由浏览器直连，不经过平台、不限量。',
      '· 请勿通过 AI 功能处理违法违规内容。',
@@ -1971,7 +1983,7 @@
     var modal = mkEl('div', 'md-modal ai-settings-modal');
 
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '⚙️ AI 设置'));
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-gear"></i> AI 设置'));
     var closeBtn = mkBtn('✖ 关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeAiSettings);
@@ -1983,7 +1995,7 @@
     var modeRow = mkEl('div', 'ai-set-row');
     var modeLbl = mkEl('div', 'ai-set-label', '使用方式');
     var modeBtns = mkEl('div', 'share-options');
-    var bPlat = mkBtn('🔑 平台密钥');
+    var bPlat = mkBtn('<i class="ic ic-key"></i> 平台密钥');
     bPlat.className = 'btn btn-outline btn-xs share-opt' + (p.mode !== 'own' ? ' active' : '');
     var bOwn = mkBtn('🧬 我自己的 Key');
     bOwn.className = 'btn btn-outline btn-xs share-opt' + (p.mode === 'own' ? ' active' : '');
@@ -2033,7 +2045,7 @@
     bchk.checked = p.ownBodyEnabled;
     bchk.className = 'ai-sync-chk';
     bodyChkLbl.appendChild(bchk);
-    bodyChkLbl.appendChild(mkEl('span', null, '⚙️ 自定义请求 Body 参数（随每次 AI 请求额外发送一个自定义字段）'));
+    bodyChkLbl.appendChild(mkEl('span', null, '<i class="ic ic-gear"></i> 自定义请求 Body 参数（随每次 AI 请求额外发送一个自定义字段）'));
     bodyChkRow.appendChild(bodyChkLbl);
     bodyBox.appendChild(bodyChkRow);
     var bKeyInp = mkEl('input', 'form-input ai-input');
@@ -2060,7 +2072,7 @@
     var dlLink = mkEl('a');
     dlLink.href = 'ai-proxy-worker.js';
     dlLink.setAttribute('download', 'ai-proxy-worker.js');
-    dlLink.textContent = '⬇ 下载 Workers 透明代理脚本';
+    dlLink.innerHTML = '<i class="ic ic-download"></i> 下载 Workers 透明代理脚本';
     dlRow.appendChild(dlLink);
     var dlTip = mkEl('span', null, '→ 部署到你的 Cloudflare Workers（免费），把 Worker 地址填到上面即可');
     dlRow.appendChild(dlTip);
@@ -2111,7 +2123,7 @@
     chk.checked = p.sync;
     chk.className = 'ai-sync-chk';
     syncChk.appendChild(chk);
-    syncChk.appendChild(mkEl('span', null, '☁️ 保存到我的账号（换设备也能用。注意：包括你自己的 API Key 在内的设置会存到服务器）'));
+    syncChk.appendChild(mkEl('span', null, '<i class="ic ic-cloud"></i> 保存到我的账号（换设备也能用。注意：包括你自己的 API Key 在内的设置会存到服务器）'));
     syncRow.appendChild(syncLbl);
     syncRow.appendChild(syncChk);
 
@@ -2136,7 +2148,7 @@
     body.appendChild(policyRow);
 
     var foot = mkEl('div', 'md-modal-foot');
-    var saveBtn = mkBtn('💾 保存设置');
+    var saveBtn = mkBtn('<i class="ic ic-save"></i> 保存设置');
     saveBtn.className = 'btn btn-primary btn-xs';
     var cancelBtn = mkBtn('关闭');
     cancelBtn.className = 'btn btn-outline btn-xs';
@@ -2201,7 +2213,7 @@
         saveBtn.textContent = '同步中...';
         var ok = await saveAiPrefsRemote(np, false);
         saveBtn.disabled = false;
-        saveBtn.textContent = '💾 保存设置';
+        saveBtn.innerHTML = '<i class="ic ic-save"></i> 保存设置';
         showToast(ok ? '✅ 设置已保存并同步到账号' : '✅ 已保存到本地（同步服务器失败）', ok ? 'success' : 'error');
       } else {
         // 取消同步：删除服务器上已存的偏好，换设备不会再被旧设置覆盖
@@ -2250,7 +2262,7 @@
     var head = mkEl('div', 'md-modal-head');
     var headLeft = mkEl('div', 'md-modal-head-left');
     headLeft.appendChild(mkEl('div', 'md-modal-title', '🤖 AI 编辑便签'));
-    var setBtn = mkBtn('⚙️ AI 设置');
+    var setBtn = mkBtn('<i class="ic ic-gear"></i> AI 设置');
     setBtn.className = 'btn btn-outline btn-xs ai-open-settings';
     headLeft.appendChild(setBtn);
     head.appendChild(headLeft);
@@ -2351,7 +2363,7 @@
     var resultInfo = mkEl('div', 'ai-result-info');
     var tabs = mkEl('div', 'ai-tabs');
     var tabDiff = mkBtn('📑 差异');
-    var tabRender = mkBtn('👁 渲染');
+    var tabRender = mkBtn('<i class="ic ic-eye"></i> 渲染');
     var tabSrc = mkBtn('</> 源码');
     tabDiff.className = 'ai-tab'; tabRender.className = 'ai-tab'; tabSrc.className = 'ai-tab';
     tabs.appendChild(tabDiff);
@@ -2540,7 +2552,7 @@
         inputs.push({ q: q, inp: inp });
       });
       // AI 问题之外的主动补充（可选）：并入本轮最后一问的回答注入对话
-      var extraLab = mkEl('label', 'ai-clarify-q', '💬 其他补充（可选）：除了上面的问题，还有什么想告诉 AI 的吗？');
+      var extraLab = mkEl('label', 'ai-clarify-q', '<i class="ic ic-subtitle"></i> 其他补充（可选）：除了上面的问题，还有什么想告诉 AI 的吗？');
       var extraInp = document.createElement('textarea');
       extraInp.className = 'ai-instruction ai-clarify-answer';
       extraInp.placeholder = '选填。写下任何补充、纠正或额外要求，AI 会一并参考…';
@@ -2815,7 +2827,7 @@
     var modal = mkEl('div', 'md-modal changepass-modal');
 
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '🔑 修改密码'));
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-key"></i> 修改密码'));
     var closeBtn = mkBtn('✖ 关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeChangePassDialog);
@@ -2846,7 +2858,7 @@
     body.appendChild(status);
 
     var foot = mkEl('div', 'md-modal-foot');
-    var okBtn = mkBtn('💾 确认修改');
+    var okBtn = mkBtn('<i class="ic ic-save"></i> 确认修改');
     okBtn.className = 'btn btn-primary btn-xs';
     var cancelBtn = mkBtn('关闭');
     cancelBtn.className = 'btn btn-outline btn-xs';
@@ -2890,7 +2902,7 @@
         status.style.display = 'block';
       }
       okBtn.disabled = false;
-      okBtn.textContent = '💾 确认修改';
+      okBtn.innerHTML = '<i class="ic ic-save"></i> 确认修改';
     });
     cancelBtn.addEventListener('click', closeChangePassDialog);
 
@@ -2932,7 +2944,7 @@
     var modal = mkEl('div', 'md-modal delaccount-modal');
 
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '🗑 注销账号'));
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-trash"></i> 注销账号'));
     var closeBtn = mkBtn('✖ 关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeDeleteAccountDialog);
@@ -2948,7 +2960,7 @@
     status.style.display = 'none';
 
     var emailInfo = mkEl('div', 'ai-assigned');
-    emailInfo.textContent = '📧 正在获取账号邮箱...';
+    emailInfo.innerHTML = '<i class="ic ic-mail"></i> 正在获取账号邮箱...';
 
     var codeRow = mkEl('div', 'code-row');
     var codeInput = mkEl('input', 'form-input');
@@ -2956,7 +2968,7 @@
     codeInput.placeholder = '6 位验证码';
     codeInput.maxLength = 6;
     codeInput.setAttribute('inputmode', 'numeric');
-    var sendBtn = mkBtn('📧 发送验证码');
+    var sendBtn = mkBtn('<i class="ic ic-mail"></i> 发送验证码');
     sendBtn.className = 'btn btn-outline btn-xs';
     codeRow.appendChild(codeInput);
     codeRow.appendChild(sendBtn);
@@ -2968,7 +2980,7 @@
     body.appendChild(status);
 
     var foot = mkEl('div', 'md-modal-foot');
-    var confirmBtn = mkBtn('🗑 确认注销（不可恢复）');
+    var confirmBtn = mkBtn('<i class="ic ic-trash"></i> 确认注销（不可恢复）');
     confirmBtn.className = 'btn btn-primary btn-xs btn-danger';
     var cancelBtn = mkBtn('取消');
     cancelBtn.className = 'btn btn-outline btn-xs';
@@ -2990,7 +3002,7 @@
         var r = await resp.json();
         if (r.logged_in && r.user && r.user.email) {
           userEmail = r.user.email;
-          emailInfo.textContent = '📧 账号邮箱：' + maskEmail(userEmail) + '（验证码将发送到该邮箱）';
+          setIconText(emailInfo, 'mail', '账号邮箱：' + maskEmail(userEmail) + '（验证码将发送到该邮箱）');
         } else {
           emailInfo.textContent = '⚠️ 无法获取账号邮箱，请刷新页面后重试';
           sendBtn.disabled = true;
@@ -3065,13 +3077,13 @@
           status.textContent = '❌ ' + (r.message || '注销失败');
           status.style.display = 'block';
           confirmBtn.disabled = false;
-          confirmBtn.textContent = '🗑 确认注销（不可恢复）';
+          confirmBtn.innerHTML = '<i class="ic ic-trash"></i> 确认注销（不可恢复）';
         }
       } catch (e) {
         status.textContent = '❌ ' + (e.message || '网络错误');
         status.style.display = 'block';
         confirmBtn.disabled = false;
-        confirmBtn.textContent = '🗑 确认注销（不可恢复）';
+        confirmBtn.innerHTML = '<i class="ic ic-trash"></i> 确认注销（不可恢复）';
       }
     });
     cancelBtn.addEventListener('click', closeDeleteAccountDialog);
@@ -3132,8 +3144,8 @@
       overlay.style.zIndex = '21000';
       var modal = mkEl('div', 'md-modal tutorial-modal');
       var head = mkEl('div', 'md-modal-head');
-      head.appendChild(mkEl('div', 'md-modal-title', '📖 使用教程 · 从入门到大师'));
-      var closeBtn = mkBtn('✕ 关闭', '关闭教程');
+      head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-book"></i> 使用教程 · 从入门到大师'));
+      var closeBtn = mkBtn('<i class="ic ic-close"></i> 关闭', '关闭教程');
       closeBtn.className = 'md-modal-close';
       closeBtn.addEventListener('click', function () { document.body.removeChild(overlay); });
       head.appendChild(closeBtn);
@@ -3161,8 +3173,8 @@
 
     var modal = mkEl('div', 'md-modal tutorial-modal');
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '📖 新手教程 · 从零玩转 Pixel Notes'));
-    var closeBtn = mkBtn('✕ 关闭', '关闭教程');
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-book"></i> 新手教程 · 从零玩转 Pixel Notes'));
+    var closeBtn = mkBtn('<i class="ic ic-close"></i> 关闭', '关闭教程');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', function () { document.body.removeChild(overlay); });
     head.appendChild(closeBtn);
@@ -3268,8 +3280,8 @@
     overlay.style.zIndex = '21000';
     var modal = mkEl('div', 'md-modal md-colors-modal');
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '🎨 渲染颜色自定义'));
-    var closeBtn = mkBtn('✕', '关闭');
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-palette"></i> 渲染颜色自定义'));
+    var closeBtn = mkBtn('<i class="ic ic-close"></i>', '关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeNoSave);
     head.appendChild(closeBtn);
@@ -3365,7 +3377,7 @@
 
     var btnWrap = mkEl('div', null, '');
     btnWrap.style.cssText = 'display:flex;gap:10px;margin-top:14px;';
-    var saveBtn = mkBtn('💾 保存', '保存全部自定义颜色（仅本浏览器生效）');
+    var saveBtn = mkBtn('<i class="ic ic-save"></i> 保存', '保存全部自定义颜色（仅本浏览器生效）');
     saveBtn.className = 'btn btn-primary btn-sm';
     saveBtn.style.flex = '1';
     saveBtn.addEventListener('click', function () {
@@ -3374,7 +3386,7 @@
       showToast('🎨 渲染颜色已保存（本浏览器生效）', 'success');
       document.body.removeChild(overlay);
     });
-    var resetBtn = mkBtn('↩️ 全部恢复默认', '清除全部自定义，回到主题默认色');
+    var resetBtn = mkBtn('<i class="ic ic-back"></i> 全部恢复默认', '清除全部自定义，回到主题默认色');
     resetBtn.className = 'btn btn-outline btn-sm';
     resetBtn.style.flex = '1';
     resetBtn.addEventListener('click', function () {
@@ -3458,9 +3470,9 @@
     }
 
     var foot = mkEl('div', 'md-modal-foot');
-    var editBtn = mkBtn('✏️ 编辑');
+    var editBtn = mkBtn('<i class="ic ic-pencil"></i> 编辑');
     editBtn.className = 'btn btn-primary btn-xs';
-    var delBtn = mkBtn('🗑 删除');
+    var delBtn = mkBtn('<i class="ic ic-trash"></i> 删除');
     delBtn.className = 'btn btn-danger btn-xs';
     var pinInfo = mkEl('span', 'md-hint',
       '🕐 更新于 ' + (note.updated_at || '') + ' · Esc 关闭');

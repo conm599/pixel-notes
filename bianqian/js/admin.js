@@ -22,7 +22,7 @@
         out.textContent = '❌ 网络错误，无法访问接口';
       }
       btn.disabled = false;
-      btn.textContent = '🔌 测试连接';
+      btn.innerHTML = '<i class="ic ic-plug"></i> 测试连接';
     });
   }
 
@@ -73,7 +73,7 @@
         mailOut.textContent = '❌ 网络错误';
       }
       mailBtn.disabled = false;
-      mailBtn.textContent = '📨 测试发信';
+      mailBtn.innerHTML = '<i class="ic ic-send"></i> 测试发信';
     });
   }
 })();
