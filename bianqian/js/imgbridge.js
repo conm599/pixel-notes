@@ -155,18 +155,18 @@ var ImgBridge = (function () {
             box.className = 'imgbridge-modal';
             var title = document.createElement('div');
             title.className = 'imgbridge-title';
-            title.textContent = '🖼 使用图床保存图片';
+            title.innerHTML = '<i class="ic ic-image"></i> 使用图床保存图片';
             var body = document.createElement('div');
             body.className = 'imgbridge-body';
             body.innerHTML = ctx.policyHtml; // index.php 服务端提供的规范文案（可信源）
             var btns = document.createElement('div');
             btns.className = 'imgbridge-btns';
             var ok = document.createElement('button');
-            ok.type = 'button'; ok.className = 'ib-ok'; ok.textContent = '✅ 同意并继续';
+            ok.type = 'button'; ok.className = 'ib-ok'; ok.innerHTML = '<i class="ic ic-checkall"></i> 同意并继续';
             var later = document.createElement('button');
             later.type = 'button'; later.textContent = '⏭ 暂不（本次跳过）';
             var never = document.createElement('button');
-            never.type = 'button'; never.className = 'ib-never'; never.textContent = '🚫 不再询问';
+            never.type = 'button'; never.className = 'ib-never'; never.innerHTML = '<i class="ic ic-ban"></i> 不再询问';
             btns.appendChild(ok); btns.appendChild(later); btns.appendChild(never);
             box.appendChild(title); box.appendChild(body); box.appendChild(btns);
             mask.appendChild(box);
@@ -207,16 +207,16 @@ var ImgBridge = (function () {
         box.className = 'imgbridge-modal';
         var title = document.createElement('div');
         title.className = 'imgbridge-title';
-        title.textContent = '🖼 图床图片设置（当前：' + stateText + '）';
+        title.innerHTML = '<i class="ic ic-image"></i> 图床图片设置（当前：' + stateText + '）';
         var body = document.createElement('div');
         body.className = 'imgbridge-body';
         body.innerHTML = ctx.policyHtml;
         var btns = document.createElement('div');
         btns.className = 'imgbridge-btns';
         var ok = document.createElement('button');
-        ok.type = 'button'; ok.className = 'ib-ok'; ok.textContent = '✅ 同意使用';
+        ok.type = 'button'; ok.className = 'ib-ok'; ok.innerHTML = '<i class="ic ic-checkall"></i> 同意使用';
         var never = document.createElement('button');
-        never.type = 'button'; never.className = 'ib-never'; never.textContent = '🚫 不再使用';
+        never.type = 'button'; never.className = 'ib-never'; never.innerHTML = '<i class="ic ic-ban"></i> 不再使用';
         var close = document.createElement('button');
         close.type = 'button'; close.textContent = '完成';
         btns.appendChild(ok); btns.appendChild(never); btns.appendChild(close);
@@ -272,7 +272,7 @@ var ImgBridge = (function () {
         var b = document.createElement('button');
         b.type = 'button';
         b.className = 'imgbridge-attach';
-        b.textContent = '🖼';
+        b.innerHTML = '<i class="ic ic-image"></i>';
         b.title = '插入图片（上传到图床，三端同链路）';
         b.addEventListener('click', function () {
             var inp = document.createElement('input');

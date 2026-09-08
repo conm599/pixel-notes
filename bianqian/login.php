@@ -18,18 +18,20 @@ if (isset($_SESSION['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>登录 - Pixel Notes</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
+    <link rel="stylesheet" href="css/icons.css?v=2">
+    <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
 <body>
     <div class="auth-container">
         <div class="auth-box">
-            <h1>🎮<br>PIXEL NOTES</h1>
+            <h1><i class="ic ic-gamepad ic-22"></i><br>PIXEL NOTES</h1>
             <p class="subtitle">欢迎回来，冒险者！</p>
 
             <div class="auth-tabs">
-                <button type="button" class="auth-tab active" data-panel="pass">🔐 密码登录</button>
-                <button type="button" class="auth-tab" data-panel="code">📧 验证码登录</button>
+                <button type="button" class="auth-tab active" data-panel="pass"><i class="ic ic-lock"></i> 密码登录</button>
+                <button type="button" class="auth-tab" data-panel="code"><i class="ic ic-mail"></i> 验证码登录</button>
             </div>
 
             <div id="errorMsg" class="error-msg" style="display:none;"></div>
@@ -46,7 +48,7 @@ if (isset($_SESSION['user_id'])) {
                     <input type="password" id="password" class="form-input" placeholder="输入密码" required autocomplete="current-password">
                 </div>
                 <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">▶ 登录</button>
+                    <button type="submit" class="btn btn-primary"><i class="ic ic-play-pink"></i> 登录</button>
                 </div>
                 <p class="auth-link" style="text-align:right;"><a href="#" id="gotoReset">忘记密码？</a></p>
             </form>
@@ -65,13 +67,13 @@ if (isset($_SESSION['user_id'])) {
                     </div>
                 </div>
                 <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">▶ 验证并登录</button>
+                    <button type="submit" class="btn btn-primary"><i class="ic ic-play-pink"></i> 验证并登录</button>
                 </div>
             </form>
 
             <!-- 面板三：找回密码 -->
             <form id="resetForm" class="auth-panel" data-panel="reset">
-                <p class="md-hint" style="margin-bottom:14px;">📨 重置密码：输入注册邮箱 → 收验证码 → 设置新密码</p>
+                <p class="md-hint" style="margin-bottom:14px;"><i class="ic ic-send"></i> 重置密码：输入注册邮箱 → 收验证码 → 设置新密码</p>
                 <div class="form-group">
                     <label class="form-label" for="resetEmail">注册邮箱</label>
                     <input type="email" id="resetEmail" class="form-input" placeholder="your@email.com" required autocomplete="email">
@@ -88,7 +90,7 @@ if (isset($_SESSION['user_id'])) {
                     <input type="password" id="resetPass" class="form-input" placeholder="至少 8 个字符" required minlength="8" autocomplete="new-password">
                 </div>
                 <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">🔑 重置密码</button>
+                    <button type="submit" class="btn btn-primary"><i class="ic ic-key-pink"></i> 重置密码</button>
                 </div>
                 <p class="auth-link" style="text-align:center;"><a href="#" id="backLogin">← 返回登录</a></p>
             </form>

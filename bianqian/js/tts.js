@@ -446,7 +446,7 @@
     await stopped;
     els.audio.removeEventListener('ended', onEnded);
     els.audio.controls = true;
-    els.btnVideo.textContent = '🎬 生成视频';
+    els.btnVideo.innerHTML = '<i class="ic ic-film"></i> 生成视频';
     els.recStatus.style.display = 'none';
 
     if (rec.finished && chunks.length) {

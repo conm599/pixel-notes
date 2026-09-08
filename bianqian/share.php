@@ -140,6 +140,7 @@ $accent = isset($note['color']) && isset($colorMap[$note['color']]) ? $colorMap[
 <meta name="robots" content="noindex, nofollow">
 <title><?= $notfound ? '分享不存在' : '分享的便签 - Pixel Notes' ?></title>
 <link rel="stylesheet" href="css/pixel.css?v=59">
+<link rel="stylesheet" href="css/icons.css?v=2">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <script src="js/md.js?v=41" nonce="<?= htmlspecialchars($cspNonce) ?>"></script>
@@ -148,7 +149,7 @@ $accent = isset($note['color']) && isset($colorMap[$note['color']]) ? $colorMap[
 <div class="share-wrap">
 <?php if ($notfound): ?>
     <div class="share-empty">
-        <div class="icon">💀</div>
+        <div class="icon"><i class="ic ic-skull ic-lg"></i></div>
         <p>分享不存在或已过期</p>
         <a class="btn btn-outline" href="/">返回首页</a>
     </div>
@@ -221,7 +222,7 @@ $accent = isset($note['color']) && isset($colorMap[$note['color']]) ? $colorMap[
                 head.innerHTML = '<div class="md-modal-title">' + esc(note.title || '无标题') + '</div>';
                 var closeBtn = document.createElement('button');
                 closeBtn.className = 'md-modal-close';
-                closeBtn.textContent = '✖ 关闭';
+                closeBtn.innerHTML = '<i class="ic ic-close"></i> 关闭';
                 closeBtn.addEventListener('click', closeReadModal);
                 head.appendChild(closeBtn);
                 var body = document.createElement('div');

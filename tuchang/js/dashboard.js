@@ -598,7 +598,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (mask) return mask;
     mask = document.createElement('div');
     mask.id = 'dropMask';
-    mask.innerHTML = '<div class="dm-inner">📥 松手上传到当前文件夹</div>';
+    mask.innerHTML = '<div class="dm-inner"><i class="ic ic-paste"></i> 松手上传到当前文件夹</div>';
     document.body.appendChild(mask);
     return mask;
   }
@@ -769,7 +769,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!panel) return;
     var on = panel.style.display !== 'none';
     panel.style.display = on ? 'none' : '';
-    btn.textContent = on ? '🔑 API' : '✕ 收起';
+    btn.innerHTML = on ? '<i class="ic ic-key"></i> API' : '<i class="ic ic-close"></i> 收起';
   });
 })();
 

@@ -11,6 +11,7 @@ $base = base_url();
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>API 使用说明 · 陶瓦图床</title>
 <link rel="stylesheet" href="css/pixel-blue.css?v=13">
+<link rel="stylesheet" href="css/icons.css?v=2">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
@@ -60,7 +61,7 @@ $base = base_url();
   <p>供外部程序 / Minecraft Mod / 自动化脚本调用 · Bearer Key 鉴权 · 无需登录</p>
 </div>
 
-<a class="back-link" href="dashboard.php">← 返回控制台</a>
+<a class="back-link" href="dashboard.php"><i class="ic ic-back"></i> 返回控制台</a>
 
 <!-- ==================== 鉴权 ==================== -->
 <div class="doc-section">

@@ -263,7 +263,7 @@ $pending = isset($_SESSION['pn_backup_raw'], $_SESSION['pn_backup_stats']);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 数据备份与迁移</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
-    <link rel="stylesheet" href="css/icons.css?v=1">
+    <link rel="stylesheet" href="css/icons.css?v=2">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -284,7 +284,7 @@ $pending = isset($_SESSION['pn_backup_raw'], $_SESSION['pn_backup_stats']);
         <?php if ($msg !== ''): ?><div class="ai-admin-msg <?= $msgType === 'ok' ? 'ok' : 'err' ?>"><?= $msg ?></div><?php endif; ?>
 
         <div class="toolbar">
-            <span class="toolbar-title">📦 数据导出</span>
+            <span class="toolbar-title"><i class="ic ic-box"></i> 数据导出</span>
             <div class="toolbar-actions"><span class="md-hint">全库结构 + 数据打包为 JSON（含 SMTP 凭据等敏感配置，请妥善保管备份文件）</span></div>
         </div>
         <div class="ai-admin-form">
@@ -293,7 +293,7 @@ $pending = isset($_SESSION['pn_backup_raw'], $_SESSION['pn_backup_stats']);
         </div>
 
         <div class="toolbar" style="margin-top:24px;">
-            <span class="toolbar-title">♻️ 数据导入（危险操作）</span>
+            <span class="toolbar-title"><i class="ic ic-recycle"></i> 数据导入（危险操作）</span>
             <div class="toolbar-actions"><span class="md-hint">导入会【清空并完全替换】当前所有数据，事务保护：失败自动回滚</span></div>
         </div>
         <form method="post" enctype="multipart/form-data" class="ai-admin-form" autocomplete="off">
@@ -302,7 +302,7 @@ $pending = isset($_SESSION['pn_backup_raw'], $_SESSION['pn_backup_stats']);
                 <label class="form-label">选择备份文件（JSON）</label>
                 <input type="file" name="backup" accept=".json,application/json" class="form-input" required>
             </div>
-            <button type="submit" class="btn btn-primary btn-sm">📤 上传并进入验证</button>
+            <button type="submit" class="btn btn-primary btn-sm"><i class="ic ic-upload-pink"></i> 上传并进入验证</button>
         </form>
 
         <?php if ($pending): ?>
