@@ -28,6 +28,10 @@ define('DB_NAME', suite_cfg('bianqian_db_name', 'CHANGE_ME_DB_NAME'));
 define('DB_USER', suite_cfg('bianqian_db_user', 'CHANGE_ME_DB_USER'));
 define('DB_PASS', suite_cfg('bianqian_db_pass', 'CHANGE_ME_DB_PASS')); // 凭证由 /admini 面板或环境变量提供
 
+// 展示时区（默认北京时间；可用 suite-config.php 的 app_timezone 覆盖，如 'UTC'）。
+// VPS 系统时区多为 UTC，不显式设定会导致便签编辑时间「看起来是太平洋时间」（差 8 小时）。
+date_default_timezone_set(suite_cfg('app_timezone', 'Asia/Shanghai'));
+
 function getDB() {
     static $pdo = null;
     if ($pdo === null) {
@@ -38,9 +42,11 @@ function getDB() {
         );
         try {
             $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
+            $pdo->exec("SET time_zone = '" . date('P') . "'");   // SQL NOW() 与 PHP 同一时区
         } catch (PDOException $e) {
             $dsn = 'mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=utf8';
             $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
+            $pdo->exec("SET time_zone = '" . date('P') . "'");
         }
     }
     return $pdo;
