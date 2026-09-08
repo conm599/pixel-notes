@@ -263,6 +263,8 @@ $pending = isset($_SESSION['pn_backup_raw'], $_SESSION['pn_backup_stats']);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 数据备份与迁移</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
+    <link rel="stylesheet" href="css/icons.css?v=1">
+    <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
@@ -270,10 +272,10 @@ $pending = isset($_SESSION['pn_backup_raw'], $_SESSION['pn_backup_stats']);
     <nav class="navbar">
         <a href="index.php" class="navbar-brand"><span class="icon">🎮</span> PIXEL NOTES</a>
         <div class="navbar-user">
-            <span>👤 <?= htmlspecialchars((string)$me['username']) ?> · 管理员</span>
+            <span><i class="ic ic-user"></i> <?= htmlspecialchars((string)$me['username']) ?> · 管理员</span>
             <a href="admin.php" class="btn btn-outline btn-xs">← 返回管理面板</a>
             <form method="post" action="logout.php" style="display:inline;margin:0;">
-                <button type="submit" class="btn btn-outline btn-xs">退出</button>
+                <button type="submit" class="btn btn-outline btn-xs"><i class="ic ic-exit"></i> 退出</button>
             </form>
         </div>
     </nav>

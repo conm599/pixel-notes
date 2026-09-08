@@ -43,6 +43,8 @@ $csrf = csrf_token();
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
 <link rel="stylesheet" href="css/pixel-blue.css?v=13">
+<link rel="stylesheet" href="css/icons.css?v=1">
+<script src="js/iconset.js?v=1"></script>
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
@@ -53,13 +55,13 @@ $csrf = csrf_token();
     <div class="brand">陶瓦<span>图床</span></div>
     <div class="top-user">
 <?php if (!empty($_SESSION['is_admin'])): // 与 adminws 门禁同一标记 ?>
-      <a class="link-btn" href="adminws.php" title="管理后台">⚙ 管理</a>
+      <a class="link-btn" href="adminws.php" title="管理后台"><i class="ic ic-gear"></i> 管理</a>
 <?php endif; ?>
       <button type="button" class="link-btn" id="apiToggle" title="开发者 API Key">🔑 API</button>
       <a class="link-btn" href="<?php echo e(siblingUrl('bianqian', '/index.php')); ?>" title="返回便签">🏠 便签</a>
       <div class="avatar"><?php echo e(strtoupper(substr($uname, 0, 1))); ?></div>
       <span><?php echo e($uname); ?></span>
-      <a class="link-btn" href="logout.php">退出</a>
+      <a class="link-btn" href="logout.php"><i class="ic ic-exit"></i> 退出</a>
     </div>
   </div>
 
@@ -95,7 +97,7 @@ $csrf = csrf_token();
   </div>
 
   <div class="dropzone" id="dz">
-    <div class="dz-icon">🖼</div>
+    <div class="dz-icon"><i class="ic ic-image ic-lg"></i></div>
     <div class="dz-title">拖拽图片到这里，或点击选择</div>
     <div class="dz-sub">自动压缩为 <span>WebP 60%</span> · 支持 JPG / PNG / WebP / GIF · 单张上限 4MB</div>
     <input type="file" id="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden>

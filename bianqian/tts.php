@@ -18,6 +18,8 @@ if (!isset($_SESSION['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>朗读工坊 - Pixel Notes</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
+    <link rel="stylesheet" href="css/icons.css?v=1">
+    <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
@@ -28,7 +30,7 @@ if (!isset($_SESSION['user_id'])) {
             <span class="icon">🔊</span> 朗读工坊
         </a>
         <div class="navbar-user">
-            <span>👤 <?= htmlspecialchars($_SESSION['username']) ?></span>
+            <span><i class="ic ic-user"></i> <?= htmlspecialchars($_SESSION['username']) ?></span>
             <a href="index.php" class="btn btn-outline btn-xs">← 返回便签</a>
         </div>
     </nav>

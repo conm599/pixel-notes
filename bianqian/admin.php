@@ -160,6 +160,8 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 管理面板</title>
     <link rel="stylesheet" href="css/pixel.css?v=54">
+    <link rel="stylesheet" href="css/icons.css?v=1">
+    <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
@@ -167,11 +169,11 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
     <nav class="navbar">
         <a href="index.php" class="navbar-brand"><span class="icon">🎮</span> PIXEL NOTES</a>
         <div class="navbar-user">
-            <span>👤 <?= htmlspecialchars($_SESSION['username']) ?> · 管理员</span>
+            <span><i class="ic ic-user"></i> <?= htmlspecialchars($_SESSION['username']) ?> · 管理员</span>
             <a href="backup.php" class="btn btn-outline btn-xs">📦 数据备份与迁移</a>
             <a href="index.php" class="btn btn-outline btn-xs">← 返回便签</a>
             <form method="post" action="logout.php" style="display:inline;margin:0;">
-                <button type="submit" class="btn btn-outline btn-xs">退出</button>
+                <button type="submit" class="btn btn-outline btn-xs"><i class="ic ic-exit"></i> 退出</button>
             </form>
         </div>
     </nav>
