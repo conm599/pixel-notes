@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=61">
+    <link rel="stylesheet" href="css/pixel.css?v=62">
     <link rel="stylesheet" href="css/icons.css?v=3">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
@@ -50,10 +50,37 @@ if (!isset($_SESSION['user_id'])) {
                 </div>
             </div>
             <form method="post" action="logout.php" style="display:inline;margin:0;">
-                <button type="submit" class="btn btn-outline btn-xs"><i class="ic ic-exit"></i> 退出</button>
+                <button type="submit" class="btn btn-outline btn-xs nav-hide-m"><i class="ic ic-exit"></i> 退出</button>
             </form>
+            <button type="button" id="btnMobileMenu" class="btn-mobile-menu" aria-label="打开菜单" aria-expanded="false" aria-controls="mobileMenu"><i class="ic-bars"></i></button>
         </div>
     </nav>
+
+    <!-- 移动端抽屉菜单（PC 隐藏） -->
+    <div id="mobileOverlay" class="mobile-overlay"></div>
+    <nav id="mobileMenu" class="mobile-menu" aria-hidden="true">
+        <div class="mm-head"><i class="ic ic-gamepad ic-22"></i> PIXEL NOTES</div>
+        <div class="mm-group">动作</div>
+        <button type="button" id="mNew" class="mm-item"><i class="ic ic-plus"></i> 新建便签</button>
+        <button type="button" id="mAi" class="mm-item"><i class="ic ic-robot"></i> AI 整理</button>
+        <button type="button" id="mFolder" class="mm-item"><i class="ic ic-folder"></i> 新建文件夹</button>
+        <button type="button" id="mSearch" class="mm-item"><i class="ic ic-search"></i> 搜索</button>
+        <div class="mm-group">位置</div>
+        <a href="tts.php" class="mm-item"><i class="ic ic-speaker"></i> 朗读工坊</a>
+        <a href="<?php echo htmlspecialchars(siblingUrl('tuchang', '/dashboard.php'), ENT_QUOTES, 'UTF-8'); ?>" class="mm-item"><i class="ic ic-image"></i> 图床</a>
+        <div class="mm-group">设置</div>
+        <button type="button" id="mTutorial" class="mm-item"><i class="ic ic-book"></i> 新手教程</button>
+        <button type="button" id="mImgBridge" class="mm-item"><i class="ic ic-image"></i> 图床图片</button>
+        <button type="button" id="mMdColors" class="mm-item"><i class="ic ic-palette"></i> 渲染颜色</button>
+        <button type="button" id="mIconset" class="mm-item">图标风格</button>
+        <a href="https://github.com/conm599/pixel-notes" target="_blank" rel="noopener" class="mm-item"><i class="ic ic-star"></i> GitHub</a>
+        <button type="button" id="mChangePass" class="mm-item"><i class="ic ic-key"></i> 更改密码</button>
+        <?php if (isAdminUser()): ?><a href="admin.php" class="mm-item"><i class="ic ic-gear"></i> 管理面板</a><?php endif; ?>
+        <button type="button" id="mLogout" class="mm-item mm-danger"><i class="ic ic-exit"></i> 退出登录</button>
+    </nav>
+
+    <!-- 移动端主操作 FAB -->
+    <button type="button" id="fabNew" class="fab" aria-label="新建便签"><i class="ic ic-plus-pink"></i></button>
 
     <!-- 主内容区 -->
     <div class="main-container">
@@ -130,6 +157,6 @@ if (!isset($_SESSION['user_id'])) {
         "policyHtml": <?php echo json_encode('<p>图片将上传到你的图床账户「便签」文件夹：</p><ul><li>上传后自动转为<b>可公开访问</b>的图片链接（拿到链接即可查看）</li><li>图片随便签存续；<b>从便签删除后，图床仍保留 30 天</b>供反悔，到期自动清理</li><li>需要长期保留的图片，请到图床把它改为「永久」或自定义时长</li><li>在图床删除图片后，便签中该处将显示占位图</li><li>单张 ≤10MB（自动压缩为 WebP），占用图床配额</li><li>禁止上传违法违规内容；可在图床随时管理或删除</li></ul>', JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE); ?>
     }</script>
     <script src="js/imgbridge.js?v=4"></script>
-    <script src="js/app.js?v=87"></script>
+    <script src="js/app.js?v=88"></script>
 </body>
 </html>

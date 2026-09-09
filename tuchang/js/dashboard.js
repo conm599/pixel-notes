@@ -769,7 +769,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!panel) return;
     var on = panel.style.display !== 'none';
     panel.style.display = on ? 'none' : '';
-    btn.innerHTML = on ? '<i class="ic ic-key"></i> API' : '<i class="ic ic-close"></i> 收起';
+    btn.innerHTML = on ? '<i class="ic ic-key"></i> <span class="tb-label">API</span>' : '<i class="ic ic-close"></i> <span class="tb-label">收起</span>';
   });
 })();
 
