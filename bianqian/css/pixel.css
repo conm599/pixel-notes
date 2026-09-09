@@ -1098,11 +1098,11 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
   padding: 14px; cursor: pointer; user-select: none;
   transition: transform 0.1s, box-shadow 0.1s;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 14px; min-height: 260px; padding: 24px 18px;
+  gap: 10px; min-height: 170px; padding: 18px 16px;
 }
 .folder-card:hover { transform: translate(-2px,-2px); box-shadow: 6px 6px 0 #000; }
 .folder-card .folder-icon { font-size: 28px; line-height: 1; }
-.folder-card .folder-icon .ic { width: 112px; height: 112px; }
+.folder-card .folder-icon .ic { width: 56px; height: 56px; }
 .folder-card .folder-icon .ic-folder { background-size: contain; }
 .folder-card .folder-name {
   font-size: 13px; font-weight: bold; color: var(--accent2);
