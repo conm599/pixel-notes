@@ -3134,6 +3134,59 @@
     settingsMenu.style.display = settingsMenu.style.display === 'none' ? 'block' : 'none';
   }
 
+  // ============== 移动端抽屉菜单（v88） ==============
+  var mm = document.getElementById('mobileMenu');
+  var mmOverlay = document.getElementById('mobileOverlay');
+  var mmBtn = document.getElementById('btnMobileMenu');
+  function mmOpen() {
+    if (!mm) return;
+    mm.classList.add('open');
+    if (mmOverlay) mmOverlay.classList.add('open');
+    document.body.classList.add('mm-open');
+    if (mmBtn) mmBtn.setAttribute('aria-expanded', 'true');
+    mm.setAttribute('aria-hidden', 'false');
+  }
+  function mmClose() {
+    if (!mm) return;
+    mm.classList.remove('open');
+    if (mmOverlay) mmOverlay.classList.remove('open');
+    document.body.classList.remove('mm-open');
+    if (mmBtn) mmBtn.setAttribute('aria-expanded', 'false');
+    mm.setAttribute('aria-hidden', 'true');
+  }
+  if (mmBtn && mm) {
+    mmBtn.addEventListener('click', function () {
+      mm.classList.contains('open') ? mmClose() : mmOpen();
+    });
+    if (mmOverlay) mmOverlay.addEventListener('click', mmClose);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') mmClose(); });
+    // 菜单项：转接触发器（复用既有 id 处理器）
+    function mmBind(mid, fn) {
+      var el = document.getElementById(mid);
+      if (el) el.addEventListener('click', function () { mmClose(); setTimeout(fn, 60); });
+    }
+    mmBind('mNew', function () { var b = document.getElementById('btnNewNote'); if (b) b.click(); });
+    mmBind('mAi', function () { var b = document.getElementById('btnAiOrganize'); if (b) b.click(); });
+    mmBind('mFolder', function () { var b = document.getElementById('btnNewFolder'); if (b) b.click(); });
+    mmBind('mSearch', function () { var b = document.getElementById('searchInput'); if (b) { b.focus(); b.scrollIntoView({ block: 'center' }); } });
+    mmBind('mTutorial', function () { var b = document.getElementById('btnTutorial'); if (b) b.click(); });
+    mmBind('mImgBridge', function () { var b = document.getElementById('btnImgBridge'); if (b) b.click(); });
+    mmBind('mMdColors', function () { var b = document.getElementById('btnMdColors'); if (b) b.click(); });
+    mmBind('mIconset', function () { var b = document.getElementById('btnIconset'); if (b) b.click(); else if (window.PixelIconset) window.PixelIconset.set(window.PixelIconset.get() === 'mix' ? 'v1' : (window.PixelIconset.get() === 'v1' ? 'v2' : 'mix')); });
+    mmBind('mChangePass', function () { var b = document.getElementById('btnChangePass'); if (b) b.click(); });
+    mmBind('mLogout', function () { var f = document.querySelector('form[action="logout.php"]'); if (f) f.submit(); });
+    // FAB：新建便签
+    var fab = document.getElementById('fabNew');
+    if (fab) fab.addEventListener('click', function () { var b = document.getElementById('btnNewNote'); if (b) b.click(); });
+    // 编辑器开合时标 body，FAB 让位
+    if (newNoteForm) {
+      new MutationObserver(function () {
+        var open = newNoteForm.style.display !== 'none';
+        document.body.classList.toggle('editor-open', open);
+      }).observe(newNoteForm, { attributes: true, attributeFilter: ['style'] });
+    }
+  }
+
   if (btnSettings && settingsMenu) {
     btnSettings.addEventListener('click', function (e) {
       e.stopPropagation();

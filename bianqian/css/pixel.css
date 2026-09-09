@@ -1389,3 +1389,100 @@ body.marquee-selecting .note-card, body.marquee-selecting .folder-card { cursor:
 .ic.ic-spin { animation: icRotate 1.1s steps(8) infinite; }
 @keyframes icRotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ic.ic-spin { animation: none; } }
+
+/* ===== 移动端抽屉导航 + FAB（v62；PC 全部隐藏）===== */
+.btn-mobile-menu, .mobile-overlay, .mobile-menu, .fab { display: none; }
+.ic-bars, .ic-bars::before, .ic-bars::after { display: none; }
+
+@media (max-width: 768px) {
+  /* 汉堡钮：44px 触控目标 */
+  .btn-mobile-menu {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; min-width: 44px;
+    background: transparent; border: 2px solid var(--accent2);
+    color: var(--accent2); cursor: pointer; flex-shrink: 0;
+    box-shadow: 2px 2px 0 #1a6a7a; padding: 0;
+  }
+  .btn-mobile-menu:active { transform: translate(2px, 2px); }
+  /* 三横杠：CSS 绘制，像素风粗线 */
+  .ic-bars, .ic-bars::before, .ic-bars::after {
+    display: block; content: '';
+    width: 20px; height: 3px; background: currentColor;
+  }
+  .ic-bars { position: relative; }
+  .ic-bars::before { position: absolute; top: -6px; left: 0; }
+  .ic-bars::after { position: absolute; top: 6px; left: 0; }
+  .btn-mobile-menu[aria-expanded="true"] .ic-bars { background: transparent; }
+  .btn-mobile-menu[aria-expanded="true"] .ic-bars::before { top: 0; transform: rotate(45deg); }
+  .btn-mobile-menu[aria-expanded="true"] .ic-bars::after { top: 0; transform: rotate(-45deg); }
+
+  /* PC 导航按钮隐藏（退出/朗读/图床/设置收进抽屉） */
+  .nav-hide-m { display: none !important; }
+  .nav-settings-wrap { display: none !important; }
+
+  /* 遮罩 */
+  .mobile-overlay {
+    display: none; position: fixed; inset: 0; z-index: 900;
+    background: rgba(5, 5, 15, 0.72);
+  }
+  .mobile-overlay.open { display: block; }
+
+  /* 抽屉：右侧滑出 */
+  .mobile-menu {
+    display: flex; flex-direction: column;
+    position: fixed; top: 0; right: -290px; bottom: 0; z-index: 901;
+    width: 280px; max-width: 84vw;
+    background: var(--bg-panel);
+    border-left: 3px solid var(--accent2);
+    box-shadow: -6px 0 0 rgba(0, 0, 0, 0.5);
+    padding: 18px 14px calc(24px + env(safe-area-inset-bottom));
+    overflow-y: auto; overscroll-behavior: contain;
+    transition: right 0.22s steps(6);
+  }
+  .mobile-menu.open { right: 0; }
+  .mm-head {
+    font-size: 12px; color: var(--accent); letter-spacing: 1px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 6px 14px; border-bottom: 2px dashed var(--border-color);
+    margin-bottom: 10px;
+  }
+  .mm-group {
+    font-family: var(--font-body); font-size: 11px; color: var(--text-dim);
+    letter-spacing: 2px; padding: 12px 8px 6px;
+  }
+  .mm-item {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%; min-height: 48px;
+    font-family: var(--font-body); font-size: 15px; color: var(--text-primary);
+    background: none; border: 2px solid transparent;
+    padding: 10px 12px; cursor: pointer; text-decoration: none;
+    text-align: left;
+  }
+  .mm-item:active { border-color: var(--accent2); background: rgba(74, 240, 255, 0.08); }
+  .mm-item .ic { width: 20px; height: 20px; flex-shrink: 0; }
+  .mm-danger { color: var(--danger); }
+  .mm-danger:active { border-color: var(--danger); background: rgba(255, 68, 102, 0.08); }
+
+  /* FAB：右下主操作（56px，拇指区） */
+  .fab {
+    display: flex; align-items: center; justify-content: center;
+    position: fixed; right: 18px; bottom: calc(22px + env(safe-area-inset-bottom));
+    z-index: 800;
+    width: 56px; height: 56px; border-radius: 0;
+    background: var(--accent); border: 3px solid #cc4477;
+    box-shadow: 4px 4px 0 #cc4477;
+    cursor: pointer;
+  }
+  .fab:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #cc4477; }
+  .fab .ic { width: 26px; height: 26px; }
+
+  /* 工具栏在手机上：只留标题+面包屑+搜索，按钮收抽屉 */
+  .toolbar-actions .btn { display: none; }
+  .toolbar-actions .search-box { flex: 1; }
+}
+
+@media (max-width: 768px) {
+  body.mm-open { overflow: hidden; }
+  /* 编辑器展开时 FAB 让位 */
+  body.editor-open .fab { display: none; }
+}

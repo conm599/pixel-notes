@@ -42,7 +42,7 @@ $csrf = csrf_token();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=14">
+<link rel="stylesheet" href="css/pixel-blue.css?v=15">
 <link rel="stylesheet" href="css/icons.css?v=3">
 <script src="js/iconset.js?v=1"></script>
 <link rel="icon" href="favicon.ico">
@@ -55,13 +55,13 @@ $csrf = csrf_token();
     <div class="brand">陶瓦<span>图床</span></div>
     <div class="top-user">
 <?php if (!empty($_SESSION['is_admin'])): // 与 adminws 门禁同一标记 ?>
-      <a class="link-btn" href="adminws.php" title="管理后台"><i class="ic ic-gear"></i> 管理</a>
+      <a class="link-btn" href="adminws.php" title="管理后台"><i class="ic ic-gear"></i> <span class="tb-label">管理</span></a>
 <?php endif; ?>
-      <button type="button" class="link-btn" id="apiToggle" title="开发者 API Key">🔑 API</button>
-      <a class="link-btn" href="<?php echo e(siblingUrl('bianqian', '/index.php')); ?>" title="返回便签">🏠 便签</a>
+      <button type="button" class="link-btn" id="apiToggle" title="开发者 API Key">🔑 <span class="tb-label">API</span></button>
+      <a class="link-btn" href="<?php echo e(siblingUrl('bianqian', '/index.php')); ?>" title="返回便签">🏠 <span class="tb-label">便签</span></a>
       <div class="avatar"><?php echo e(strtoupper(substr($uname, 0, 1))); ?></div>
       <span><?php echo e($uname); ?></span>
-      <a class="link-btn" href="logout.php"><i class="ic ic-exit"></i> 退出</a>
+      <a class="link-btn" href="logout.php"><i class="ic ic-exit"></i> <span class="tb-label">退出</span></a>
     </div>
   </div>
 
@@ -216,6 +216,6 @@ var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
 <script src="js/spa.js?v=9"></script>
 <script src="js/selection.js?v=10"></script>
-<script src="js/dashboard.js?v=27"></script>
+<script src="js/dashboard.js?v=28"></script>
 </body>
 </html>
