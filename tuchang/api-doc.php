@@ -11,7 +11,7 @@ $base = base_url();
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>API 使用说明 · 陶瓦图床</title>
 <link rel="stylesheet" href="css/pixel-blue.css?v=14">
-<link rel="stylesheet" href="css/icons.css?v=2">
+<link rel="stylesheet" href="css/icons.css?v=3">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>

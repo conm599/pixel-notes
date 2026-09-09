@@ -140,7 +140,7 @@ $accent = isset($note['color']) && isset($colorMap[$note['color']]) ? $colorMap[
 <meta name="robots" content="noindex, nofollow">
 <title><?= $notfound ? '分享不存在' : '分享的便签 - Pixel Notes' ?></title>
 <link rel="stylesheet" href="css/pixel.css?v=61">
-<link rel="stylesheet" href="css/icons.css?v=2">
+<link rel="stylesheet" href="css/icons.css?v=3">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <script src="js/md.js?v=41" nonce="<?= htmlspecialchars($cspNonce) ?>"></script>

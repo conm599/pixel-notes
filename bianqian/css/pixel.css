@@ -355,7 +355,7 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
   transition: all 0.15s;
 }
 .note-actions button:hover { background: rgba(0,0,0,0.7); }
-.note-actions button .ic { width: 16px; height: 16px; vertical-align: -3px; }
+.note-actions button .ic { width: 18px; height: 18px; vertical-align: -4px; }
 .note-actions button.btn-shared { color: var(--accent2); border-color: var(--accent2); }
 .note-actions button.btn-shared:hover { background: var(--accent2); color: var(--bg-dark); }
 
@@ -770,7 +770,7 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
   background: none; border: none; padding: 10px 14px; cursor: pointer;
   text-decoration: none; line-height: 1.5; white-space: nowrap;
 }
-.settings-menu-item .ic { width: 15px; height: 15px; flex-shrink: 0; }
+.settings-menu-item .ic { width: 18px; height: 18px; flex-shrink: 0; }
 .settings-menu-item:hover {
   background: var(--accent2); color: var(--bg-dark);
 }
@@ -1055,9 +1055,9 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
 
 /* === 响应式 === */
 @media (max-width: 768px) {
-  .navbar { padding: 12px 16px; }
-  .navbar-brand { font-size: 12px; }
-  .navbar-user { font-size: 11px; gap: 10px; width: 100%; justify-content: flex-start; overflow-x: auto; padding-bottom: 2px; }
+  .navbar { padding: 12px 16px; flex-wrap: nowrap; }
+  .navbar-brand { font-size: 12px; flex-shrink: 0; }
+  .navbar-user { font-size: 11px; gap: 10px; flex: 1; justify-content: flex-start; overflow-x: auto; padding-bottom: 2px; min-width: 0; }
   .navbar-user .btn-xs { padding: 8px 12px; }
   .notes-grid { grid-template-columns: 1fr; }
   .toolbar { flex-direction: column; align-items: stretch; }
@@ -1098,11 +1098,11 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
   padding: 14px; cursor: pointer; user-select: none;
   transition: transform 0.1s, box-shadow 0.1s;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 6px; min-height: 110px;
+  gap: 14px; min-height: 260px; padding: 24px 18px;
 }
 .folder-card:hover { transform: translate(-2px,-2px); box-shadow: 6px 6px 0 #000; }
 .folder-card .folder-icon { font-size: 28px; line-height: 1; }
-.folder-card .folder-icon .ic { width: 40px; height: 40px; }
+.folder-card .folder-icon .ic { width: 112px; height: 112px; }
 .folder-card .folder-icon .ic-folder { background-size: contain; }
 .folder-card .folder-name {
   font-size: 13px; font-weight: bold; color: var(--accent2);
@@ -1381,7 +1381,7 @@ body.marquee-selecting .note-card, body.marquee-selecting .folder-card { cursor:
 }
 .navbar-user-link:hover { text-decoration: underline; }
 .u-avatar { position: relative; display: inline-flex; }
-.u-avatar .ic { width: 16px; height: 16px; }
+.u-avatar .ic { width: 18px; height: 18px; }
 .u-avatar .ic-gear-badge {
   width: 10px; height: 10px; margin-left: -4px; margin-top: -6px;
   filter: drop-shadow(1px 1px 0 #000);
