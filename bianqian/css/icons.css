@@ -1,7 +1,7 @@
 /* Pixel Suite 图标系统 v1
    依赖 <html data-iconset="mix|v1|v2">（缺省 = mix），由 js/iconset.js 维护；
    资源 assets/icons/{v1,v2}/*.webp 透明像素图，改图标须 bump 本文件 ?v= */
-.ic{display:inline-block;width:16px;height:16px;background:center/contain no-repeat;image-rendering:pixelated;vertical-align:-3px}
+.ic{display:inline-block;width:18px;height:18px;background:center/contain no-repeat;image-rendering:pixelated;vertical-align:-3px}
 .ic-22{width:22px;height:22px;vertical-align:-4px}
 .ic-lg{width:48px;height:48px;vertical-align:middle}
 

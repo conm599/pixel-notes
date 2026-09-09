@@ -43,7 +43,7 @@ $csrf = csrf_token();
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
 <link rel="stylesheet" href="css/pixel-blue.css?v=14">
-<link rel="stylesheet" href="css/icons.css?v=2">
+<link rel="stylesheet" href="css/icons.css?v=3">
 <script src="js/iconset.js?v=1"></script>
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
