@@ -465,3 +465,15 @@ body.sel-active #bulkbar { display: none !important; }   /* 选择模式与 chec
   background: var(--bg-panel); border: 2px solid var(--border-color);
   box-shadow: var(--shadow-hard); padding: 18px 32px;
 }
+
+
+/* ===== 图标排版优化（v14）===== */
+.link-btn { padding: 9px 14px; }
+.link-btn .ic { width: 18px; height: 18px; vertical-align: -4px; margin-right: 6px; }
+.topbar { padding: 16px 22px; }
+.top-user { gap: 12px; }
+.f-icon { font-size: 30px; }
+.f-icon .ic { width: 34px; height: 34px; }
+.glass { margin-bottom: 22px; }
+.sm-btn { padding: 9px 14px; }
+.sm-btn .ic, .v-btn .ic { width: 16px; height: 16px; vertical-align: -3px; margin-right: 4px; }
