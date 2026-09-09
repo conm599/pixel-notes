@@ -250,6 +250,23 @@
     el.appendChild(document.createTextNode(text));
   }
 
+  // AI 阶段文案 → 专属机器人图标（加载中带旋转动效）
+  var PHASE_ICONS = { '🤖': 'robot', '🔧': 'gear', '🔁': 'recycle', '🧩': 'grid' };
+  function phaseIconHTML(t) {
+    var head = t.slice(0, 3);
+    if (PHASE_ICONS[head]) {
+      var spinning = head === '🤖' ? ' ic-spin' : '';
+      return '<i class="ic ic-' + PHASE_ICONS[head] + spin + '"></i> ' + t.slice(3).replace(/^ /, '');
+    }
+    return null;
+  }
+  function setPhaseText(el, t) {
+    if (!el) return;
+    var html = phaseIconHTML(t);
+    if (html) el.innerHTML = html;
+    else el.textContent = t;
+  }
+
   // ============== 文件夹 API ==============
   async function folderApi(method, body) {
     var resp = await fetch(FOLDER_API, {
@@ -825,7 +842,7 @@
       } catch (e) {
         if (String(e.message).indexOf('未登录') === -1) showToast('❌ 保存失败', 'error');
       } finally {
-        saveBusy = false; btnSaveNew.disabled = false; btnSaveNew.textContent = '💾 保存修改';
+        saveBusy = false; btnSaveNew.disabled = false; btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存修改';
       }
       return;
     }
@@ -1028,7 +1045,7 @@
     var modal = mkEl('div', 'md-modal classify-modal');
 
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-sparkle"></i> AI 整理助手'));
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-robot"></i> AI 整理助手'));
     var closeBtn = mkBtn('<i class="ic ic-close"></i> 关闭', '关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeClassifyDialog);
@@ -1130,7 +1147,7 @@
     if (chatLog) {
       agentBubble = mkEl('div', 'chat-bubble assistant agent');
       var phaseEl = mkEl('div', 'agent-phase');
-      phaseEl.textContent = '🤖 开始分析…';
+      setPhaseText(phaseEl, '🤖 开始分析…');
       thinkEl = mkEl('div', 'chat-text agent-think');
       toolsEl = mkEl('div', 'agent-tools');
       agentBubble.appendChild(phaseEl);
@@ -1279,7 +1296,7 @@
     overlay.style.zIndex = '20100';   // 必须高于 AI 整理聊天框（20000），否则方案预览被聊天框遮挡、视觉上“夹在中间”
     var modal = mkEl('div', 'md-modal');
     var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-sparkle"></i> AI 整理方案预览（确认后执行）'));
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-robot"></i> AI 整理方案预览（确认后执行）'));
     var closeBtn = mkBtn('<i class="ic ic-close"></i> 关闭', '关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeClassifyPreview);
@@ -1390,7 +1407,7 @@
     btnApply.className = 'btn btn-primary btn-sm';
     btnApply.addEventListener('click', function () { applyClassify(ops); closeClassifyPreview(); });
 
-    var btnCancel = mkBtn('取消', '取消');
+    var btnCancel = mkBtn('<i class="ic ic-close"></i> 取消', '取消');
     btnCancel.className = 'btn btn-outline btn-sm';
     btnCancel.addEventListener('click', closeClassifyPreview);
 
@@ -2261,7 +2278,7 @@
 
     var head = mkEl('div', 'md-modal-head');
     var headLeft = mkEl('div', 'md-modal-head-left');
-    headLeft.appendChild(mkEl('div', 'md-modal-title', '🤖 AI 编辑便签'));
+    headLeft.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-robot"></i> AI 编辑便签'));
     var setBtn = mkBtn('<i class="ic ic-gear"></i> AI 设置');
     setBtn.className = 'btn btn-outline btn-xs ai-open-settings';
     headLeft.appendChild(setBtn);
@@ -2336,12 +2353,12 @@
     function showStream(phaseText) {
       streamRaw = '';
       streamText.textContent = '';
-      streamPhase.textContent = phaseText || '';
+      setPhaseText(streamPhase, phaseText || '');
       streamBox.style.display = '';
       streamBox.scrollTop = 0;
     }
     function onStreamPhase(t) {
-      if (t) streamPhase.textContent = t;
+      if (t) setPhaseText(streamPhase, t);
     }
     function onStreamDelta(t) {
       streamRaw += t;
@@ -2379,12 +2396,12 @@
     resultWrap.appendChild(srcBox);
 
     var foot = mkEl('div', 'md-modal-foot');
-    var runBtn = mkBtn('🤖 开始编辑');
+    var runBtn = mkBtn('<i class="ic ic-robot-pink"></i> 开始编辑');
     runBtn.className = 'btn btn-primary btn-xs';
-    var acceptBtn = mkBtn('✅ 采纳覆盖');
+    var acceptBtn = mkBtn('<i class="ic ic-checkall"></i> 采纳覆盖');
     acceptBtn.className = 'btn btn-primary btn-xs';
     acceptBtn.style.display = 'none';
-    var regenBtn = mkBtn('🔄 重新生成');
+    var regenBtn = mkBtn('<i class="ic ic-recycle"></i> 重新生成');
     regenBtn.className = 'btn btn-outline btn-xs';
     regenBtn.style.display = 'none';
     var cancelBtn = mkBtn('关闭');
@@ -2560,9 +2577,9 @@
       clarifyWrap.appendChild(extraLab);
       clarifyWrap.appendChild(extraInp);
       var bRow = mkEl('div', 'ai-clarify-btns');
-      var submit = mkBtn('✅ 提交回答，继续生成');
+      var submit = mkBtn('<i class="ic ic-checkall"></i> 提交回答，继续生成');
       submit.className = 'btn btn-primary btn-xs';
-      var abort = mkBtn('取消');
+      var abort = mkBtn('<i class="ic ic-close"></i> 取消');
       abort.className = 'btn btn-outline btn-xs';
       bRow.appendChild(submit);
       bRow.appendChild(abort);
@@ -2617,11 +2634,11 @@
       runBtn.style.display = '';
       ta.disabled = true;
       ta.style.display = '';
-      runBtn.textContent = 'AI 编辑中';
+      runBtn.innerHTML = '<i class="ic ic-robot-pink ic-spin"></i> AI 编辑中';
       var dots = 0;
       var dotTimer = setInterval(function () {
         dots = (dots + 1) % 4;
-        runBtn.textContent = 'AI 编辑中' + new Array(dots + 2).join('.');
+        runBtn.innerHTML = '<i class="ic ic-robot-pink ic-spin"></i> AI 编辑中' + new Array(dots + 2).join('.');
       }, 400);
       status.style.display = 'none';
       var ok = false;
@@ -2631,7 +2648,7 @@
         if (!ok && !document.querySelector('.policy-modal')) {
           runBtn.disabled = false;
           ta.disabled = false;
-          runBtn.textContent = '🤖 开始编辑';
+          runBtn.innerHTML = '<i class="ic ic-robot-pink"></i> 开始编辑';
         }
       }
       // 澄清响应：需要用户回答时转入澄清态（本次请求不计配额）
@@ -3226,14 +3243,14 @@
       '置顶便签排在最前，只能和置顶便签调换位置。'
     ]));
 
-    body.appendChild(sec('🤖', 'AI 功能', [
+    body.appendChild(sec('<i class="ic ic-robot"></i>', 'AI 功能', [
       '便签编辑器里的「🤖 AI」：写指令（如"把第 3 条改成…"）让 AI 局部修改。AI 只改你指定的部分，改完先给你看<b>差异对比</b>，点「✅ 采纳覆盖」才真正生效，不满意直接取消。',
       '拿不准时 AI 会先<b>提问</b>（"需要哪种风格？"），回答后它继续；提问不消耗配额。',
       '顶部「✨ AI 整理」：像 Claude Code 一样的透明 Agent——你能实时看到它在想什么、查了哪些便签，最后给出整理方案（移动/建夹/改名/排序/颜色/置顶…），预览确认才执行，且<b>可一键撤销</b>（本次会话内）。',
       '长文也没问题：超过 4500 字自动分段处理，每段独立校对。'
     ]));
 
-    body.appendChild(sec('✨', '更多', [
+    body.appendChild(sec('<i class="ic ic-robot"></i>', '更多', [
       '卡片下方「📌」置顶、「🎨」换色（六色）、「🔗」生成公开分享链接（只读、可设有效期）。',
       '便签支持 Markdown：标题/加粗/列表/任务清单/代码块，可内嵌图片、音频、视频和B站链接。',
       '「🔊 朗读」把便签转语音，逐词卡拉 OK 字幕跟读。',

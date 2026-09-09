@@ -118,3 +118,13 @@ html[data-iconset="v2"] .ic-save-pink{background-image:url(../assets/icons/v2/sa
 html[data-iconset="v2"] .ic-play-pink{background-image:url(../assets/icons/v2/play_pink.32.webp)}
 html[data-iconset="v2"] .ic-key-pink{background-image:url(../assets/icons/v2/key_pink.32.webp)}
 html[data-iconset="v2"] .ic-upload-pink{background-image:url(../assets/icons/v2/upload_pink.32.webp)}
+
+/* —— 批量三：AI 机器人 / 皇冠 / 红叉（默认 mix 用 v1；robot-pink 用于粉底按钮）—— */
+.ic-robot{background-image:url(../assets/icons/v1/robot.32.webp)}
+.ic-robot-pink{background-image:url(../assets/icons/v1/robot_pink.32.webp)}
+.ic-crown{background-image:url(../assets/icons/v1/crown.32.webp)}
+.ic-close-red{background-image:url(../assets/icons/v1/close_red.32.webp)}
+html[data-iconset="v2"] .ic-robot{background-image:url(../assets/icons/v2/robot.32.webp)}
+html[data-iconset="v2"] .ic-robot-pink{background-image:url(../assets/icons/v2/robot_pink.32.webp)}
+html[data-iconset="v2"] .ic-crown{background-image:url(../assets/icons/v2/crown.32.webp)}
+html[data-iconset="v2"] .ic-close-red{background-image:url(../assets/icons/v2/close_red.32.webp)}

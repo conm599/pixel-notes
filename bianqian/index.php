@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=60">
+    <link rel="stylesheet" href="css/pixel.css?v=61">
     <link rel="stylesheet" href="css/icons.css?v=2">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
@@ -30,9 +30,10 @@ if (!isset($_SESSION['user_id'])) {
             <span class="icon">🎮</span> PIXEL NOTES
         </a>
         <div class="navbar-user">
-            <span><i class="ic ic-user"></i> <?= htmlspecialchars($_SESSION['username']) ?></span>
             <?php if (isAdminUser()): ?>
-                <a href="admin.php" class="btn btn-outline btn-xs"><i class="ic ic-gear"></i> 管理</a>
+                <a href="admin.php" class="navbar-user-link" title="管理面板（管理员入口）"><span class="u-avatar"><i class="ic ic-user"></i><i class="ic ic-gear ic-gear-badge"></i></span> <?= htmlspecialchars($_SESSION['username']) ?></a>
+            <?php else: ?>
+                <span><i class="ic ic-user"></i> <?= htmlspecialchars($_SESSION['username']) ?></span>
             <?php endif; ?>
             <a href="tts.php" class="btn btn-outline btn-xs"><i class="ic ic-speaker"></i> 朗读</a>
             <a href="<?php echo htmlspecialchars(siblingUrl('tuchang', '/dashboard.php'), ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-outline btn-xs" target="_blank" rel="noopener"><i class="ic ic-image"></i> 图床</a>
@@ -67,7 +68,7 @@ if (!isset($_SESSION['user_id'])) {
                     <input type="text" id="searchInput" class="search-input" placeholder="🔍 搜索便签 / 文件夹..." autocomplete="off">
                     <div id="searchPanel" class="search-panel" style="display:none"></div>
                 </div>
-                <button id="btnAiOrganize" class="btn btn-outline btn-sm"><i class="ic ic-sparkle"></i> AI 整理</button>
+                <button id="btnAiOrganize" class="btn btn-outline btn-sm"><i class="ic ic-robot"></i> AI 整理</button>
                 <button id="btnNewFolder" class="btn btn-outline btn-sm"><i class="ic ic-folder"></i> 新建文件夹</button>
                 <button id="btnNewNote" class="btn btn-primary btn-sm"><i class="ic ic-plus-pink"></i> 新建便签</button>
             </div>
@@ -100,10 +101,10 @@ if (!isset($_SESSION['user_id'])) {
                     </div>
                 </div>
                 <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;">
-                    <button id="btnAiEdit" class="btn btn-outline btn-sm btn-ai" type="button"><i class="ic ic-sparkle"></i> AI</button>
+                    <button id="btnAiEdit" class="btn btn-outline btn-sm btn-ai" type="button"><i class="ic ic-robot"></i> AI</button>
                     <button id="btnPreviewNew" class="btn btn-outline btn-sm" type="button"><i class="ic ic-eye"></i> 预览</button>
                     <button id="btnSaveNew" class="btn btn-primary btn-sm" type="button"><i class="ic ic-save-pink"></i> 保存</button>
-                    <button id="btnCancelNew" class="btn btn-danger btn-sm" type="button">取消</button>
+                    <button id="btnCancelNew" class="btn btn-danger btn-sm" type="button"><i class="ic ic-close-red"></i> 取消</button>
                 </div>
             </div>
         </div>
@@ -129,6 +130,6 @@ if (!isset($_SESSION['user_id'])) {
         "policyHtml": <?php echo json_encode('<p>图片将上传到你的图床账户「便签」文件夹：</p><ul><li>上传后自动转为<b>可公开访问</b>的图片链接（拿到链接即可查看）</li><li>图片随便签存续；<b>从便签删除后，图床仍保留 30 天</b>供反悔，到期自动清理</li><li>需要长期保留的图片，请到图床把它改为「永久」或自定义时长</li><li>在图床删除图片后，便签中该处将显示占位图</li><li>单张 ≤10MB（自动压缩为 WebP），占用图床配额</li><li>禁止上传违法违规内容；可在图床随时管理或删除</li></ul>', JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE); ?>
     }</script>
     <script src="js/imgbridge.js?v=4"></script>
-    <script src="js/app.js?v=86"></script>
+    <script src="js/app.js?v=87"></script>
 </body>
 </html>
