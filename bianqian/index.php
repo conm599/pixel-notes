@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=63">
+    <link rel="stylesheet" href="css/pixel.css?v=64">
     <link rel="stylesheet" href="css/icons.css?v=3">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
@@ -27,7 +27,7 @@ if (!isset($_SESSION['user_id'])) {
     <!-- 顶部导航 -->
     <nav class="navbar">
         <a href="index.php" class="navbar-brand">
-            <span class="icon">🎮</span> PIXEL NOTES
+            <span class="icon"><i class="ic ic-gamepad"></i></span> PIXEL NOTES
         </a>
         <div class="navbar-user">
             <?php if (isAdminUser()): ?>
@@ -60,6 +60,7 @@ if (!isset($_SESSION['user_id'])) {
     <div id="mobileOverlay" class="mobile-overlay"></div>
     <nav id="mobileMenu" class="mobile-menu" aria-hidden="true">
         <div class="mm-head"><i class="ic ic-gamepad ic-22"></i> PIXEL NOTES</div>
+        <div class="mm-user"><span class="u-avatar"><i class="ic ic-user"></i><i class="ic ic-gear ic-gear-badge"></i></span><b><?= htmlspecialchars($_SESSION['username']) ?></b></div>
         <div class="mm-group">动作</div>
         <button type="button" id="mNew" class="mm-item"><i class="ic ic-plus"></i> 新建便签</button>
         <button type="button" id="mAi" class="mm-item"><i class="ic ic-robot"></i> AI 整理</button>

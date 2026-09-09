@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>朗读工坊 - Pixel Notes</title>
-    <link rel="stylesheet" href="css/pixel.css?v=61">
+    <link rel="stylesheet" href="css/pixel.css?v=64">
     <link rel="stylesheet" href="css/icons.css?v=3">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
@@ -27,7 +27,7 @@ if (!isset($_SESSION['user_id'])) {
     <!-- 顶部导航 -->
     <nav class="navbar">
         <a href="index.php" class="navbar-brand">
-            <span class="icon">🔊</span> 朗读工坊
+            <span class="icon"><i class="ic ic-speaker"></i></span> 朗读工坊
         </a>
         <div class="navbar-user">
             <span><i class="ic ic-user"></i> <?= htmlspecialchars($_SESSION['username']) ?></span>
@@ -96,7 +96,7 @@ if (!isset($_SESSION['user_id'])) {
         </div>
 
         <div id="ttsLoading" class="tts-loading" style="display:none;">
-            <span class="tts-loading-icon">🎧</span> 正在合成语音，请稍候...
+            <span class="tts-loading-icon"><i class="ic ic-speaker ic-spin"></i></span> 正在合成语音，请稍候...
         </div>
 
         <div id="ttsError" class="error-msg" style="display:none;"></div>
