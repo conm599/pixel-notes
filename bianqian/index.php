@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=62">
+    <link rel="stylesheet" href="css/pixel.css?v=63">
     <link rel="stylesheet" href="css/icons.css?v=3">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
@@ -35,8 +35,8 @@ if (!isset($_SESSION['user_id'])) {
             <?php else: ?>
                 <span><i class="ic ic-user"></i> <?= htmlspecialchars($_SESSION['username']) ?></span>
             <?php endif; ?>
-            <a href="tts.php" class="btn btn-outline btn-xs"><i class="ic ic-speaker"></i> 朗读</a>
-            <a href="<?php echo htmlspecialchars(siblingUrl('tuchang', '/dashboard.php'), ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-outline btn-xs" target="_blank" rel="noopener"><i class="ic ic-image"></i> 图床</a>
+            <a href="tts.php" class="btn btn-outline btn-xs nav-hide-m"><i class="ic ic-speaker"></i> 朗读</a>
+            <a href="<?php echo htmlspecialchars(siblingUrl('tuchang', '/dashboard.php'), ENT_QUOTES, 'UTF-8'); ?>" class="btn btn-outline btn-xs nav-hide-m" target="_blank" rel="noopener"><i class="ic ic-image"></i> 图床</a>
             <div class="nav-settings-wrap">
                 <button type="button" id="btnSettings" class="btn btn-outline btn-xs" title="设置"><i class="ic ic-gear"></i> 设置</button>
                 <div id="settingsMenu" class="settings-menu" style="display:none;">
