@@ -473,7 +473,7 @@ body.sel-active #bulkbar { display: none !important; }   /* 选择模式与 chec
 .topbar { padding: 16px 22px; }
 .top-user { gap: 12px; }
 .f-icon { font-size: 30px; }
-.f-icon .ic { width: 64px; height: 64px; }
+.f-icon .ic { width: 44px; height: 44px; }
 .glass { margin-bottom: 22px; }
 .sm-btn { padding: 9px 14px; }
 .sm-btn .ic, .v-btn .ic { width: 16px; height: 16px; vertical-align: -3px; margin-right: 4px; }
