@@ -159,7 +159,7 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Pixel Notes - 管理面板</title>
-    <link rel="stylesheet" href="css/pixel.css?v=68">
+    <link rel="stylesheet" href="css/pixel.css?v=69">
     <link rel="stylesheet" href="css/icons.css?v=3">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
