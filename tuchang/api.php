@@ -424,6 +424,14 @@ if ($isApi) {
         jout(array('ok' => true));
     }
 
+    // ---- 删除 Key（API 模式：dashboard 删除按钮的 POST key 会被 api_auth_user 判入本模式，缺此分支则永远"未知操作"） ----
+    if ($action === 'delkey') {
+        $key = isset($_POST['key']) ? (string)$_POST['key'] : '';
+        if (!preg_match('/^[a-f0-9]{64}$/', $key)) jerr('参数错误');
+        db()->prepare('DELETE FROM img_api_keys WHERE uid = ? AND api_key = ?')->execute(array($uid, $key));
+        jout(array('ok' => true));
+    }
+
     // ---- 批量操作（API 模式同样支持） ----
     if ($action === 'sharebatch' || $action === 'delbatch' || $action === 'zip') {
         batch_handlers($uid, $action);

@@ -206,7 +206,7 @@ h1, h2, h3, .brand, .btn-primary, .grid-title h2 { font-family: var(--font-main)
 
 /* ===== 批量操作栏 ===== */
 .bulkbar {
-  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(120px);
+  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(calc(100% + 90px));
   display: flex; align-items: center; gap: 8px;
   padding: 12px 18px; z-index: 80;
   background: var(--bg-panel); border: 2px solid var(--accent); border-radius: 2px;
@@ -216,7 +216,8 @@ h1, h2, h3, .brand, .btn-primary, .grid-title h2 { font-family: var(--font-main)
 .bulkbar.show { transform: translateX(-50%) translateY(0); }
 .bulk-count { font-size: 13px; color: var(--text-primary); font-weight: 600; margin-right: 6px; }
 @media (max-width: 640px) {
-  .bulkbar { width: calc(100vw - 24px); justify-content: center; flex-wrap: wrap; }
+  .bulkbar { width: calc(100vw - 24px); justify-content: center; flex-wrap: wrap; gap: 6px; padding: 10px 12px; }
+  .bulkbar .sm-btn { padding: 8px 10px; font-size: 11px; }
 }
 .card .meta { padding: 12px 14px; }
 .card .m-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -489,5 +490,5 @@ body.sel-active #bulkbar { display: none !important; }   /* 选择模式与 chec
   .link-btn { padding: 12px 12px; min-width: 44px; min-height: 44px; }
   .link-btn .ic { margin-right: 0; }
   .avatar { width: 34px; height: 34px; }
-  .glass { padding: 14px; }
+  .glass:not(.bulkbar) { padding: 14px; }
 }
