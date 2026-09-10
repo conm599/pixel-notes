@@ -85,7 +85,7 @@ if (!$isAdmin) {
     <html lang="zh">
     <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>管理后台 · 陶瓦图床</title>
     <link rel="stylesheet" href="css/pixel-blue.css?v=16">
     <link rel="icon" href="favicon.ico">
@@ -128,7 +128,7 @@ $delToken = $_SESSION['admin_del_token'];
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>管理后台 · 陶瓦图床</title>
 <link rel="stylesheet" href="css/pixel-blue.css?v=16">
 <style>
