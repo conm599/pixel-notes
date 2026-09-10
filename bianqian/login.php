@@ -15,9 +15,9 @@ if (isset($_SESSION['user_id'])) {
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>登录 - Pixel Notes</title>
-    <link rel="stylesheet" href="css/pixel.css?v=64">
+    <link rel="stylesheet" href="css/pixel.css?v=65">
     <link rel="stylesheet" href="css/icons.css?v=3">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
