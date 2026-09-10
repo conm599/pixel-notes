@@ -492,3 +492,44 @@ body.sel-active #bulkbar { display: none !important; }   /* 选择模式与 chec
   .avatar { width: 34px; height: 34px; }
   .glass:not(.bulkbar) { padding: 14px; }
 }
+
+/* ===== 像素血条滚动条（v17）===== */
+::-webkit-scrollbar {
+  width: 12px !important;
+  height: 12px !important;
+}
+::-webkit-scrollbar-track {
+  background: #0d0d20 !important;
+  border-left: 2px solid #2a2a5a;
+  border-right: 2px solid #2a2a5a;
+}
+::-webkit-scrollbar-track-piece {
+  background: transparent !important;
+}
+::-webkit-scrollbar-thumb {
+  background:
+    repeating-linear-gradient(180deg,
+      #6fc8ff 0, #6fc8ff 6px,
+      #3a8fb5 6px, #3a8fb5 8px,
+      #6fc8ff 8px, #6fc8ff 10px) !important;
+  border: 2px solid #0d0d20;
+  box-shadow:
+    inset 2px 2px 0 rgba(255, 255, 255, 0.45),
+    inset -2px -2px 0 rgba(0, 0, 0, 0.45);
+}
+::-webkit-scrollbar-thumb:hover {
+  background:
+    repeating-linear-gradient(180deg,
+      #9adcff 0, #9adcff 6px,
+      #57a8cc 6px, #57a8cc 8px,
+      #9adcff 8px, #9adcff 10px) !important;
+  border: 2px solid #0d0d20;
+}
+::-webkit-scrollbar-corner {
+  background: #0d0d20 !important;
+}
+::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
