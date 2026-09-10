@@ -1517,3 +1517,30 @@ body.marquee-selecting .note-card, body.marquee-selecting .folder-card { cursor:
 .mm-user .ic-gear-badge { width: 12px; height: 12px; margin-left: -6px; margin-top: -9px; }
 .mm-item { min-width: 0; }
 .mm-item span, .mm-item b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+
+/* ===== 工具栏自适应三段降级（v66，移动端）===== */
+.btn-search-toggle { display: none; }
+
+@media (max-width: 768px) {
+  .toolbar { position: relative; }
+  .toolbar-left, .toolbar-actions { width: 100%; max-width: 100%; }
+  .btn-search-toggle {
+    display: none; position: absolute; right: 12px; top: 12px;
+    width: 40px; height: 40px; align-items: center; justify-content: center;
+    background: var(--bg-dark); border: 2px solid var(--accent2);
+    color: var(--accent2); cursor: pointer; box-shadow: 2px 2px 0 #1a6a7a;
+  }
+  .btn-search-toggle:active { transform: translate(2px, 2px); }
+  .btn-search-toggle .ic { width: 18px; height: 18px; }
+  /* ② 搜索框收起后：右上角搜索钮出现；点开搜索时路径让位 */
+  body.search-collapsed .btn-search-toggle { display: inline-flex; }
+  body.search-collapsed #searchBox { display: none; }
+  body.search-open #searchBox { display: flex !important; }
+  body.search-open .folder-crumb { display: none; }
+  body.search-open .btn-search-toggle .ic-search {
+    background-image: url(../assets/icons/v2/close.32.webp);
+  }
+  /* ① 去面包屑图标 */
+  body.crumb-noicon .folder-crumb .ic { display: none; }
+}
