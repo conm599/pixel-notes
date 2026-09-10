@@ -3134,6 +3134,45 @@
     settingsMenu.style.display = settingsMenu.style.display === 'none' ? 'block' : 'none';
   }
 
+  // ============== 工具栏自适应三段降级（v89，移动端） ==============
+  // 溢出检测：① 先去面包屑图标 → ② 再收搜索框（🍞 切换可随时调出）
+  function adaptiveToolbar() {
+    var tl = document.querySelector('.toolbar-left');
+    var crumb = document.getElementById('folderCrumb');
+    if (!tl || !crumb) return;
+    if (window.innerWidth > 768) {
+      document.body.classList.remove('crumb-noicon', 'search-collapsed', 'search-open');
+      return;
+    }
+    if (document.body.classList.contains('search-open')) return; // 搜索展开态不降级
+    document.body.classList.remove('search-collapsed');
+    tl.classList.remove('crumb-noicon');
+    if (tl.scrollWidth > tl.clientWidth + 1) {
+      tl.classList.add('crumb-noicon');           // ① 去面包屑图标
+      if (tl.scrollWidth > tl.clientWidth + 1) {
+        document.body.classList.add('search-collapsed');  // ② 收搜索框，让位给路径
+      }
+    }
+  }
+  var searchToggle = document.getElementById('btnSearchToggle');
+  if (searchToggle) {
+    searchToggle.addEventListener('click', function () {
+      var open = document.body.classList.toggle('search-open');
+      if (open) {
+        var inp = document.getElementById('searchInput');
+        if (inp) { inp.focus(); inp.scrollIntoView({ block: 'center' }); }
+      } else {
+        adaptiveToolbar();
+      }
+    });
+  }
+  (function () {
+    var crumbEl = document.getElementById('folderCrumb');
+    if (crumbEl) new MutationObserver(adaptiveToolbar).observe(crumbEl, { childList: true });
+    window.addEventListener('resize', adaptiveToolbar);
+  })();
+  adaptiveToolbar();
+
   // ============== 移动端抽屉菜单（v88） ==============
   var mm = document.getElementById('mobileMenu');
   var mmOverlay = document.getElementById('mobileOverlay');
