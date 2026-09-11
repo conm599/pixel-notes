@@ -43,8 +43,8 @@ if ($remain > 0) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title><?php echo e($img['name']); ?> · 陶瓦图床</title>
 
-<link rel="stylesheet" href="css/pixel-blue.css?v=17">
-<link rel="stylesheet" href="css/icons.css?v=3">
+<link rel="stylesheet" href="css/pixel-blue.css?v=18">
+<link rel="stylesheet" href="css/icons.css?v=4">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 </head>
@@ -66,7 +66,7 @@ if ($remain > 0) {
     <div class="v-title">重命名</div>
     <div style="display:flex;gap:8px">
       <input id="renameInput" value="<?php echo e($img['name']); ?>" style="flex:1;padding:8px 10px;border-radius:10px;font-size:12px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:var(--ink);outline:none;font-family:inherit">
-      <button class="v-btn ghost" style="margin-top:0;width:auto;padding:8px 14px;font-size:13px" onclick="doRename()">💾 保存</button>
+      <button class="v-btn ghost" style="margin-top:0;width:auto;padding:8px 14px;font-size:13px" onclick="doRename()"><i class="ic ic-save"></i> 保存</button>
     </div>
 
     <div class="v-sep"></div>

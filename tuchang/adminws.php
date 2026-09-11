@@ -87,7 +87,7 @@ if (!$isAdmin) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>管理后台 · 陶瓦图床</title>
-    <link rel="stylesheet" href="css/pixel-blue.css?v=17">
+    <link rel="stylesheet" href="css/pixel-blue.css?v=18">
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
     </head>
@@ -130,7 +130,7 @@ $delToken = $_SESSION['admin_del_token'];
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>管理后台 · 陶瓦图床</title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=17">
+<link rel="stylesheet" href="css/pixel-blue.css?v=18">
 <style>
 .app { max-width: 900px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -221,7 +221,7 @@ td .uuid { font-family: ui-monospace, monospace; font-size: 11px; color: var(--t
 <!-- 删除用户确认弹窗 -->
 <div class="modal-mask" id="delModal" style="display:none">
   <div class="modal glass" style="max-width:420px">
-    <button class="modal-x" onclick="closeDelModal()" aria-label="关闭">✕</button>
+    <button class="modal-x" onclick="closeDelModal()" aria-label="关闭"><i class="ic ic-close"></i></button>
     <h3 style="color:#ef4444">确认删除用户</h3>
     <p style="font-size:13px;color:var(--ink);margin:8px 0 16px">
       即将删除用户「<b id="delUserName"></b>」及其全部图片，此操作不可撤销。

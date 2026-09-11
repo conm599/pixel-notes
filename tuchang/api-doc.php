@@ -10,8 +10,8 @@ $base = base_url();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>API 使用说明 · 陶瓦图床</title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=17">
-<link rel="stylesheet" href="css/icons.css?v=3">
+<link rel="stylesheet" href="css/pixel-blue.css?v=18">
+<link rel="stylesheet" href="css/icons.css?v=4">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>

@@ -82,8 +82,8 @@ $until = $folder ? (int)$folder['share_until'] : 0;
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>分享的文件夹 · 陶瓦图床</title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=17">
-<link rel="stylesheet" href="css/icons.css?v=3">
+<link rel="stylesheet" href="css/pixel-blue.css?v=18">
+<link rel="stylesheet" href="css/icons.css?v=4">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
@@ -100,7 +100,7 @@ $until = $folder ? (int)$folder['share_until'] : 0;
 .fs-folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-bottom: 22px; }
 .fs-folder-card { background: var(--bg-panel); border: 2px solid var(--border-color); box-shadow: var(--shadow-hard); border-radius: 2px; text-align: center; padding: 14px 8px; text-decoration: none; display: block; }
 .fs-folder-card:hover { border-color: var(--accent); }
-.fs-folder-card .ic { font-size: 28px; }
+.fs-folder-card .ic { width: 28px; height: 28px; vertical-align: middle; }
 .fs-folder-card .nm { font-size: 12px; color: var(--text-primary); margin-top: 6px; font-weight: 700; word-break: break-all; }
 .fs-folder-card .ct { font-size: 10px; color: var(--text-secondary); margin-top: 2px; }
 .fshare-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
@@ -120,7 +120,7 @@ $until = $folder ? (int)$folder['share_until'] : 0;
   <div class="fshare-empty"><div class="big"><i class="ic ic-skull ic-lg"></i></div>分享不存在或已过期</div>
 <?php else: ?>
   <div class="fshare-head">
-    <h1>📁 <?php echo htmlspecialchars($folder['name'], ENT_QUOTES, 'UTF-8'); ?></h1>
+    <h1><i class="ic ic-folder ic-22"></i> <?php echo htmlspecialchars($folder['name'], ENT_QUOTES, 'UTF-8'); ?></h1>
     <p>本层 <?php echo count($imgs); ?> 张图片 ·
        <?php echo $until === 0 ? '永久有效' : '有效期至 ' . date('Y-m-d H:i', $until); ?>
        · 点击图片放大</p>
@@ -128,7 +128,7 @@ $until = $folder ? (int)$folder['share_until'] : 0;
 
   <?php if ($cur !== $rootId || !empty($crumbs)): ?>
   <div class="fs-crumbs">
-    <a href="?t=<?php echo htmlspecialchars($t, ENT_QUOTES, 'UTF-8'); ?>">📁 <?php echo htmlspecialchars($folder['name'], ENT_QUOTES, 'UTF-8'); ?></a><?php
+    <a href="?t=<?php echo htmlspecialchars($t, ENT_QUOTES, 'UTF-8'); ?>"><i class="ic ic-folder"></i> <?php echo htmlspecialchars($folder['name'], ENT_QUOTES, 'UTF-8'); ?></a><?php
     foreach ($crumbs as $cid):
         if ($cid === $rootId) continue;
         echo '<span class="sep">›</span>';
@@ -139,11 +139,11 @@ $until = $folder ? (int)$folder['share_until'] : 0;
   <?php endif; ?>
 
   <?php if (!empty($children)): ?>
-  <div class="fs-sec-title">📂 子文件夹</div>
+  <div class="fs-sec-title"><i class="ic ic-folder-open"></i> 子文件夹</div>
   <div class="fs-folder-grid">
     <?php foreach ($children as $ch): ?>
     <a class="fs-folder-card" href="?t=<?php echo htmlspecialchars($t, ENT_QUOTES, 'UTF-8'); ?>&f=<?php echo (int)$ch['id']; ?>">
-      <div class="ic">📁</div>
+      <i class="ic ic-folder ic-28"></i>
       <div class="nm"><?php echo htmlspecialchars($ch['name'], ENT_QUOTES, 'UTF-8'); ?></div>
       <div class="ct">进入查看</div>
     </a>
@@ -152,7 +152,7 @@ $until = $folder ? (int)$folder['share_until'] : 0;
   <?php endif; ?>
 
   <?php if (count($imgs) === 0): ?>
-  <div class="fshare-empty"><div class="big">☁️</div>本层没有图片</div>
+  <div class="fshare-empty"><div class="big"><i class="ic ic-cloud ic-lg"></i></div>本层没有图片</div>
   <?php else: ?>
   <div class="fshare-grid">
     <?php foreach ($imgs as $im): ?>

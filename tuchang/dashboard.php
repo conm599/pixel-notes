@@ -42,8 +42,8 @@ $csrf = csrf_token();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=17">
-<link rel="stylesheet" href="css/icons.css?v=3">
+<link rel="stylesheet" href="css/pixel-blue.css?v=18">
+<link rel="stylesheet" href="css/icons.css?v=4">
 <script src="js/iconset.js?v=1"></script>
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -57,8 +57,8 @@ $csrf = csrf_token();
 <?php if (!empty($_SESSION['is_admin'])): // 与 adminws 门禁同一标记 ?>
       <a class="link-btn" href="adminws.php" title="管理后台"><i class="ic ic-gear"></i> <span class="tb-label">管理</span></a>
 <?php endif; ?>
-      <button type="button" class="link-btn" id="apiToggle" title="开发者 API Key">🔑 <span class="tb-label">API</span></button>
-      <a class="link-btn" href="<?php echo e(siblingUrl('bianqian', '/index.php')); ?>" title="返回便签">🏠 <span class="tb-label">便签</span></a>
+      <button type="button" class="link-btn" id="apiToggle" title="开发者 API Key"><i class="ic ic-key"></i> <span class="tb-label">API</span></button>
+      <a class="link-btn" href="<?php echo e(siblingUrl('bianqian', '/index.php')); ?>" title="返回便签"><i class="ic ic-home"></i> <span class="tb-label">便签</span></a>
       <div class="avatar"><?php echo e(strtoupper(substr($uname, 0, 1))); ?></div>
       <span><?php echo e($uname); ?></span>
       <a class="link-btn" href="logout.php"><i class="ic ic-exit"></i> <span class="tb-label">退出</span></a>
@@ -125,7 +125,7 @@ $csrf = csrf_token();
   </div>
 
   <div class="grid"></div>
-  <div class="empty" style="display:none"><div class="big">☁️</div>这里还没有图片</div>
+  <div class="empty" style="display:none"><div class="big"><i class="ic ic-cloud ic-lg"></i></div>这里还没有图片</div>
 
   <div class="footer">
     陶瓦图床 · 前端压缩 WebP 60% · 图片自动剥离元数据<br>
@@ -147,7 +147,7 @@ $csrf = csrf_token();
 <!-- 批量分享结果弹窗 -->
 <div class="modal-mask" id="shareBatchDlg" style="display:none" data-overlay="1">
   <div class="modal glass">
-    <button class="modal-x" data-close="shareBatchDlg" aria-label="关闭">✕</button>
+    <button class="modal-x" data-close="shareBatchDlg" aria-label="关闭"><i class="ic ic-close"></i></button>
     <h3>批量分享完成</h3>
     <div class="share-result" style="margin-top:4px">
       <button class="copy-btn" style="width:100%;margin-bottom:10px;padding:9px" id="copyAllLinks">复制全部链接</button>
@@ -159,7 +159,7 @@ $csrf = csrf_token();
 <!-- 分享拟态框 -->
 <div class="modal-mask" id="shareDlg" style="display:none" data-overlay="1">
   <div class="modal glass">
-    <button class="modal-x" data-close="shareDlg" aria-label="关闭">✕</button>
+    <button class="modal-x" data-close="shareDlg" aria-label="关闭"><i class="ic ic-close"></i></button>
     <h3 class="share-name">分享图片</h3>
     <label class="share-label">分享时长</label>
     <select class="share-dur" style="width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:var(--ink);font-size:14px;outline:none">
@@ -186,7 +186,7 @@ $csrf = csrf_token();
 <!-- 文件夹分享弹窗 -->
 <div class="modal-mask" id="folderShareDlg" style="display:none" data-overlay="1">
   <div class="modal glass">
-    <button class="modal-x" data-close="folderShareDlg" aria-label="关闭">✕</button>
+    <button class="modal-x" data-close="folderShareDlg" aria-label="关闭"><i class="ic ic-close"></i></button>
     <h3 class="share-name" id="fsName">文件夹分享</h3>
     <label class="share-label">分享时长</label>
     <select class="share-dur" id="fsDur" style="width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:var(--ink);font-size:14px;outline:none">
@@ -214,8 +214,8 @@ var CURRENT_UUID = <?php echo json_encode($myUuid); ?>;
 var API_MAIN_HOST_URL = <?php echo json_encode(rtrim(siblingUrl('tuchang', ''), '/')); ?>;
 var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
-<script src="js/spa.js?v=9"></script>
+<script src="js/spa.js?v=10"></script>
 <script src="js/selection.js?v=10"></script>
-<script src="js/dashboard.js?v=28"></script>
+<script src="js/dashboard.js?v=29"></script>
 </body>
 </html>

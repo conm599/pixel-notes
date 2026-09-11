@@ -702,7 +702,12 @@ document.addEventListener('DOMContentLoaded', function () {
     if (shr) {
       // 打开像素风文件夹分享弹窗（记录当前夹）
       window.__fsFid = fid;
-      document.getElementById('fsName').textContent = '📁 ' + (card.querySelector('.f-name').textContent) + ' · 分享';
+      var fn = document.getElementById('fsName');
+      fn.innerHTML = '';
+      var fic = document.createElement('i');
+      fic.className = 'ic ic-folder';
+      fn.appendChild(fic);
+      fn.appendChild(document.createTextNode(' ' + card.querySelector('.f-name').textContent + ' · 分享'));
       document.getElementById('fsResult').style.display = 'none';
       document.getElementById('folderShareDlg').style.display = 'flex';
       if (window.__openFolderShare) window.__openFolderShare();   // 回显当前分享状态
