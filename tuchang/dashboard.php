@@ -42,8 +42,8 @@ $csrf = csrf_token();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>陶瓦图床 · <?php echo e($uname); ?></title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=18">
-<link rel="stylesheet" href="css/icons.css?v=4">
+<link rel="stylesheet" href="css/pixel-blue.css?v=19">
+<link rel="stylesheet" href="css/icons.css?v=5">
 <script src="js/iconset.js?v=1"></script>
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -214,7 +214,7 @@ var CURRENT_UUID = <?php echo json_encode($myUuid); ?>;
 var API_MAIN_HOST_URL = <?php echo json_encode(rtrim(siblingUrl('tuchang', ''), '/')); ?>;
 var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
-<script src="js/spa.js?v=10"></script>
+<script src="js/spa.js?v=11"></script>
 <script src="js/selection.js?v=10"></script>
 <script src="js/dashboard.js?v=29"></script>
 </body>

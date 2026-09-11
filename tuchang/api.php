@@ -204,7 +204,7 @@ if ($isApi) {
 
     // ---- 文件夹列表（多层树 + 递归累计计数，对齐便签） ----
     if ($action === 'folder_list') {
-        $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
+        $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at, share_token, share_until FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
         $fst->execute(array($uid));
         $fs = $fst->fetchAll();
         $direct = array();
@@ -228,12 +228,14 @@ if ($isApi) {
         $out = array();
         foreach ($fs as $f) {
             $fid = (int)$f['id'];
+            $fshared = !empty($f['share_token']) && ((int)$f['share_until'] === 0 || (int)$f['share_until'] > time());
             $out[] = array('id' => $fid,
                 'parent_id' => $f['parent_id'] === null ? 0 : (int)$f['parent_id'],
                 'name' => $f['name'], 'sort_order' => (int)$f['sort_order'],
                 'count' => isset($roll[$fid]) ? $roll[$fid] : 0,
                 'direct_count' => isset($direct[$fid]) ? $direct[$fid] : 0,
-                'created_at' => (int)$f['created_at']);
+                'created_at' => (int)$f['created_at'],
+                'shared' => $fshared ? 1 : 0);
         }
         jout(array('ok' => true, 'folders' => $out));
     }
@@ -615,7 +617,7 @@ if ($action === 'list') {
             'view' => 'view.php?id=' . (int)$r['id'] . '&u=' . my_uuid()
         );
     }
-    $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
+    $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at, share_token, share_until FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
     $fst->execute(array($uid));
     $fs = $fst->fetchAll();
     $direct = array();
@@ -639,12 +641,14 @@ if ($action === 'list') {
     $tree = array();
     foreach ($fs as $f) {
         $fid = (int)$f['id'];
+        $fshared = !empty($f['share_token']) && ((int)$f['share_until'] === 0 || (int)$f['share_until'] > time());
         $tree[] = array('id' => $fid,
             'parent_id' => $f['parent_id'] === null ? 0 : (int)$f['parent_id'],
             'name' => $f['name'], 'sort_order' => (int)$f['sort_order'],
             'count' => isset($roll[$fid]) ? $roll[$fid] : 0,
             'direct_count' => isset($direct[$fid]) ? $direct[$fid] : 0,
-            'created_at' => (int)$f['created_at']);
+            'created_at' => (int)$f['created_at'],
+            'shared' => $fshared ? 1 : 0);
     }
     jout(array('ok' => true, 'images' => $imgs, 'folders' => $tree));
 }

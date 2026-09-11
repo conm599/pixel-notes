@@ -369,7 +369,7 @@ function sendSecurityHeaders() {
     // 便签↔图床联动：本地 http 联调经 PSU_LOCAL_IMG_HOST 注入图床源（如 http://localhost:8091），生产不设零影响
     $cspLocal = getenv('PSU_LOCAL_IMG_HOST');
     $cspLocalPart = ($cspLocal && preg_match('#^[a-z]+://[a-z0-9._:-]+$#i', $cspLocal)) ? ' ' . $cspLocal : '';
-    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data:" . $cspLocalPart . "; media-src 'self' blob: data: https:; frame-src 'self' https://player.bilibili.com https://www.bilibili.com https://www.youtube.com https://www.youtube-nocookie.com https://m.youtube.com https://youtube.com https://player.vimeo.com https://player.dailymotion.com https://music.163.com https://open.spotify.com; connect-src 'self' https:" . $cspLocalPart . "; frame-ancestors 'self'; base-uri 'self'; form-action 'self'");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' https: data:" . $cspLocalPart . "; media-src 'self' blob: data: https:; frame-src 'self' https://player.bilibili.com https://www.bilibili.com https://www.youtube.com https://www.youtube-nocookie.com https://m.youtube.com https://youtube.com https://player.vimeo.com https://player.dailymotion.com https://music.163.com https://open.spotify.com; connect-src 'self' https:" . $cspLocalPart . "; frame-ancestors 'self'; base-uri 'self'; form-action 'self'");
 }
 
 /**

@@ -3,7 +3,14 @@
    8-bit Retro Pixel Style (可读性优化版 v4)
    ============================================= */
 
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+@font-face {
+  font-family: 'Press Start 2P';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/PressStart2P-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
 /* === CSS 变量 === */
 :root {
@@ -379,6 +386,7 @@ textarea.form-input { resize: vertical; min-height: 110px; line-height: 1.8; }
 }
 .note-actions button:hover { background: rgba(0,0,0,0.7); }
 .note-actions button .ic { width: 18px; height: 18px; vertical-align: -4px; }
+.note-actions .note-menu-btn { display: none; }   /* 移动端显示，见 768 块 */
 .note-actions button.btn-shared { color: var(--accent2); border-color: var(--accent2); }
 .note-actions button.btn-shared:hover { background: var(--accent2); color: var(--bg-dark); }
 
@@ -1081,6 +1089,19 @@ html, body { overflow-x: clip; max-width: 100%; }
 
 /* === 响应式 === */
 @media (max-width: 768px) {
+  /* 低频操作收进 ⋮ 菜单，主钮（编辑/分享/删除）加大触控 */
+  .note-actions button.opt { display: none; }
+  .note-actions .note-menu-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 44px; height: 44px;
+    font-size: 18px; color: var(--text-secondary);
+    background: rgba(0,0,0,0.35); border: 2px solid currentColor; padding: 0 10px;
+  }
+  .note-actions button { padding: 10px 12px; font-size: 11px; }
+  .note-actions button .ic { width: 18px; height: 18px; }
+  /* 卡片瘦身：内边距与 meta 压缩，内容可读区最大化 */
+  .note-card { padding: 14px 12px 12px; }
+  .note-meta { margin-top: 8px; padding-top: 8px; }
   .navbar { padding: 10px 8px 10px 14px; }
   .navbar-brand { font-size: 12px; flex-shrink: 0; }
   .navbar-user { font-size: 11px; margin-left: auto; }
@@ -1100,7 +1121,6 @@ html, body { overflow-x: clip; max-width: 100%; }
   .notes-grid { grid-template-columns: 1fr; }
   .new-note-form .form-row { flex-direction: column; }
   .form-input { font-size: 13px; }
-  .note-actions button { font-size: 9px; padding: 6px 9px; }
   .toast { left: 16px; right: 16px; max-width: none; }
   .navbar-user { gap: 8px; }
   .navbar-user .ic { width: 14px; height: 14px; }
@@ -1145,6 +1165,19 @@ html, body { overflow-x: clip; max-width: 100%; }
   font-size: 14px; padding: 2px 6px; cursor: pointer; border-radius: 0;
 }
 .folder-card .folder-menu-btn:hover { color: var(--accent2); border-color: var(--accent2); }
+
+/* 文件夹卡「已分享」角标（与图床 share-badge 同款语义；放 ⋮ 左侧防重叠） */
+.folder-card .share-badge {
+  position: absolute; top: 4px; right: 28px;
+  padding: 2px 7px; font-size: 10px; font-weight: 700;
+  font-family: var(--font-body);
+  background: #1d7a3e; color: #b8ffd2;
+  border: 1px solid #0c3b1f;
+  box-shadow: 2px 2px 0 #000;
+}
+
+/* 卡片「更多操作」⋮（移动端收纳低频操作；PC 端六钮全显，⋮ 隐藏） */
+.note-menu { min-width: 150px; }
 
 /* === 文件夹操作菜单 === */
 .folder-menu {
