@@ -147,7 +147,7 @@ if (!isset($_SESSION['user_id'])) {
     <!-- Toast 提示 -->
     <div id="toast" class="toast" style="display:none;"></div>
 
-    <script src="js/md.js?v=41"></script>
+    <script src="js/md.js?v=42"></script>
     <script src="js/tutorial-data.js?v=1"></script>
 
     <script src="js/Sortable.min.js"></script>
