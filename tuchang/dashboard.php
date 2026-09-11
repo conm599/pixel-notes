@@ -216,6 +216,6 @@ var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
 <script src="js/spa.js?v=11"></script>
 <script src="js/selection.js?v=10"></script>
-<script src="js/dashboard.js?v=29"></script>
+<script src="js/dashboard.js?v=30"></script>
 </body>
 </html>
