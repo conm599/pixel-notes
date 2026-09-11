@@ -46,7 +46,7 @@
   }
 
   function validSize(s) {
-    return s && /^\d{1,4}%?$/.test(s);
+    return s && /^\d{1,4}(px|%?)$/i.test(s);
   }
 
   /* iframe 仅放行知名音视频站点的播放器域名（白名单） */
@@ -111,8 +111,8 @@
       var out = '<img src="' + u + '" class="md-img"';
       if (v.alt !== undefined) out += ' alt="' + escapeHtml(unescapeAttr(v.alt)) + '"';
       if (v.title !== undefined) out += ' title="' + escapeHtml(unescapeAttr(v.title)) + '"';
-      if (validSize(v.width)) out += ' width="' + v.width + '"';
-      if (validSize(v.height)) out += ' height="' + v.height + '"';
+      if (validSize(v.width)) out += ' width="' + v.width.replace(/px$/i, '') + '"';
+      if (validSize(v.height)) out += ' height="' + v.height.replace(/px$/i, '') + '"';
       return put(out + '>');
     });
 

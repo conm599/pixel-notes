@@ -143,7 +143,7 @@ $accent = isset($note['color']) && isset($colorMap[$note['color']]) ? $colorMap[
 <link rel="stylesheet" href="css/icons.css?v=4">
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<script src="js/md.js?v=41" nonce="<?= htmlspecialchars($cspNonce) ?>"></script>
+<script src="js/md.js?v=42" nonce="<?= htmlspecialchars($cspNonce) ?>"></script>
 </head>
 <body>
 <div class="share-wrap">
