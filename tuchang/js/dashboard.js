@@ -356,7 +356,7 @@ document.addEventListener('DOMContentLoaded', function () {
       act(id, 'delete').then(function (r) {
         if (r.ok) {
           card.remove();
-          if (window.__SPA) window.__SPA.removeCard(parseInt(id));
+          if (window.__SPA) window.__SPA.removeImg(parseInt(id));
           toast('已删除');
         } else toast(r.err || '删除失败');
       });
@@ -834,6 +834,7 @@ document.addEventListener('click', function (e) {
     var fid = window.__fsFid;
     if (!fid) return;
     var hours = document.getElementById('fsDur').value;
+    var intent = (parseInt(hours, 10) === -1) ? 'cancel' : 'share';
     var fd = new FormData();
     fd.append('action', 'folder_share');
     fd.append('csrf_token', CSRF);
@@ -850,9 +851,28 @@ document.addEventListener('click', function (e) {
         }
         renderState({ shared: 1, url: r.url, url2: r.url2, until: r.until });
         toast('分享链接已更新' + (r.until === 0 ? '（永久）' : ''));
-        if (window.__SPA) window.__SPA.refreshFolders();
+        if (window.__SPA) window.__SPA.reload();
       })
-      .catch(function () { toast('网络错误，请重试'); });
+      .catch(function () {
+        // POST 响应偶发丢失（线路问题，服务端可能已执行成功）：用 GET folder_share_info 对账，
+        // 以服务端真实状态渲染并按本次意图给准确提示，只有对账本身也失败才报网络错误
+        fetch(API_MAIN + '?action=folder_share_info&csrf_token=' + encodeURIComponent(CSRF) + '&id=' + fid, { cache: 'no-store' })
+          .then(function (r2) { return r2.json(); })
+          .then(function (d2) {
+            if (!d2 || !d2.ok) { toast('网络错误，请重试'); return; }
+            if (d2.shared) {
+              renderState({ shared: 1, url: d2.url, url2: d2.url2, until: d2.until });
+              if (intent === 'share') toast('分享链接已创建（响应丢失，已自动核对）');
+              else toast('撤销未生效，当前仍是分享状态——请再试一次');
+            } else {
+              renderState({ shared: 0, url: '', url2: '', until: 0 });
+              if (intent === 'cancel') toast('已撤销文件夹分享（链接立即失效）');
+              else toast('创建未生效，请重试');
+            }
+            if (window.__SPA) window.__SPA.reload();
+          })
+          .catch(function () { toast('网络错误，请重试'); });
+      });
   });
 
   // 复制按钮（委托）
