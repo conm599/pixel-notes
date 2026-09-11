@@ -87,7 +87,7 @@ if (!$isAdmin) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>管理后台 · 陶瓦图床</title>
-    <link rel="stylesheet" href="css/pixel-blue.css?v=18">
+    <link rel="stylesheet" href="css/pixel-blue.css?v=19">
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
     </head>
@@ -130,7 +130,7 @@ $delToken = $_SESSION['admin_del_token'];
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>管理后台 · 陶瓦图床</title>
-<link rel="stylesheet" href="css/pixel-blue.css?v=18">
+<link rel="stylesheet" href="css/pixel-blue.css?v=19">
 <style>
 .app { max-width: 900px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }

@@ -120,6 +120,7 @@
     var baseLevel = inFolder ? state.cur : 0;
     childrenOf(baseLevel).forEach(function (f) {
       html += '<div class="folder-card fdrop" data-fid="' + f.id + '" data-nav="' + f.id + '">' +
+        (f.shared ? '<span class="share-badge">已分享</span>' : '') +
         '<div class="f-icon"><i class="ic ic-folder"></i></div><div class="f-name">' + esc(f.name) + '</div><div class="f-count">' + rollupCount(f.id) + ' 张</div>' +
         '<div class="f-act"><button type="button" class="f-share" title="公开分享"><i class="ic ic-link"></i></button><button type="button" class="f-ren" title="重命名"><i class="ic ic-pencil"></i></button><button type="button" class="f-del" title="删除文件夹"><i class="ic ic-trash"></i></button></div></div>';
     });
