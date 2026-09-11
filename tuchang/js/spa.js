@@ -97,8 +97,8 @@
       html = '<a class="crumb" href="javascript:void(0)" data-nav="all"><i class="ic ic-grid"></i>全部图片</a>';
       chain.forEach(function (f) {
         html += '<span class="crumb-sep">›</span>';
-        if (f.id === state.cur) html += '<span class="crumb on">📁 ' + esc(f.name) + '</span>';
-        else html += '<a class="crumb" href="javascript:void(0)" data-nav="' + f.id + '">📁 ' + esc(f.name) + '</a>';
+        if (f.id === state.cur) html += '<span class="crumb on"><i class="ic ic-folder"></i>' + esc(f.name) + '</span>';
+        else html += '<a class="crumb" href="javascript:void(0)" data-nav="' + f.id + '"><i class="ic ic-folder"></i>' + esc(f.name) + '</a>';
       });
     }
     c.innerHTML = html;
