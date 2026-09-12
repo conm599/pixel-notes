@@ -14,6 +14,12 @@ require_once __DIR__ . '/../config/database.php';
 define('TTS_URL', suite_cfg('tts_url', 'https://edgetts.naxid.top/v1/audio/speech'));
 define('TTS_TOKEN', suite_cfg('tts_token', ''));
 define('TTS_MAX_TEXT', (int)suite_cfg('tts_max_text', 5000));
+define('TTS_MODEL', suite_cfg('tts_model', 'tts-1'));
+// 音色列表由管理面板配置（逗号分隔）；空则回落默认六音色
+$TTS_VOICES = array_values(array_filter(array_map('trim',
+    preg_split('/[\s,，]+/', suite_cfg('tts_voices', 'fable,alloy,nova,shimmer,echo,onyx'))),
+    function ($v) { return $v !== ''; }));
+if (count($TTS_VOICES) === 0) $TTS_VOICES = array('fable');
 
 startSecureSession();
 
@@ -30,19 +36,8 @@ function jsonOut($data, $code = 200) {
     exit;
 }
 
-// 允许的音色白名单（OpenAI 音色名 → Worker 实际映射的 Edge TTS 音色）
-// alloy→晓晓  echo→云希  fable→晓伊  onyx→云扬  nova→晓涵  shimmer→晓梦
-// 本接口不认 Edge 原生音色名，传入未知音色会静默回落到 alloy，故必须白名单硬校验
-function allowedVoices() {
-    return array(
-        'fable',    // 晓伊 · 女 · 活泼甜润（默认）
-        'alloy',    // 晓晓 · 女 · 温柔亲切
-        'nova',     // 晓涵 · 女 · 清亮甜美
-        'shimmer',  // 晓梦 · 女 · 轻柔温润
-        'echo',     // 云希 · 男 · 阳光少年
-        'onyx',     // 云扬 · 男 · 沉稳大气
-    );
-}
+// 允许的音色白名单：来自管理面板 tts_voices 配置（兼容任意 OpenAI 兼容上游，
+// 上游支持什么音色由管理员填什么；未知音色回退列表首项，故必须白名单硬校验）
 
 try {
     if (!isset($_SESSION['user_id'])) {
@@ -67,16 +62,16 @@ try {
         jsonOut(array('success' => false, 'message' => '文本过长（最多' . TTS_MAX_TEXT . '字）'), 400);
     }
 
-    // 音色白名单（未知值回退 fable）
+    // 音色白名单（未知值回退列表首项）
     $voice = isset($input['voice']) ? (string)$input['voice'] : '';
-    if (!in_array($voice, allowedVoices(), true)) $voice = 'fable';
+    if (!in_array($voice, $TTS_VOICES, true)) $voice = $TTS_VOICES[0];
 
     // 语速 0.5 - 2.0（本接口唯一支持的调节参数）
     $speed = isset($input['speed']) ? (float)$input['speed'] : 1.0;
     if ($speed < 0.5 || $speed > 2.0) $speed = 1.0;
 
     $payload = json_encode(array(
-        'model'  => 'tts-1',
+        'model'  => TTS_MODEL,
         'input'  => $text,
         'voice'  => $voice,
         'speed'  => $speed,
