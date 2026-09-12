@@ -17,7 +17,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Pixel Notes - 我的便签</title>
-    <link rel="stylesheet" href="css/pixel.css?v=70">
+    <link rel="stylesheet" href="css/pixel.css?v=71">
     <link rel="stylesheet" href="css/icons.css?v=5">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
@@ -159,6 +159,6 @@ if (!isset($_SESSION['user_id'])) {
         "policyHtml": <?php echo json_encode('<p>图片将上传到你的图床账户「便签」文件夹：</p><ul><li>上传后自动转为<b>可公开访问</b>的图片链接（拿到链接即可查看）</li><li>图片随便签存续；<b>从便签删除后，图床仍保留 30 天</b>供反悔，到期自动清理</li><li>需要长期保留的图片，请到图床把它改为「永久」或自定义时长</li><li>在图床删除图片后，便签中该处将显示占位图</li><li>单张 ≤10MB（自动压缩为 WebP），占用图床配额</li><li>禁止上传违法违规内容；可在图床随时管理或删除</li></ul>', JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE); ?>
     }</script>
     <script src="js/imgbridge.js?v=4"></script>
-    <script src="js/app.js?v=90"></script>
+    <script src="js/app.js?v=91"></script>
 </body>
 </html>
