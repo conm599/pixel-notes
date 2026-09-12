@@ -313,6 +313,22 @@
     return card;
   }
 
+  // 文件夹卡「已分享」角标即时同步（分享/取消分享后区域性更新，不整页刷新）
+  function syncFolderBadge(id) {
+    var f = foldersById[id];
+    var card = document.querySelector('.folder-card[data-folder-id="' + id + '"]');
+    if (!card) return;
+    var shared = !!(f && f.share_token);
+    var b = card.querySelector('.share-badge');
+    if (shared && !b) {
+      var el = mkEl('span', 'share-badge', '已分享');
+      el.title = '文件夹已公开分享';
+      card.appendChild(el);
+    } else if (!shared && b) {
+      b.remove();
+    }
+  }
+
   // 浮层菜单定位：优先锚点下方，越界自动翻转/钳制，绝不溢出视口（右缘/底缘修复）
   function placeMenu(menu, anchor) {
     menu.style.position = 'fixed';
@@ -1662,6 +1678,7 @@
           if (isFolder) {
             if (foldersById[id]) { foldersById[id].share_url = r.url; foldersById[id].share_until = r.until || 0; foldersById[id].share_token = r.token || ''; }
             if (card) { card.share_url = r.url; card.share_until = r.until || 0; card.share_token = r.token || ''; }
+            syncFolderBadge(id);
           } else {
             if (card && card._noteData) { card._noteData.share_url = r.url; card._noteData.share_until = r.until || 0; if (r.token) card._noteData.share_token = r.token; }
             if (notesById[id]) { notesById[id].share_url = r.url; notesById[id].share_until = r.until || 0; if (r.token) notesById[id].share_token = r.token; }
@@ -1685,6 +1702,7 @@
           if (isFolder) {
             if (foldersById[id]) { foldersById[id].share_url = ''; foldersById[id].share_until = 0; foldersById[id].share_token = ''; }
             if (card) { card.share_url = ''; card.share_until = 0; card.share_token = ''; }
+            syncFolderBadge(id);
           } else {
             if (card && card._noteData) { card._noteData.share_url = ''; card._noteData.share_until = 0; card._noteData.share_token = ''; }
             if (notesById[id]) { notesById[id].share_url = ''; notesById[id].share_until = 0; notesById[id].share_token = ''; }

@@ -17,7 +17,7 @@ if (isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>注册 - Pixel Notes</title>
-    <link rel="stylesheet" href="css/pixel.css?v=71">
+    <link rel="stylesheet" href="css/pixel.css?v=72">
     <link rel="stylesheet" href="css/icons.css?v=5">
     <script src="js/iconset.js?v=1"></script>
     <link rel="icon" href="favicon.ico">
