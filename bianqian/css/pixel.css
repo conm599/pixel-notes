@@ -1146,14 +1146,14 @@ html, body { overflow-x: clip; max-width: 100%; }
 }
 .folder-card .folder-menu-btn:hover { color: var(--accent2); border-color: var(--accent2); }
 
-/* 文件夹卡「已分享」角标（⋮ 左侧防重叠） */
+/* 文件夹卡「已分享」角标（左上角，半透明绿融入卡片，不抢视觉） */
 .folder-card .share-badge {
-  position: absolute; top: 4px; right: 28px;
-  padding: 2px 7px; font-size: 10px; font-weight: 700;
-  font-family: var(--font-body);
-  background: #1d7a3e; color: #b8ffd2;
-  border: 1px solid #0c3b1f;
-  box-shadow: 2px 2px 0 #000;
+  position: absolute; top: 5px; left: 8px;
+  padding: 2px 8px; font-size: 10px; font-weight: 700;
+  font-family: var(--font-body); letter-spacing: 1px;
+  background: rgba(111, 208, 143, 0.12);
+  color: #8fe6ae;
+  border: 1px solid rgba(111, 208, 143, 0.45);
 }
 
 /* === 文件夹操作菜单 === */
