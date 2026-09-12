@@ -27,32 +27,34 @@
 
 | 文件 | 版本 | 职责 |
 |---|---|---|
-| js/app.js | **v85** | 前端总交互：编辑面板、AI 设置/编辑流（SSE 解析）、图床联动初始化、保存防竞态 |
-| js/md.js | **v41** | PixelMD 渲染器（表格/任务列表/高亮/上下标/脚注/媒体白名单） |
-| css/pixel.css | **v60**（index；share 用 v59、login/register/admin/tts 用 v54） | 粉色像素风设计系统 |
-| js/selection.js | **v5** | Windows 式多选/剪贴板（鼠标长按 500ms、触屏 700ms） |
+| js/app.js | **v92** | 前端总交互：编辑面板、AI 设置/编辑流（SSE 解析）、图床联动初始化、保存防竞态、文件夹分享角标即时同步 |
+| js/md.js | **v42** | PixelMD 渲染器（表格/任务列表/高亮/上下标/脚注/媒体白名单；AI 图片尺寸 `<img width>` 支持，px 后缀容错） |
+| css/pixel.css | **v72**（全站统一） | 粉色像素风设计系统（含像素图标三态、文件夹分享角标） |
+| css/icons.css | **v5** | 像素图标类名表（v1 实心 / v2 线稿双套 WebP，50+ 语义） |
+| js/iconset.js | **v1** | 图标三态切换（混合/经典实心/线稿，父域 Cookie `pn_iconset` 两站互通） |
+| js/selection.js | **v6** | Windows 式多选/剪贴板（鼠标长按 500ms、触屏 700ms） |
 | js/ai-direct.js | **v16** | 浏览器直连 AI（协议 v9：SKIP 锚匹配 + 空闲看门狗） |
-| js/imgbridge.js | **v3** | 便签↔图床图片联动桥（唯一联动入口） |
+| js/imgbridge.js | **v4** | 便签↔图床图片联动桥（唯一联动入口） |
 | js/tts.js | **v11** | 朗读工坊（语速/音色/卡拉OK字幕/SRT/Canvas 合成字幕视频） |
 | js/auth.js | **v9** | 登录/注册页脚本 |
 | js/admin.js | **v4** | 管理页（AI 连通性测试、密钥复制） |
 | js/tutorial-data.js | v1 | 教程数据（`tools/build-tutorial.js` 生成，勿手改） |
 | js/Sortable.min.js | 1.15.2 | 第三方拖拽排序 |
 | protocol.md | **v9** | AI 编辑协议（保留 v5→v9 全部历史章节） |
-| api/ai.php | 1941 行 | AI 核心（edit + classify 整理 Agent + 密钥池 + SSRF 防护）⚠️ 文件头注释仍写 v8，实际已实现 v9 |
+| api/ai.php | 1942 行 | AI 核心（edit + classify 整理 Agent + 密钥池 + SSRF 防护 + 图片尺寸模板） |
 | api/auth.php | 454 行 | 注册/登录/验证码/改密/注销账号，三层限流 |
 | api/notes.php | 404 行 | 便签 CRUD/分享/排序 + 图床引用同步 + 2000 字摘要传输 |
-| api/folders.php | 325 行 | 文件夹树（嵌套/环检测/删除内容上移） |
-| api/tts.php | 139 行 | TTS 代理（隐藏上游 Token、限流） |
+| api/folders.php | 325 行 | 文件夹树（嵌套/环检测/删除内容上移 + 分享状态） |
+| api/tts.php | 134 行 | TTS 代理（隐藏上游 Token、限流、模型/音色走配置） |
 
 **图床 tuchang/**
 
 | 文件 | 版本 | 职责 |
 |---|---|---|
-| js/dashboard.js | **v26** | 控制台主逻辑（主备 API 降级、WebP 压缩、上传队列并发 2、批量操作） |
-| css/pixel-blue.css | **v13** | 像素蓝设计系统（Press Start 2P、硬边框、扫描线） |
-| js/spa.js | **v8** | SPA 视图引擎 v2（list 一次拉全量、客户端过滤、切夹零请求） |
-| js/selection.js | **v9** | Windows 桌面式多选（自便签移植，剪贴板 sessionStorage 持久化） |
+| js/dashboard.js | **v30** | 控制台主逻辑（主备 API 降级、WebP 压缩、上传队列并发 2、批量操作、文件夹分享丢包对账） |
+| css/pixel-blue.css | **v20** | 像素蓝设计系统（Press Start 2P、硬边框、扫描线） |
+| js/spa.js | **v12** | SPA 视图引擎 v2（list 一次拉全量、客户端过滤、切夹零请求、文件夹分享角标） |
+| js/selection.js | **v10** | Windows 桌面式多选（自便签移植，剪贴板 sessionStorage 持久化） |
 | js/view.js | **v3** | 图片详情页交互 |
 
 配置中心：`/admini/` 面板（suite-config.php 22+ 项 + internal_key；读取链 `PSU_* 环境变量 > suite-config.php > 代码默认`）。
@@ -77,7 +79,7 @@ pixel-suite/
 │   ├── admin.php（AI/邮件管理页）/ admini/（/admini 部署配置中心）
 │   ├── api/（ai / auth / notes / folders / tts 五个 PHP）
 │   ├── config/（database.php 建表自愈 + mailer.php 零依赖 SMTP）
-│   ├── css/ js/（版本见上表）
+│   ├── css/ js/（版本见上表）/ assets/icons/（像素图标双套 WebP）
 │   ├── ai-proxy-worker.js（CF Workers 透明反代模板，用户自部署绕 CORS）
 │   ├── protocol.md（AI 编辑协议 v9，唯一事实源）
 │   └── _deploy/_diag/_test_* 等下划线开发文件（生产可删）
@@ -107,12 +109,14 @@ pixel-suite/
 - **拖拽排序**：便签卡片 / 文件夹卡片 Sortable.js 自由拖拽，批量 `reorder` 接口一次同步
 - **卡片级置顶**：`pinned DESC` 强制优先；**六色便签**白名单；**单便签 60000 字硬上限**
 - **首屏性能**：列表 2000 字摘要传输 + 零请求文件夹切换（`renderFromMemory()` 纯内存过滤），`?id=` 按需拉单条全文；搜索面板条目带面包屑路径可点击跳转
+- **AI 图片尺寸**：AI 调整图片大小时输出 `<img src width="360">`（HTML 白名单属性，支持固定像素与百分比；渲染端 px 后缀自动容错）
 - **公开分享**：便签 token（36 位 UUID，可选有效期，过期自动清）+ **文件夹公开分享**（`share.php?f=`，BFS 递归导出子树上限 500，面包屑导航）；分享页只读、CSP nonce、不泄露作者信息
 
 ### 3.2 文件夹系统
 
 - `pn_folders` 任意深度嵌套，移动带环检测，同父重名拒绝
 - 递归便签计数（含所有子文件夹）；删除非空文件夹时子项自动上移，绝不丢数据
+- **已分享角标**：文件夹公开分享后卡片即时显示角标（分享/取消分享后区域性更新，零刷新）；操作菜单自动防溢出（贴屏幕边缘自动钳制/翻转）
 
 ### 3.3 Windows 式多选与剪贴板（selection.js v5）
 
@@ -128,8 +132,9 @@ pixel-suite/
 
 ### 3.5 TTS 朗读工坊（tts.php + tts.js v11 + api/tts.php）
 
-- 独立页面：语速/音色调节（OpenAI 名 → Edge 中文音色映射）、逐字卡拉OK字幕、SRT 字幕下载、Canvas 合成字幕视频（MP4/WebM）
+- 独立页面：语速/音色调节、逐字卡拉OK字幕、SRT 字幕下载、Canvas 合成字幕视频（MP4/WebM）
 - `api/tts.php` 代理隐藏上游 Bearer Token，登录校验 + 参数白名单 + 限流
+- **OpenAI 兼容可配置**：`/admini/` 面板可改接口地址、模型名（`tts_model`）与音色列表（`tts_voices` 逗号分隔），前端音色下拉随配置生成——任何 OpenAI 兼容上游即插即用
 
 ### 3.6 便签↔图床图片联动（imgbridge.js v3，2026-09-06 上线）
 
@@ -140,7 +145,7 @@ pixel-suite/
 - **admin.php**：AI 接口配置（key 掩码防覆盖）+ 测试连接、AI 密钥池（genkey/delkey/togglekey/resetkey，绑定用户+每日限额）、SMTP 保存+测试发信、邮箱白名单
 - **backup.php**：导出全库 JSON / 导入（管理员邮箱验证码 + 事务清库重灌）/ 跨账号便签合并
 - **captcha.php**：4 位去混淆图形验证码（5 分钟过期、一次性）；**注销账号**（auth.php `deleteaccount`）
-- **/admini/ 配置中心**（admini/index.php）：独立会话 `ADMINI_SID`；首次访问安装向导；可视化改 6 组 22+ 项配置（SMTP/域名/双站 DB/图床常量/TTS），写入 webroot 上一级 `suite-config.php`（nginx 不可达）
+- **/admini/ 配置中心**（admini/index.php）：独立会话 `ADMINI_SID`；首次访问安装向导；可视化改 7 组 25+ 项配置（SMTP/域名/双站 DB/图床常量/TTS 含模型与音色列表/自动备份开关），写入 webroot 上一级 `suite-config.php`（nginx 不可达）
 
 ---
 
@@ -168,7 +173,7 @@ pixel-suite/
 
 ### 4.4 控制台与管理
 
-- **dashboard.php SPA**：配额条 / API Key 面板 / 上传队列 / 文件夹树（嵌套 ≤5 层、环检测、删除子项上移绝不删图）/ SPA 网格懒加载 / Windows 式多选剪贴板 / 批量分享、批量 ZIP、批量删除 / 五格式分享链接 / 「🏠 便签」互跳
+- **dashboard.php SPA**：配额条 / API Key 面板 / 上传队列 / 文件夹树（嵌套 ≤5 层、环检测、删除子项上移绝不删图）/ SPA 网格懒加载 / Windows 式多选剪贴板 / 批量分享、批量 ZIP、批量删除 / 五格式分享链接 / 「🏠 便签」互跳 / 文件夹卡「已分享」角标
 - **adminws.php 管理台**：管理密码 + 验证码登录（限频 10 次/600 秒）；用户列表（配额/已用）、单独调配额、删户（验证码 + 二级令牌双校验，连图片文件一并删）
 - **cron.php**：`?key=CRON_KEY` 触发惰性过期清理（过期图落盘删除、过期 token 置空、限频文件清理），由面板监控任务调用
 - **账号统一**：login/register 仅 302 跳便签主站；`ensure_pn_account()` 以 `img_users.pn_uid ↔ pn_users.id` 自动建档关联
@@ -226,6 +231,22 @@ PSU_* 环境变量（兼容旧 PIXEL_*） > suite-config.php（webroot 上一级
 
 ---
 
+### 6.5 像素图标系统（两站共用）
+
+- `assets/icons/{v1,v2}/*.webp` 双套图标（V1 实心阴影 / V2 描边线稿，50+ 语义，WebP 无损透明，单枚 <1KB）+ `css/icons.css` 类名表 + `js/iconset.js` 三态切换
+- 用户可在设置菜单选择 混合（默认：设置/AI 用线稿、其余实心）/ 经典实心 / 线稿，选择存父域 Cookie `pn_iconset`，**两站自动跟随**，零 SQL
+- 新增语义：`agnes-image` 生成 → 品牌调色板（#4af0ff / #ff6b9d / #12122a）吸附 → 网格降采样 → WebP，两站 assets 各放一份
+
+### 6.6 自动备份轮换（/var/www/backups，2026-09-12 上线）
+
+- **备份单元（4 个轮换）**：`config`（suite-config.php）/ `db_bianqian` / `db_tuchang`（mysqldump --single-transaction）/ `assets`（图床图片目录 private_img_store，webroot 之外）
+- **开启即全量两份**（A/B 冗余；assets-A/B 为全量基线，永久保留——是老图片的唯一副本）
+- **每日增量**：cron（UTC 19:17 = 北京 03:17）按单元清单每天轮换一个文件；assets 只打包最近 7 天内新增/修改的图片
+- **7 天保留**：备份文件按 mtime 满 7 天自动清理（基线豁免），存储占用有界
+- **开关**：`/admini/` 面板「自动备份」`backup_enabled`（1=开 0=关），关闭后 cron 自动跳过
+- **恢复方法**：config 直接拷回；DB `mysql 库名 < dump文件`；图片解 tar 至 `private_img_store`；只要数据库在，配置/代码（git）/图片（基线+增量）均可恢复
+- 安装：上传 `pixel_backup.php` 至备份目录 → `php pixel_backup.php init` → 写 cron `17 19 * * * root /usr/bin/php /var/www/backups/pixel_backup.php daily`
+
 ## 七、红线（改代码前必读）
 
 1. 图床分享链接机制（s.php token / view.php / i.php / share_urls / PREFERRED_HOST）**一行不动**，只允许调用
@@ -255,7 +276,7 @@ PSU_* 环境变量（兼容旧 PIXEL_*） > suite-config.php（webroot 上一级
 
 ## 十、已知不一致点（待顺手修）
 
-1. `bianqian/share.php` 引用 pixel.css `?v=59`，index.php 已是 v60（差一版）
-2. `bianqian/api/ai.php` 文件头注释仍写「以 protocol.md v8 为准」，实际已实现 v9
-3. `admini/suite-config.example.php` 缺 `internal_key` 等五个代码实际引用的键
-4. `tuchang/assets/glass.css` 已被 pixel-blue.css 取代，无引用（遗留文件）
+1. `bianqian/api/ai.php` 文件头注释仍写「以 protocol.md v8 为准」，实际已实现 v9
+2. `admini/suite-config.example.php` 缺 `internal_key`/`tts_model`/`tts_voices`/`backup_enabled` 等代码实际引用的键
+3. `tuchang/assets/glass.css` 已被 pixel-blue.css 取代，无引用（遗留文件）
+4. 图床 icons.css 引用 `play_pink.32.webp` 但文件缺失（登录/TTS 主按钮图标 404，显示为空缺）
