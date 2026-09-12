@@ -313,7 +313,7 @@
     return card;
   }
 
-  // 浮层菜单定位：优先锚点下方，越界自动翻转/钳制，绝不溢出视口（移动端右缘/底缘修复）
+  // 浮层菜单定位：优先锚点下方，越界自动翻转/钳制，绝不溢出视口（右缘/底缘修复）
   function placeMenu(menu, anchor) {
     menu.style.position = 'fixed';
     menu.style.left = '0px';
@@ -325,7 +325,9 @@
     var left = r.right - mw;
     left = Math.min(Math.max(8, left), window.innerWidth - mw - 8);
     var top = r.bottom + 4;
-    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    if (top + mh > window.innerHeight - 8) top = r.top - mh - 4;          // 翻转到锚点上方
+    if (top + mh > window.innerHeight - 8) top = window.innerHeight - mh - 8;  // 锚点也在屏外 → 贴底钳制
+    if (top < 8) top = 8;
     menu.style.left = left + 'px';
     menu.style.top = top + 'px';
     menu.style.visibility = '';
@@ -628,7 +630,7 @@
 
   function buildMeta(note, card) {
     var meta = mkEl('div', 'note-meta');
-    meta.appendChild(mkEl('span', 'note-time', '<i class="ic ic-clock"></i> ' + (note.updated_at || '')));
+    meta.appendChild(mkEl('span', null, '🕐 ' + (note.updated_at || '')));
     var actions = mkEl('div', 'note-actions');
 
     var editBtn = mkBtn('<i class="ic ic-pencil"></i> 编辑', '编辑这篇便签');
@@ -636,20 +638,17 @@
 
     // 从 share_token 构建 share_url（参考图床 view.php 的做法，不依赖 API 返回 share_url）
     var _shareUrl = note.share_url || (note.share_token && String(note.share_token).length === 36 ? location.origin + '/share.php?t=' + note.share_token : '');
-    var shareBtn = mkBtn('<i class="ic ic-link"></i> 分享', _shareUrl ? '管理公开分享（已分享）' : '生成公开分享链接');
+    var shareBtn = mkBtn(_shareUrl ? '🌐 分享' : '<i class="ic ic-link"></i> 分享', _shareUrl ? '管理公开分享' : '生成公开分享链接');
     if (_shareUrl) { shareBtn.classList.add('btn-shared'); card._shareUrl = _shareUrl; }
     shareBtn.addEventListener('click', function () { openShareDialog(note.id, card); });
 
     var pinBtn = mkBtn(note.pinned ? '<i class="ic ic-pin"></i> 已顶' : '<i class="ic ic-pin"></i> 置顶', '置顶/取消置顶');
-    pinBtn.classList.add('opt');
     pinBtn.addEventListener('click', function () { togglePin(card); });
 
     var colorBtn = mkBtn('<i class="ic ic-palette"></i>', '切换颜色');
-    colorBtn.classList.add('opt');
     colorBtn.addEventListener('click', function () { cycleColor(card); });
 
     var moveBtn = mkBtn('<i class="ic ic-folder"></i>', '移动到文件夹');
-    moveBtn.classList.add('opt');
     moveBtn.addEventListener('click', function (e) { e.stopPropagation(); promptMoveNote(note); });
 
     var delBtn = mkBtn('<i class="ic ic-trash"></i> 删除', '删除便签');
@@ -657,45 +656,12 @@
 
     actions.appendChild(editBtn);
     actions.appendChild(shareBtn);
-    actions.appendChild(delBtn);
     actions.appendChild(pinBtn);
     actions.appendChild(colorBtn);
     actions.appendChild(moveBtn);
-    var moreBtn = mkBtn('⋮', '更多操作');
-    moreBtn.className = 'note-menu-btn';
-    moreBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      openNoteMenu(note, card, moreBtn);
-    });
-    actions.appendChild(moreBtn);
+    actions.appendChild(delBtn);
     meta.appendChild(actions);
     return meta;
-  }
-
-  // 卡片操作菜单（移动端收纳 置顶/颜色/移动；定位自适应视口，不溢出屏幕）
-  var noteMenuEl = null;
-  function closeNoteMenu() {
-    if (noteMenuEl) { noteMenuEl.remove(); noteMenuEl = null; }
-  }
-  function openNoteMenu(note, card, anchor) {
-    closeNoteMenu();
-    var menu = mkEl('div', 'folder-menu note-menu');
-    function addItem(label, icon, fn) {
-      var item = mkEl('div', 'folder-menu-item');
-      item.appendChild(mkEl('span', null, icon + ' ' + label));
-      item.addEventListener('click', function (e) { e.stopPropagation(); closeNoteMenu(); fn(); });
-      menu.appendChild(item);
-    }
-    addItem(note.pinned ? '取消置顶' : '置顶', '<i class="ic ic-pin"></i>', function () { togglePin(card); });
-    addItem('切换颜色', '<i class="ic ic-palette"></i>', function () { cycleColor(card); });
-    addItem('移动到文件夹', '<i class="ic ic-folder"></i>', function () { promptMoveNote(note); });
-    placeMenu(menu, anchor);
-    noteMenuEl = menu;
-    document.addEventListener('pointerdown', function h(e) {
-      if (noteMenuEl && !noteMenuEl.contains(e.target)) {
-        closeNoteMenu(); document.removeEventListener('pointerdown', h, true);
-      }
-    }, true);
   }
 
   // 长文截断检测

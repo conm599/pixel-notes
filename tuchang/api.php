@@ -682,7 +682,7 @@ if ($action === 'copybatch') {
 }
 
 if ($action === 'folder_list') {
-    $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
+    $fst = db()->prepare('SELECT id, parent_id, name, sort_order, created_at, share_token, share_until FROM img_folders WHERE uid = ? ORDER BY sort_order ASC, id ASC');
     $fst->execute(array($uid));
     $fs = $fst->fetchAll();
     $direct = array();
@@ -711,7 +711,8 @@ if ($action === 'folder_list') {
             'name' => $f['name'], 'sort_order' => (int)$f['sort_order'],
             'count' => isset($roll[$fid]) ? $roll[$fid] : 0,
             'direct_count' => isset($direct[$fid]) ? $direct[$fid] : 0,
-            'created_at' => (int)$f['created_at']);
+            'created_at' => (int)$f['created_at'],
+            'shared' => (!empty($f['share_token']) && ((int)$f['share_until'] === 0 || (int)$f['share_until'] > time())) ? 1 : 0);
     }
     jout(array('ok' => true, 'folders' => $out));
 }
