@@ -57,12 +57,15 @@ if (!isset($_SESSION['user_id'])) {
                 <div class="tts-ctrl">
                     <label class="form-label" for="ttsVoice">🗣 音色</label>
                     <select id="ttsVoice" class="tts-select">
-                        <option value="fable" selected>晓伊 · 女 · 活泼甜润</option>
-                        <option value="alloy">晓晓 · 女 · 温柔亲切</option>
-                        <option value="nova">晓涵 · 女 · 清亮甜美</option>
-                        <option value="shimmer">晓梦 · 女 · 轻柔温润</option>
-                        <option value="echo">云希 · 男 · 阳光少年</option>
-                        <option value="onyx">云扬 · 男 · 沉稳大气</option>
+<?php
+// 音色下拉由管理面板 tts_voices 配置生成（逗号分隔；兼容任意 OpenAI 兼容上游）
+$ttsVoiceList = array_values(array_filter(array_map('trim',
+    preg_split('/[\s,，]+/', suite_cfg('tts_voices', 'fable,alloy,nova,shimmer,echo,onyx'))),
+    function ($v) { return $v !== ''; }));
+if (count($ttsVoiceList) === 0) $ttsVoiceList = array('fable');
+foreach ($ttsVoiceList as $i => $tv): ?>
+                        <option value="<?php echo htmlspecialchars($tv, ENT_QUOTES, 'UTF-8'); ?>"<?php echo $i === 0 ? ' selected' : ''; ?>><?php echo htmlspecialchars($tv, ENT_QUOTES, 'UTF-8'); ?></option>
+<?php endforeach; ?>
                     </select>
                 </div>
 

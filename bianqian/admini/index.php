@@ -112,19 +112,22 @@ if (!$INSTALLED && isset($_POST['install'])) {
     $_SESSION['admini_fail'] = $cnt + 1;
     $err = '密码错误';
 } elseif ($INSTALLED && $logged && isset($_POST['save'])) {
-    // ---- 面板保存：读旧值合并（密码留空=不改） ----
+    // ---- 面板保存：读旧值合并（PASS_KEYS 留空=不改） ----
+    $PASS_KEYS = array('bianqian_db_pass', 'tuchang_db_pass', 'tuchang_admin_pass', 'tts_token', 'tuchang_cron_key');
+    $cfg['__old_admin'] = $cfg['tuchang_admin_pass'] ?? '';   // 供同步判断（修复死代码）
     $keys = array('smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from_name','email_whitelist','bianqian_host','tuchang_host','bianqian_db_host','bianqian_db_port','bianqian_db_name','bianqian_db_user','bianqian_db_pass',
         'tuchang_db_host','tuchang_db_name','tuchang_db_user','tuchang_db_pass',
         'tuchang_invite_code','tuchang_admin_pass','tuchang_user_quota','tuchang_max_upload','tuchang_max_compressed',
         'tuchang_max_dim','tuchang_cron_key','tuchang_preferred_host',
-        'tts_url','tts_token','tts_max_text');
+        'tts_url','tts_token','tts_max_text','tts_model','tts_voices','backup_enabled');
     foreach ($keys as $k) {
         if (!isset($_POST[$k])) continue;
         $v = (string)$_POST[$k];
-        if ($v === '' && substr($k, -5) === '_pass' && isset($cfg[$k])) continue; // 密码留空=保持
+        if ($v === '' && in_array($k, $PASS_KEYS, true) && isset($cfg[$k])) continue; // 密钥留空=保持（防清空 tts_token/cron_key）
         $cfg[$k] = (substr($k, -6) === '_quota' || substr($k, -11) === '_compressed' || substr($k, -9) === '_max_text' || substr($k, -8) === '_dim' || substr($k, -6) === '_upload' || substr($k, -5) === '_port')
             ? (int)$v : $v;
     }
+    if (isset($cfg['backup_enabled'])) $cfg['backup_enabled'] = ((string)$cfg['backup_enabled'] === '0') ? '0' : '1';
     if (!empty($_POST['new_pass'])) {
         if ((string)$_POST['new_pass'] === (string)$_POST['new_pass2'] && strlen((string)$_POST['new_pass']) >= 8) {
             $cfg['admin_hash'] = password_hash((string)$_POST['new_pass'], PASSWORD_DEFAULT);
@@ -165,11 +168,14 @@ $FIELDS = array(
         'tuchang_max_compressed' => '压缩上限(字节)', 'tuchang_max_dim' => '最大边长(px)',
         'tuchang_cron_key' => 'cron 密钥', 'tuchang_preferred_host' => '优选域名(分享副域)',
     ),
-    'TTS 语音' => array(
+    'TTS 语音（OpenAI 兼容）' => array(
         'tts_url' => 'TTS 接口地址', 'tts_token' => 'TTS Token', 'tts_max_text' => '单次最大字数',
+        'tts_model' => '模型名(如 tts-1)', 'tts_voices' => '音色列表(逗号分隔，如 fable,alloy,echo)',
+    ),
+    '自动备份' => array(
+        'backup_enabled' => '备份开关(1=开启 0=关闭)',
     ),
 );
-$PASS_KEYS = array('bianqian_db_pass', 'tuchang_db_pass', 'tuchang_admin_pass', 'tts_token', 'tuchang_cron_key');
 ?><!DOCTYPE html>
 <html lang="zh">
 <head>
