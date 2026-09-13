@@ -1073,6 +1073,15 @@ try {
                     $cur[] = $seg;
                     $curPath = implode('/', $cur);
                     if (isset($folderMap[$curPath])) { $parentId = $folderMap[$curPath]; continue; }
+                    // 同父同名先复用（防历史脏数据/AI 制造重复夹）
+                    $st = $pdo->prepare("SELECT id FROM pn_folders WHERE user_id = ? AND parent_id <=> ? AND name = ?");
+                    $st->execute(array($uid, $parentId, $seg));
+                    $exist = $st->fetchColumn();
+                    if ($exist !== false) {
+                        $parentId = (int)$exist;
+                        $folderMap[$curPath] = $parentId;
+                        continue;
+                    }
                     $st = $pdo->prepare("INSERT INTO pn_folders (user_id, parent_id, name, sort_order, created_at) VALUES (?, ?, ?, 0, ?)");
                     $st->execute(array($uid, $parentId, $seg, $now));
                     $newId = (int)$pdo->lastInsertId();
@@ -1106,10 +1115,18 @@ try {
                     $st->execute(array($fid, $uid));
                     $oldName = $st->fetchColumn();
                     if ($oldName === false || $oldName === $op['new_name']) continue;
+                    // 同父重名拒绝（对齐 folders.php）：AI 改名不得制造同名兄弟夹
+                    $st = $pdo->prepare("SELECT parent_id FROM pn_folders WHERE id = ? AND user_id = ?");
+                    $st->execute(array($fid, $uid));
+                    $p = $st->fetchColumn();
+                    $st = $pdo->prepare("SELECT COUNT(*) FROM pn_folders WHERE user_id = ? AND parent_id <=> ? AND name = ? AND id <> ?");
+                    $st->execute(array($uid, $p === false ? null : $p, $op['new_name'], $fid));
+                    if ((int)$st->fetchColumn() > 0) { $skipped[] = array('op' => 'rename', 'path' => $pathStr, 'reason' => 'name_conflict'); continue; }
                     $st = $pdo->prepare("UPDATE pn_folders SET name = ? WHERE id = ? AND user_id = ?");
                     $st->execute(array($op['new_name'], $fid, $uid));
                     $undo[] = array('undo' => 'rename', 'folder_id' => $fid, 'old_name' => (string)$oldName);
                     $renamed++;
+                    $folderMap = $refreshMap();   // 改名后路径映射必须刷新，否则后续 move 落进影子夹
                 } elseif ($op['op'] === 'delete_folder') {
                     // 删除文件夹：内容上移一级（环安全由 folders.php 同款逻辑保证——只上移到 parent）
                     $pathStr = implode('/', $op['segments']);
@@ -1120,25 +1137,27 @@ try {
                     $parentId = $st->fetchColumn();
                     if ($parentId === false) continue;
                     $parentId = ($parentId === null) ? null : (int)$parentId;
-                    // 记录该文件夹全部内容快照用于撤销（还原结构）
-                    $st = $pdo->prepare("SELECT id, name, parent_id, sort_order FROM pn_folders WHERE user_id = ? AND (id = ? OR parent_id <=> ?)");
-                    $st->execute(array($uid, $fid, $fid));
-                    $subTree = $st->fetchAll();
-                    $st = $pdo->prepare("SELECT id, folder_id, sort_order FROM pn_notes WHERE user_id = ? AND folder_id <=> ?");
-                    $st->execute(array($uid, $fid));
-                    $subNotes = $st->fetchAll();
-                    // 先收集整个子树（含多级嵌套）——用递归收集 id 集
+                    // 收集整个子树（含多级嵌套）——BFS 递归，天然父先子后
                     $allFolderIds = array($fid);
+                    $subTreeRows = array();
                     $frontier = array($fid);
                     while (!empty($frontier)) {
                         $ph = implode(',', array_fill(0, count($frontier), '?'));
+                        $st = $pdo->prepare("SELECT id, name, parent_id, sort_order FROM pn_folders WHERE user_id = ? AND id IN ($ph)");
+                        $st->execute(array_merge(array($uid), $frontier));
+                        foreach ($st->fetchAll() as $r) $subTreeRows[(int)$r['id']] = $r;
                         $st = $pdo->prepare("SELECT id FROM pn_folders WHERE user_id = ? AND parent_id IN ($ph)");
                         $st->execute(array_merge(array($uid), $frontier));
                         $next = $st->fetchAll(PDO::FETCH_COLUMN);
                         $frontier = array_map('intval', $next);
                         $allFolderIds = array_merge($allFolderIds, $frontier);
                     }
+                    $subTree = array();
+                    foreach ($allFolderIds as $afid) { if (isset($subTreeRows[$afid])) $subTree[] = $subTreeRows[$afid]; }   // BFS：父必在子前
                     $phAll = implode(',', array_fill(0, count($allFolderIds), '?'));
+                    $st = $pdo->prepare("SELECT id, folder_id, sort_order FROM pn_notes WHERE user_id = ? AND folder_id IN ($phAll)");
+                    $st->execute(array_merge(array($uid), $allFolderIds));
+                    $subNotes = $st->fetchAll();
                     $st = $pdo->prepare("SELECT id, folder_id, sort_order FROM pn_notes WHERE user_id = ? AND folder_id IN ($phAll)");
                     $st->execute(array_merge(array($uid), $allFolderIds));
                     $subNotes = $st->fetchAll();
@@ -1229,8 +1248,19 @@ try {
             $st = $pdo->prepare("INSERT INTO pn_ai_actions (user_id, action, detail, created_at) VALUES (?, 'classify', ?, ?)");
             $st->execute(array($uid, $logDetail !== false ? $logDetail : json_encode(array('error' => 'log_encode_failed')), $now));
 
+            // 孤儿自检（终极防线）：本事务后任何便签 folder_id 指向不存在的夹 → 落主页，绝不静默丢失
+            $st = $pdo->prepare("SELECT n.id FROM pn_notes n LEFT JOIN pn_folders f ON n.folder_id = f.id WHERE n.user_id = ? AND n.folder_id IS NOT NULL AND f.id IS NULL");
+            $st->execute(array($uid));
+            $orphans = $st->fetchAll(PDO::FETCH_COLUMN);
+            $orphansFixed = 0;
+            if (!empty($orphans)) {
+                $ph = implode(',', array_fill(0, count($orphans), '?'));
+                $pdo->prepare("UPDATE pn_notes SET folder_id = NULL WHERE id IN ($ph)")->execute($orphans);
+                $orphansFixed = count($orphans);
+            }
+
             $pdo->commit();
-            jsonOut(array('success' => true, 'moved' => $moved, 'created' => $created, 'renamed' => $renamed, 'deleted_folders' => $deletedF, 'deleted_notes' => $deletedN, 'sorted' => $sorted, 'colored' => $colored, 'pinned' => $pinned, 'skipped' => $skipped));
+            jsonOut(array('success' => true, 'moved' => $moved, 'created' => $created, 'renamed' => $renamed, 'deleted_folders' => $deletedF, 'deleted_notes' => $deletedN, 'sorted' => $sorted, 'colored' => $colored, 'pinned' => $pinned, 'skipped' => $skipped, 'orphans_fixed' => $orphansFixed));
         } catch (Exception $e) {
             $pdo->rollBack();
             jsonOut(array('success' => false, 'message' => '执行失败，未做任何改动'), 500);
@@ -1295,28 +1325,64 @@ try {
                     $pdo->prepare("DELETE FROM pn_folders WHERE id = ? AND user_id = ?")->execute(array($fid, $uid));
                     $restoredCount++;
                 } elseif ($u['undo'] === 'delete_folder') {
-                    // 重建被删的整个子树（folders 快照已按逆序排列：父级先重建），再还原便签归属
+                    // 重建被删的整个子树（folders 快照 BFS 排列：父级先重建），再还原便签归属
+                    // 鲁棒性：id 被占用（任何人）→ 换新 id 并重映射；绝不改写他人数据
+                    $idMap = array();
                     if (!empty($u['folders']) && is_array($u['folders'])) {
-                        $ins = $pdo->prepare("INSERT INTO pn_folders (id, user_id, parent_id, name, sort_order, created_at) VALUES (?, ?, ?, ?, ?, NOW())
-                                              ON DUPLICATE KEY UPDATE name = VALUES(name), parent_id = VALUES(parent_id)");
+                        $insNew = $pdo->prepare("INSERT INTO pn_folders (user_id, parent_id, name, sort_order, created_at) VALUES (?, ?, ?, ?, NOW())");
+                        $insOld = $pdo->prepare("INSERT INTO pn_folders (id, user_id, parent_id, name, sort_order, created_at) VALUES (?, ?, ?, ?, ?, NOW())");
                         foreach ($u['folders'] as $f) {
-                            $ins->execute(array((int)$f['id'], $uid, $f['parent_id'], (string)$f['name'], (int)$f['sort_order']));
+                            $oldId = (int)$f['id'];
+                            $newParent = ($f['parent_id'] === null) ? null : (isset($idMap[(int)$f['parent_id']]) ? $idMap[(int)$f['parent_id']] : (int)$f['parent_id']);
+                            $st = $pdo->prepare("SELECT user_id FROM pn_folders WHERE id = ?");
+                            $st->execute(array($oldId));
+                            $occ = $st->fetchColumn();
+                            if ($occ !== false) {
+                                if ((int)$occ === $uid) { $idMap[$oldId] = $oldId; continue; }   // 自己的还在，跳过
+                                $insNew->execute(array($uid, $newParent, (string)$f['name'], (int)$f['sort_order']));
+                                $idMap[$oldId] = (int)$pdo->lastInsertId();
+                            } else {
+                                $insOld->execute(array($oldId, $uid, $newParent, (string)$f['name'], (int)$f['sort_order']));
+                                $idMap[$oldId] = $oldId;
+                            }
                         }
                     }
                     if (!empty($u['note_moves']) && is_array($u['note_moves'])) {
                         $upd = $pdo->prepare("UPDATE pn_notes SET folder_id = ? WHERE id = ? AND user_id = ?");
+                        $chk = $pdo->prepare("SELECT COUNT(*) FROM pn_folders WHERE id = ? AND user_id = ?");
                         foreach ($u['note_moves'] as $nm) {
-                            $upd->execute(array($nm['folder_id'], (int)$nm['id'], $uid));
+                            $target = ($nm['folder_id'] === null) ? null : (int)$nm['folder_id'];
+                            if ($target !== null) {
+                                $t2 = isset($idMap[$target]) ? $idMap[$target] : $target;
+                                $chk->execute(array($t2, $uid));
+                                $target = ((int)$chk->fetchColumn() > 0) ? $t2 : null;   // 守卫：目标夹不存在 → 落主页，绝不孤儿
+                            }
+                            $upd->execute(array($target, (int)$nm['id'], $uid));
                         }
                     }
                     $restoredCount++;
                 } elseif ($u['undo'] === 'create_note') {
-                    // 重建被删便签（保留原 id）
+                    // 重建被删便签（id 可用则保留；被占用换新 id；落点夹不存在 → 主页，绝不孤儿）
                     $n = $u['note'];
-                    $pdo->prepare("INSERT INTO pn_notes (id, user_id, title, content, color, pinned, folder_id, sort_order, created_at, updated_at)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-                                   ON DUPLICATE KEY UPDATE title = VALUES(title)")
-                        ->execute(array((int)$n['id'], $uid, (string)$n['title'], (string)$n['content'], (string)$n['color'], (int)$n['pinned'], $n['folder_id'], (int)$n['sort_order']));
+                    $fid = ($n['folder_id'] === null) ? null : (int)$n['folder_id'];
+                    if ($fid !== null) {
+                        $st = $pdo->prepare("SELECT COUNT(*) FROM pn_folders WHERE id = ? AND user_id = ?");
+                        $st->execute(array($fid, $uid));
+                        if ((int)$st->fetchColumn() === 0) $fid = null;
+                    }
+                    $st = $pdo->prepare("SELECT user_id FROM pn_notes WHERE id = ?");
+                    $st->execute(array((int)$n['id']));
+                    $occ = $st->fetchColumn();
+                    if ($occ !== false) {
+                        if ((int)$occ === $uid) { $restoredCount++; continue; }   // 自己的同 id 便签仍在 → 无需重建
+                        $pdo->prepare("INSERT INTO pn_notes (user_id, title, content, color, pinned, folder_id, sort_order, created_at, updated_at)
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())")
+                            ->execute(array($uid, (string)$n['title'], (string)$n['content'], (string)$n['color'], (int)$n['pinned'], $fid, (int)$n['sort_order']));
+                    } else {
+                        $pdo->prepare("INSERT INTO pn_notes (id, user_id, title, content, color, pinned, folder_id, sort_order, created_at, updated_at)
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())")
+                            ->execute(array((int)$n['id'], $uid, (string)$n['title'], (string)$n['content'], (string)$n['color'], (int)$n['pinned'], $fid, (int)$n['sort_order']));
+                    }
                     $restoredCount++;
                 } elseif ($u['undo'] === 'sort_notes') {
                     $upd = $pdo->prepare("UPDATE pn_notes SET sort_order = ? WHERE id = ? AND user_id = ?");
