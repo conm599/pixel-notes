@@ -4,7 +4,7 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
- * 实现以 protocol.md v9 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / SKIP 锚 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
+ * 实现以 protocol.md v10 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / SKIP 锚 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
  *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
@@ -41,7 +41,7 @@
       + '<<<END>>>\n'
       + '可以有多个替换块，按顺序排列。\n'
       + '【SEARCH 最小化（硬性规则，治 token 浪费）】SEARCH 只放「定位所需的最短锚点」：通常是要修改的那一句/那一行，最多加一行紧邻上下文，严禁为了保险复制整段、整节或大段原文——SEARCH 明显长于 REPLACE 属于浪费，必须改用更短锚点。要定位的位置在很长段落/列表中部时，用 SKIP 省略中段：SEARCH 写成「首行锚点」一行 + 一行 <<<SKIP>>> + 「尾行锚点」一行（每个 SEARCH 最多一个 <<<SKIP>>>），首尾锚点必须是原文中逐字存在的行；引擎会圈定首尾锚点之间的整个跨度整体替换为 REPLACE，所以 REPLACE 必须包含该跨度改写后的完整内容。\n'
-      + 'B. 全文重写：仅当指令要求整体重构、全文翻译、全文总结、从零创作时，才直接输出完整的新便签全文。\n'
+      + 'B. 全文重写【最后手段，严禁滥用】：仅当改动遍布全文、无法用 ≤3 个替换块定位时才允许，只限四类——① 整篇翻译 ② 整体重构/重排 ③ 全文风格统一 ④ 从零创作。改个错别字、加/删一段、改一两句、调整局部格式，都属于 A，用 B 一律视为错误输出。决策方法：先尝试把指令拆成 SEARCH/REPLACE 块，拆得出来就必须用 A；SEARCH 锚点匹配失败时把锚点改短改准重试，严禁降级成全文重写。\n'
       + 'C. 澄清提问（当且仅当指令有歧义、缺关键信息或者你拿不准用户到底要改成什么样时使用，优先级最高，出现时必须只输出这个）：\n'
       + '<<<CLARIFY>>>\n'
       + '（一个问题一行，最多 3 个，简洁具体；不要重复已经问过的问题）\n'
@@ -654,7 +654,7 @@
             }).join(' / ');
             fb += '你上轮的 SEARCH 段开头分别是：' + preview;
           }
-          fb += '请重新输出替换块完成原指令：' + opts.instruction;
+          fb += '严禁改用全文重写（B 格式）逃生——本指令必须以替换块完成。请重新输出替换块完成原指令：' + opts.instruction;
           messages.push({ role: 'assistant', content: text });
           messages.push({ role: 'user', content: fb });
           continue;
@@ -663,7 +663,27 @@
       }
 
       // 全文重写模式
-      return { success: true, mode: 'full', content: cleanOutput(text), attempts: attempt };
+
+      // B 浪费回炉守卫：小改动却交全文 → 打回重做 A（最后轮放行，绝不阻塞用户）
+      var fullText = cleanOutput(text);
+      if (opts.content && String(opts.content).trim() && attempt < maxAttempts) {
+        var oldLines = {};
+        var NL = String.fromCharCode(10), CR = String.fromCharCode(13);
+        var oldSrc = String(opts.content).split(CR).join(NL).split(NL);
+        var newLines = fullText.split(CR).join(NL).split(NL);
+        var common = 0;
+        oldSrc.forEach(function (l) { if (l !== '') oldLines[l] = (oldLines[l] || 0) + 1; });
+        newLines.forEach(function (l) { if (l !== '' && oldLines[l] > 0) { common++; oldLines[l]--; } });
+        var ratio = newLines.length > 0 ? common / newLines.length : 0;
+        if (ratio >= 0.93) {
+          var fb2 = '你把整篇便签全文重写了，但与原文逐行对比 ' + Math.round(ratio * 100) + '% 未变——这个指令明显可以用局部修改（A 格式替换块）完成。'
+              + '严禁全文重写：请只输出改动的 SEARCH/REPLACE 替换块完成原指令：' + opts.instruction;
+          messages.push({ role: 'assistant', content: text });
+          messages.push({ role: 'user', content: fb2 });
+          continue;   // 打回重做 A
+        }
+      }
+      return { success: true, mode: 'full', content: fullText, attempts: attempt };
     }
     return { success: false, message: 'AI 编辑失败' };
   }
