@@ -1484,6 +1484,8 @@
       if (result.sorted) parts.push(result.sorted + ' 处排序');
       if (result.colored) parts.push(result.colored + ' 条改色');
       if (result.pinned) parts.push(result.pinned + ' 条置顶变更');
+      if (result.skipped && result.skipped.length) parts.push(result.skipped.length + ' 项跳过');
+      if (result.orphans_fixed) parts.push(result.orphans_fixed + ' 条孤儿便签归位主页');
       showToast('✅ 整理完成：' + (parts.join('，') || '无实际变更') + '（可撤销）', 'success');
       aiClassifyPending = null;
       await loadFolders(); refreshView();
