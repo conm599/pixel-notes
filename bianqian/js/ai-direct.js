@@ -4,7 +4,7 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
- * 实现以 protocol.md v9 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / SKIP 锚 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
+ * 实现以 protocol.md v13 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / SKIP 锚 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
  *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
@@ -57,24 +57,20 @@
       + '6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n'
       + '7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问\n'
       + '8. SEARCH 锚点最小化：能一句/一行定位就不用多行；长跨度用 <<<SKIP>>> 省略中段（见 A 格式说明）。复制大段原文进 SEARCH 是严重浪费，禁止\n'
-      + '【编辑 Agent 工作方式（v12，首选）】对便签内容的任何改动都必须通过工具调用落地；工具之外的散文只作简要说明展示，绝不会写进便签。\n'
-      + '工具调用格式（一轮一个）：\n'
-      + '<<<TOOL>>>\n'
-      + '{\'name\':\'append_text\',\'text\':\'要追加到末尾的完整 Markdown\'}   —— 末尾追加（用户习惯：优先追加，不动已有内容）\n'
-      + '{\'name\':\'replace_text\',\'search\':\'当前便签中逐字存在的片段\',\'replace\':\'替换后文字（删除留空）\'}   —— 局部替换；search 不唯一会返回 ambiguous\n'
-      + '{\'name\':\'set_full_text\',\'text\':\'整篇新内容\'}   —— 仅整篇重写/翻译时用\n'
-      + '{\'name\':\'read_note\',\'id\':123} / {\'name\':\'list_folder\',\'path\':\'工作/项目A\'}   —— 只读查看\n'
-      + '{\'name\':\'ask_user\',\'questions\':[\'问题1\']}   —— 需澄清时提问（替代 CLARIFY 块）\n'
-      + '{\'name\':\'finish\'}   —— 全部改完必须调用提交\n'
-      + '<<<END>>>\n'
-      + '工作流：理解指令 →（必要时 read_note 先读全文）→ 工具逐个改动 → finish 提交。工具报 not_found/ambiguous 时修正参数重试，严禁因此改用整篇重写。\n'
+      + '【角色】你是一名便签编辑执行器（embodied editor），任务是精确完成用户的编辑指令，不是聊天、不是角色扮演。\n'
+      + '【工具铁律】对便签内容的任何改动都必须通过工具调用完成；每轮回复必须至少调用一个工具（原生 function calling；上游不支持时改用文本协议 <<<TOOL>>>{json}<<<END>>>，二者自动切换）。\n'
+      + '工具与参数（原生调用名 / 文本协议 name 相同）：\n'
+      + 'replace_text {old_string, new_string} —— 局部替换（默认首选）：old_string 必须逐字复制便签当前内容且唯一，不唯一就带上前一行或后一行；new_string 留空 = 删除该片段。\n'
+      + 'append_text {text} —— 追加到便签末尾（用户常要求「往后加」，优先用它；不改动已有内容）。\n'
+      + 'write_note {content} —— 整篇重写（仅整篇翻译/整体重构；必须给完整内容，严禁省略占位）。\n'
+      + 'read_note {id} / list_folders {path} —— 只读查看（当前便签内容已给你，一般无需读）。\n'
+      + 'ask_user {questions:[...]} —— 指令有歧义或缺信息时提问（最多 3 个）。\n'
+      + 'finish {} —— 所有改动完成后必须调用，提交结果。\n'
+      + '【编辑规则】只输出改动、不要复制大段未变内容；同一处的多次改动用多个工具调用按顺序做；工具返回错误（not_found/ambiguous）时，照抄返回的 did_you_mean 片段修正 old_string 重试，已成功的改动不要重发；严禁因为一次失败就改用整篇重写。\n'
+      + '【反跑偏（硬性）】① 不得寒暄、卖萌、自称、加 emoji 装饰；② 不得以「好的/当然/没问题/Sure/OK」等客套开头；③ 不得在结束时反问或邀请继续对话；④ 不得复述指令、不得解释你在做什么超过一句话；⑤ 工具之外的文字只作为进度说明，永远不会写进便签。\n'
+      + '【目标】用户目标只有两种终止方式：改完并调用 finish，或调用 ask_user 提问。不要来回闲聊。\n'
       + '\n【图片尺寸】图片默认撑满便签可用宽度。用户嫌图片太大/太小要求调整某张图片的显示大小时，用 HTML 图片标签加 width 数字属性：固定宽度写 <img src="图片URL" width="360">，按容器比例写 <img src="图片URL" width="50%">。严禁 style 属性、严禁 width="300px" 这类带 px 的写法、严禁用 div 包裹缩放——这些都不会生效；Markdown 的 ![alt](url) 写法无法指定尺寸。调整尺寸时只加/改 width，图片 URL 与其余内容一字不动\n'
-      + '【工具调用（可选）】当你需要查看便签所在文件夹或其他文件夹里有什么时，可以调用工具。输出格式：\n'
-      + '<<<TOOL>>>\n'
-      + '{"name":"list_folder","path":"工作/项目A"}  —— 查看指定路径文件夹的便签清单；查看主页根层级用 {"name":"list_folder","path":"主页"}\n'
-      + '或 {"name":"read_note","id":123}  —— 查看 id 为 123 的便签完整内容\n'
-      + '说明：工具调用是你的输出的**全部内容**；收到工具结果后你继续推理，最多可连续调用 5 次。不要调用不在白名单里的任何工具。\n'
-      + '最后输出最终编辑结果（A/B/C 格式）';
+      + '若上游不支持工具调用，可退回 A/B/C 文本格式：A=替换块，B=整篇全文，C=澄清块（<<<CLARIFY>>>）。\n';
     if (style) s += '\n【用户风格偏好】在不违背上述硬性规则的前提下，尽量按以下风格完成编辑：' + style;
     if (now) s += '\n【当前时间】现在是 ' + now + '（用户本地时间）。涉及时间、日期、星期、节假日等内容的编辑请以此为准，不要虚构时间。';
     return s;
@@ -83,36 +79,139 @@
   // 解析澄清提问块 <<<CLARIFY>>>...<<<END>>>，返回问题数组
   // 编辑 Agent 工具（v12）：对工作副本执行改动；聊天文字永不进内容
   function editToolLabel(name) {
-    var m = { append_text: '追加内容', replace_text: '局部替换', set_full_text: '整篇写入', read_note: '读取便签', list_folder: '查看文件夹', finish: '完成', ask_user: '提问' };
+    var m = { append_text: '追加内容', replace_text: '局部替换', set_full_text: '整篇写入', write_note: '整篇写入', read_note: '读取便签', list_folder: '查看文件夹', list_folders: '查看文件夹', finish: '完成', ask_user: '提问' };
     return m[name] || name;
   }
   function editToolExec(name, args, ctx) {   // ctx = { work, touched }
+    args = args || {};
     function excerpt() {
       var w = ctx.work;
       return { current_length: w.length, current_tail: w.slice(-120) };
     }
     if (name === 'append_text') {
-      var t = String((args && args.text) || '').trim();
+      var t = String(args.text || '').trim();
       if (!t) return { ok: false, error: 'empty_text' };
       ctx.work = ctx.work === '' ? t : ctx.work.replace(/\s+$/, '') + '\n\n' + t;
       ctx.touched = true;
       return Object.assign({ ok: true, action: 'append' }, excerpt());
     }
     if (name === 'replace_text') {
-      var se = String((args && args.search) || '');
-      var rp = String((args && args.replace) || '');
-      if (!se) return { ok: false, error: 'empty_search' };
+      var se = String(args.old_string !== undefined ? args.old_string : (args.search !== undefined ? args.search : ''));
+      var rp = String(args.new_string !== undefined ? args.new_string : (args.replace !== undefined ? args.replace : ''));
+      if (!se.trim()) return { ok: false, error: 'empty_search' };
       var cnt = ctx.work.split(se).length - 1;
-      if (cnt === 1) { ctx.work = ctx.work.split(se).join(rp); ctx.touched = true; return Object.assign({ ok: true, action: 'replace', matched: 'exact' }, excerpt()); }
-      if (cnt > 1) return { ok: false, error: 'ambiguous', count: cnt, hint: 'search 出现 ' + cnt + ' 次，请加长使其唯一' };
-      return Object.assign({ ok: false, error: 'not_found', hint: 'search 必须逐字复制当前内容（含空格/换行/Markdown 符号），可用 current_tail 或先 read_note 重读' }, excerpt());
+      if (cnt > 1) return Object.assign({ ok: false, error: 'ambiguous', count: cnt,
+        hint: 'old_string 出现 ' + cnt + ' 次；请把前后各 1-2 行一起放进 old_string 使其唯一' }, excerpt());
+      var res = matchAndApply(ctx.work, se, rp, []);
+      if (res) { ctx.work = res.c; ctx.touched = true; return Object.assign({ ok: true, action: 'replace', matched: 'exact' }, excerpt()); }
+      var bm = bestMatchSnippet(ctx.work, se);
+      var fb = { ok: false, error: 'not_found', hint: 'old_string 必须逐字复制便签当前内容（含空格/换行/Markdown 符号）。' };
+      if (bm) {
+        fb.did_you_mean_line = bm.line; fb.did_you_mean = bm.excerpt; fb.similarity = bm.score;
+        fb.hint += '便签第 ' + bm.line + ' 行附近有相似内容（相似度 ' + bm.score + '%），请照抄 did_you_mean 修正 old_string 后重试；已成功的改动不要再发。';
+      } else {
+        fb.hint += '当前便签内容见 current_tail；可先调用 read_note 重读全文再复制。';
+      }
+      return Object.assign(fb, excerpt());
     }
-    if (name === 'set_full_text') {
-      ctx.work = String((args && args.text) || '').replace(/\r\n/g, '\n');
+    if (name === 'set_full_text' || name === 'write_note') {
+      var full = args.content !== undefined ? args.content : (args.text !== undefined ? args.text : '');
+      ctx.work = String(full).replace(/\r\n/g, '\n');
       ctx.touched = true;
       return Object.assign({ ok: true, action: 'set_full' }, excerpt());
     }
-    return runLocalTool(args || { name: name });   // 只读工具（read_note / list_folder）
+    // 只读工具（read_note / list_folder / list_folders）：复用页面内存数据
+    var ro = runLocalTool({ name: name === 'list_folders' ? 'list_folder' : name, path: args.path, id: args.id });
+    try { return JSON.parse(ro); } catch (e) { return { ok: false, error: 'tool_failed', raw: ro }; }
+  }
+
+  // 原生 tools schema（OpenAI 兼容多厂商；与 api/ai.php aiEditToolsSchema 一致）
+  function editToolsSchema() {
+    function fn(name, desc, props, required) {
+      return { type: 'function', function: { name: name, description: desc,
+        parameters: { type: 'object', properties: props, required: required || [] } } };
+    }
+    return [
+      fn('replace_text', '局部替换：old_string 必须逐字复制便签当前内容且唯一，不唯一就带上前一行或后一行。', { old_string: { type: 'string' }, new_string: { type: 'string', description: '替换后文字；留空表示删除该片段' } }, ['old_string', 'new_string']),
+      fn('append_text', '追加到便签末尾，不改动已有内容。', { text: { type: 'string', description: '要追加的完整 Markdown' } }, ['text']),
+      fn('write_note', '整篇重写便签内容（仅整篇翻译/整体重构）。', { content: { type: 'string', description: '完整新内容，严禁省略' } }, ['content']),
+      fn('read_note', '读取指定便签的完整内容。', { id: { type: 'integer' } }, ['id']),
+      fn('list_folders', '查看文件夹结构与其中的便签清单。', { path: { type: 'string', description: '如「工作/项目A」；根层级用「主页」' } }, []),
+      fn('ask_user', '指令有歧义或缺信息时向用户提问（最多 3 个）。', { questions: { type: 'array', items: { type: 'string' } } }, ['questions']),
+      fn('finish', '所有改动完成后调用，提交结果。', {}, [])
+    ];
+  }
+
+  // tool_calls 分片归一：index → {id,name,arguments,raw_arguments}
+  function normToolCalls(buf) {
+    var out = [];
+    Object.keys(buf || {}).sort(function (a, b) { return Number(a) - Number(b); }).forEach(function (k) {
+      var t = buf[k];
+      if (!t || !t.name) return;
+      var args = {};
+      try { args = JSON.parse(t.arguments || '{}'); } catch (e) { args = {}; }
+      out.push({ id: t.id || ('call_' + k), name: t.name, arguments: args, raw_arguments: t.arguments || '{}' });
+    });
+    return out;
+  }
+
+  // 工具结果一句话摘要（工具行展示）
+  function toolBrief(o) {
+    if (!o || typeof o !== 'object') return '完成';
+    if (o.error) {
+      if (o.error === 'ambiguous') return '出现 ' + (o.count || 0) + ' 次，需更多上下文';
+      if (o.error === 'not_found') return o.did_you_mean_line ? ('未找到，最接近第 ' + o.did_you_mean_line + ' 行') : '未找到匹配片段';
+      if (o.error === 'empty_text' || o.error === 'empty_search') return '参数为空';
+      if (o.error === 'note_not_found' || o.error === 'folder_not_found') return '目标不存在';
+      return String(o.error);
+    }
+    if (o.action === 'append') return '已追加到末尾';
+    if (o.action === 'replace') return '已替换';
+    if (o.action === 'set_full') return '已整篇写入';
+    if (o.notes) return '读取到 ' + o.notes.length + ' 条便签';
+    if (o.content !== undefined && o.id !== undefined) return '已读取便签';
+    return '完成';
+  }
+
+  // 文本协议工具块解析
+  function matchTextTool(text) {
+    var m = /<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i.exec(String(text || ''));
+    if (!m) return null;
+    var o = null;
+    try { o = JSON.parse(m[1].trim()); } catch (e) { return null; }
+    if (!o || !o.name) return null;
+    return o;
+  }
+
+  // 字符级相似度（Dice 系数 ×100，够用于「最相似片段」提示）
+  function similarity(a, b) {
+    a = String(a); b = String(b);
+    if (!a || !b) return 0;
+    var set = {}, inter = 0, i, g;
+    for (i = 0; i < a.length - 1; i++) { g = a.substr(i, 2); set[g] = (set[g] || 0) + 1; }
+    for (i = 0; i < b.length - 1; i++) { g = b.substr(i, 2); if (set[g]) { inter++; set[g]--; } }
+    var total = Math.max(1, (a.length - 1) + (b.length - 1));
+    return Math.round(200 * inter / total);
+  }
+
+  // 失败回灌：原文中最相似片段 + 行号 + 相似度
+  function bestMatchSnippet(work, search) {
+    var sLines = String(search).split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+    if (!sLines.length) return null;
+    var wLines = String(work).split('\n');
+    var probe = sLines[0].slice(0, 40);
+    var best = null;
+    for (var i = 0; i < wLines.length; i++) {
+      var line = wLines[i].trim();
+      if (!line) continue;
+      var sc = similarity(line, probe);
+      if (sc >= 45 && (!best || sc > best.score)) best = { line: i + 1, score: sc };
+    }
+    if (!best) return null;
+    var start = Math.max(0, best.line - 1);
+    var end = Math.min(wLines.length, start + Math.max(1, sLines.length) + 1);
+    best.excerpt = wLines.slice(start, end).join('\n');
+    return best;
   }
 
   function parseClarify(text) {
@@ -381,25 +480,45 @@
 
   // 单轮请求：返回 { ok, text, message }（ok=false 时 message 为错误说明）
   // onDelta 提供时走流式（stream:true），逐 token 回调；上游不支持流式时自动降级为整段返回（结果不变）
-  async function callOnce(proxy, target, apiKey, model, messages, extra, onDelta) {
+  // 单轮请求：返回 { ok, text, tool_calls, aborted, toolsRejected, message }
+  // 传 tools 走原生 function calling；onDelta 存在时走流式；signal 供上层「停止」。
+  async function callOnce(proxy, target, apiKey, model, messages, extra, onDelta, tools, signal) {
     var payload = { model: model, messages: messages, max_tokens: 16000, temperature: 0.1 };
-    // 额外请求体参数：深度思考预设 + 用户自定义 Body（后者优先，同名覆盖）
     if (extra) {
       for (var k in extra) {
         if (Object.prototype.hasOwnProperty.call(extra, k) && k !== 'model' && k !== 'messages') payload[k] = extra[k];
       }
     }
+    if (tools && tools.length) { payload.tools = tools; payload.tool_choice = 'auto'; }
     if (onDelta) payload.stream = true;
-    // 空闲看门狗（protocol v9）：直连路径没有任何超时，代理挂死/模型排队时前端永远「正在生成」。
-    // 连续 90 秒没有任何字节（连接建立前或流中途）就 abort 并给出明确错误；每收到数据重置计时。
+
+    // 空闲看门狗（90 秒无字节 → 中断）；用户点「停止」时也走同一 controller
     var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    var idleTimer = null, idleFired = false;
+    var idleTimer = null, idleFired = false, userAborted = false;
+    if (signal) {
+      if (signal.aborted) { userAborted = true; if (ctrl) ctrl.abort(); }
+      else if (signal.addEventListener) signal.addEventListener('abort', function () { userAborted = true; if (ctrl) { try { ctrl.abort(); } catch (e4) {} } });
+    }
     function armIdle() {
       if (!ctrl) return;
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(function () { idleFired = true; try { ctrl.abort(); } catch (e2) {} }, 90000);
     }
     function disarmIdle() { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } }
+
+    var tcBuf = {};
+    function feedToolDelta(list) {
+      list.forEach(function (d) {
+        var idx = (d.index === undefined || d.index === null) ? 0 : Number(d.index);
+        if (!tcBuf[idx]) tcBuf[idx] = { id: '', name: '', arguments: '' };
+        if (d.id) tcBuf[idx].id = d.id;
+        if (d.function) {
+          if (d.function.name) tcBuf[idx].name += d.function.name;
+          if (d.function.arguments) tcBuf[idx].arguments += d.function.arguments;
+        }
+      });
+    }
+
     var resp;
     try {
       armIdle();
@@ -414,12 +533,13 @@
       });
     } catch (e) {
       disarmIdle();
+      if (userAborted) return { ok: false, aborted: true, message: '已停止生成' };
       if (idleFired) return { ok: false, message: '上游连续 90 秒没有任何响应，已中断（可重试，或检查透明代理/模型服务状态）' };
       return { ok: false, message: '无法连接你的透明代理（检查地址是否正确、Worker 是否已部署）' };
     }
-    if (!onDelta) disarmIdle(); // 非流式在下方整段读取，仍有浏览器默认超时兜底；流式则继续由读循环喂狗
+    if (!onDelta) disarmIdle();
 
-    // 流式：ReadableStream 逐块解析上游 SSE，提取 delta.content 即时回调
+    // 流式：逐块解析上游 SSE，提取 delta.content 与 delta.tool_calls
     if (onDelta && resp.ok && resp.body && typeof resp.body.getReader === 'function') {
       try {
         var reader = resp.body.getReader();
@@ -427,13 +547,13 @@
         var sseBuf = '';
         var raw = '';
         var text = '';
-        var sawDelta = false;
+        var sawStream = false;
         while (true) {
           var rd = await reader.read();
           if (rd.done) break;
           var chunk = dec.decode(rd.value, { stream: true });
           if (!chunk) continue;
-          armIdle();   // 有字节流动即重置空闲看门狗
+          armIdle();
           raw += chunk;
           sseBuf += chunk;
           var nl;
@@ -444,17 +564,19 @@
             if (line.indexOf('data:') !== 0) continue;
             var d = line.slice(5).trim();
             if (!d || d === '[DONE]') continue;
-            var j = null;
-            try { j = JSON.parse(d); } catch (e) { j = null; }
-            if (!j || !j.choices || !j.choices[0]) continue;
+            var jj = null;
+            try { jj = JSON.parse(d); } catch (e) { jj = null; }
+            if (!jj || !jj.choices || !jj.choices[0]) continue;
+            var dd = jj.choices[0].delta || {};
+            if (dd.tool_calls && dd.tool_calls.length) { feedToolDelta(dd.tool_calls); sawStream = true; }
             var delta = '';
-            if (j.choices[0].delta && typeof j.choices[0].delta.content === 'string') delta = j.choices[0].delta.content;
-            else if (typeof j.choices[0].text === 'string') delta = j.choices[0].text;
-            if (delta) { text += delta; sawDelta = true; onDelta(delta); }
+            if (typeof dd.content === 'string') delta = dd.content;
+            else if (typeof jj.choices[0].text === 'string') delta = jj.choices[0].text;
+            if (delta) { text += delta; sawStream = true; onDelta(delta); }
           }
         }
-        if (sawDelta) { disarmIdle(); return { ok: true, text: text }; }
-        // 收到 200 但没有任何 content 增量：上游不支持流式（整段 JSON），往下按整段解析
+        if (sawStream) { disarmIdle(); return { ok: true, text: text, tool_calls: normToolCalls(tcBuf) }; }
+        // 收到 200 但没有任何增量：上游不支持流式（整段 JSON），往下按整段解析
         if (raw.indexOf('"reasoning_content"') !== -1) {
           return { ok: false, message: '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens' };
         }
@@ -462,16 +584,20 @@
         try { jsonFb = JSON.parse(raw); } catch (e) { jsonFb = null; }
         if (jsonFb && jsonFb.choices && jsonFb.choices[0]) {
           var moFb = jsonFb.choices[0].message || {};
+          var ntcFb = Array.isArray(moFb.tool_calls) ? moFb.tool_calls.map(function (t) {
+            var f = t.function || {}; var a = {}; try { a = JSON.parse(f.arguments || '{}'); } catch (e) { a = {}; }
+            return { id: t.id || '', name: f.name || '', arguments: a, raw_arguments: f.arguments || '{}' };
+          }).filter(function (t) { return t.name; }) : [];
           var tFb = String(moFb.content || '').trim();
-          if (!tFb && moFb.reasoning_content) {
-            return { ok: false, message: '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens' };
-          }
-          if (tFb) return { ok: true, text: tFb };
+          if (tFb) return { ok: true, text: tFb, tool_calls: ntcFb };
+          if (ntcFb.length) return { ok: true, text: '', tool_calls: ntcFb };
+          if (moFb.reasoning_content) return { ok: false, message: '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens' };
           if (jsonFb.choices[0].text) return { ok: true, text: String(jsonFb.choices[0].text).trim() };
         }
         return { ok: false, message: 'AI 返回了空内容', empty: true };
       } catch (e) {
         disarmIdle();
+        if (userAborted) return { ok: false, aborted: true, message: '已停止生成' };
         if (idleFired) return { ok: false, message: '上游连续 90 秒没有任何响应，已中断（可重试，或检查透明代理/模型服务状态）' };
         return { ok: false, message: '读取流式响应失败：' + String(e.message || e) };
       }
@@ -488,20 +614,26 @@
       var msg = 'HTTP ' + resp.status;
       if (json && json.error && json.error.message) msg = String(json.error.message).slice(0, 200);
       else if (raw) msg += '：' + raw.slice(0, 150);
-      return { ok: false, message: '上游错误：' + msg };
+      var rejected = !!(tools && tools.length && (resp.status === 400 || resp.status === 422 || /tool/i.test(msg)));
+      return { ok: false, message: '上游错误：' + msg, toolsRejected: rejected };
     }
     if (!json || !json.choices || !json.choices[0]) {
       return { ok: false, message: '响应格式异常：' + raw.slice(0, 150) };
     }
 
     var mo = json.choices[0].message || {};
+    var ntc = Array.isArray(mo.tool_calls) ? mo.tool_calls.map(function (t) {
+      var f = t.function || {}; var a = {}; try { a = JSON.parse(f.arguments || '{}'); } catch (e) { a = {}; }
+      return { id: t.id || '', name: f.name || '', arguments: a, raw_arguments: f.arguments || '{}' };
+    }).filter(function (t) { return t.name; }) : [];
     var text = String(mo.content || '').trim();
+    if (!text && ntc.length) return { ok: true, text: '', tool_calls: ntc };
     if (!text && mo.reasoning_content) {
       return { ok: false, message: '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens' };
     }
     if (!text && json.choices[0].text) text = String(json.choices[0].text).trim();
     if (!text) return { ok: false, message: 'AI 返回了空内容', empty: true };
-    return { ok: true, text: text };
+    return { ok: true, text: text, tool_calls: ntc };
   }
 
   async function edit(opts) {
@@ -560,7 +692,7 @@
         outline += (ci + 1) + '. ' + first + '\n';
       }
       var segSystem = buildSystemPrompt(opts.style, opts.now)
-        + '\n【分段模式】这是一篇长文，已分 ' + n + ' 段，你只处理「本段内容」这一个段。SEARCH 段必须逐字复制自「本段内容」。若本段完全无需修改，只输出四个字：本段无需修改。';
+        + '\n【分段模式】这是一篇长文，已分 ' + n + ' 段，你只处理「本段内容」这一个段。SEARCH 段必须逐字复制自「本段内容」。若本段完全无需修改，只输出四个字：本段无需修改。本段模式禁止调用任何工具，请直接输出 A（替换块）/B（整段新内容）/C（澄清）文本格式。';
       var newContent = contentN, applied = 0, failed = 0;
       for (var ci = 0; ci < n; ci++) {
         if (opts.onPhase) opts.onPhase('🧩 长文分段：第 ' + (ci + 1) + '/' + n + ' 段…');
@@ -577,7 +709,8 @@
         // 注入澄清问答历史（若有）
         clarifyContext(clarifyRounds).forEach(function (m) { segMsgs.push(m); });
         for (var att = 1; att <= 2; att++) {
-          var r = await callOnce(proxy, target, apiKey, model, segMsgs, extra, opts.onDelta);
+          var r = await callOnce(proxy, target, apiKey, model, segMsgs, extra, opts.onDelta, null, opts.signal);
+          if (r.aborted) return { success: false, aborted: true, message: '已停止生成' };
           if (!r.ok && !r.empty) return { success: false, message: '第 ' + (ci + 1) + ' 段处理失败：' + r.message };
           var text = r.text || '';
           var fence = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i);
@@ -625,17 +758,30 @@
       return { success: true, mode: 'edits', applied: applied, failed: failed, content: newContent, chunked: true, chunks: n, attempts: 1 };
     }
 
-    // 自纠错循环：SEARCH 块匹配失败时，带上上下文告诉 AI 哪里错了，最多 3 轮
+    // 自纠错循环：工具轮不消耗重试预算；非工具失败（空内容/锚点不匹配）最多 3 轮
     var maxAttempts = 3;
     var ctx = { work: String(opts.content || '').replace(/\r\n/g, '\n'), touched: false };   // v12 工作副本
-    var lastText = '';
+    var tools = editToolsSchema();
+    var nativeTools = true;     // 上游拒绝 tools 时自动降级为文本协议
+    var toolRounds = 0;
+    var loopGuard = 0;
+    var text = '';
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      loopGuard++;
+      if (loopGuard > 14) break;
       if (opts.onPhase) opts.onPhase(attempt > 1 ? '🔁 自动纠错第 ' + (attempt - 1) + ' 次…' : '🤖 正在生成…');
-      var r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta);
+      var r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta,
+                             nativeTools ? tools : null, opts.signal);
+      if (!r.ok && nativeTools && (r.toolsRejected || /tool/i.test(String(r.message || '')))) {
+        nativeTools = false;
+        if (opts.onPhase) opts.onPhase('ℹ️ 该模型不支持原生工具调用，切换文本协议');
+        messages.push({ role: 'user', content: '【系统】当前上游不支持原生工具调用，请改用文本协议输出（<<<TOOL>>>{json}<<<END>>>）。' });
+        r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta, null, opts.signal);
+      }
+      if (r.aborted) return { success: false, aborted: true, message: '已停止生成' };
       if (!r.ok && !r.empty) return { success: false, message: r.message };
 
-      var text = r.text || '';
-      // 去掉整段围栏包裹
+      text = r.text || '';
       var fence = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i);
       if (fence) text = fence[1].trim();
 
@@ -643,36 +789,75 @@
       var clarify = parseClarify(text);
       if (clarify.length) return clarifyResult(clarifyRounds, clarify);
 
-      // ===== TOOL 块（浏览器端执行，数据全在页面内存 notesById/foldersById 里） =====
-      var toolRounds = 0;
-      while (toolRounds < 8) {
-        var toolMatch = text.match(/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i);
-        if (!toolMatch) break;
-        var toolCall = null;
-        try { toolCall = JSON.parse(toolMatch[1].trim()); } catch (e) { break; }
-        if (!toolCall || !toolCall.name) break;
+      // ===== 原生 tool_calls（OpenAI 兼容多厂商：MiniMax/GLM/Kimi/DeepSeek/Gemini 兼容端点）=====
+      if (r.tool_calls && r.tool_calls.length) {
+        var asstCalls = [], toolMsgs = [];
+        for (var ti = 0; ti < r.tool_calls.length; ti++) {
+          if (toolRounds >= 8) break;
+          toolRounds++;
+          var tc = r.tool_calls[ti];
+          var tName = String(tc.name || '');
+          var tid = 't' + toolRounds;
+          if (opts.onTool) opts.onTool({ id: tid, name: tName, label: editToolLabel(tName), round: toolRounds });
+          if (opts.onPhase) opts.onPhase('🔧 ' + editToolLabel(tName) + '…');
+          asstCalls.push({ id: tc.id, type: 'function',
+                           function: { name: tName, arguments: tc.raw_arguments || JSON.stringify(tc.arguments || {}) } });
+          if (tName === 'finish') {
+            if (opts.onToolResult) opts.onToolResult({ id: tid, name: tName, ok: true, brief: '提交改动' });
+            return { success: true, mode: 'full', agent: true, content: ctx.work, attempts: attempt };
+          }
+          if (tName === 'ask_user') {
+            var qsN = (tc.arguments && Array.isArray(tc.arguments.questions))
+              ? tc.arguments.questions.map(function (q) { return String(q).trim(); }).filter(Boolean).slice(0, 3) : [];
+            if (qsN.length) {
+              if (opts.onToolResult) opts.onToolResult({ id: tid, name: tName, ok: true, brief: '向用户提问 ' + qsN.length + ' 个问题' });
+              return clarifyResult(clarifyRounds, qsN);
+            }
+            if (opts.onToolResult) opts.onToolResult({ id: tid, name: tName, ok: false, brief: '问题为空' });
+            toolMsgs.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: 'empty_questions' }) });
+            continue;
+          }
+          var out = editToolExec(tName, tc.arguments || {}, ctx);
+          var outStr = typeof out === 'string' ? out : JSON.stringify(out);
+          var outObj = null; try { outObj = JSON.parse(outStr); } catch (e2) { outObj = null; }
+          var okFlag = outObj ? (outObj.ok === undefined ? !outObj.error : !!outObj.ok) : true;
+          if (opts.onToolResult) opts.onToolResult({ id: tid, name: tName, ok: okFlag, brief: toolBrief(outObj) });
+          toolMsgs.push({ role: 'tool', tool_call_id: tc.id, content: outStr });
+        }
+        messages.push({ role: 'assistant', content: text !== '' ? text : null, tool_calls: asstCalls });
+        for (var mi = 0; mi < toolMsgs.length; mi++) messages.push(toolMsgs[mi]);
+        attempt--;   // 工具轮不消耗重试预算（loopGuard 兜底防死循环）
+        continue;
+      }
+
+      // ===== 文本协议 TOOL 块（上游不支持原生 tools 时的兜底）=====
+      var tt = matchTextTool(text);
+      if (tt && toolRounds < 8) {
         toolRounds++;
-        if (opts.onPhase) opts.onPhase('🔧 工具调用：' + toolCall.name + '...');
-        if (opts.onPhase) opts.onPhase('🔧 ' + editToolLabel(toolCall.name) + '…');
-        // v12 编辑工具：finish 提交 / ask_user 澄清 / 读写工具作用于工作副本
-        if (toolCall.name === 'finish') {
+        var ttName = String(tt.name);
+        var tid2 = 't' + toolRounds;
+        if (opts.onTool) opts.onTool({ id: tid2, name: ttName, label: editToolLabel(ttName), round: toolRounds });
+        if (opts.onPhase) opts.onPhase('🔧 ' + editToolLabel(ttName) + '…');
+        if (ttName === 'finish') {
+          if (opts.onToolResult) opts.onToolResult({ id: tid2, name: ttName, ok: true, brief: '提交改动' });
           return { success: true, mode: 'full', agent: true, content: ctx.work, attempts: attempt };
         }
-        if (toolCall.name === 'ask_user') {
-          var qs = Array.isArray(toolCall.questions) ? toolCall.questions.map(function (q) { return String(q).trim(); }).filter(Boolean).slice(0, 3) : [];
-          if (qs.length) return clarifyResult(clarifyRounds, qs);
+        if (ttName === 'ask_user') {
+          var qsT = Array.isArray(tt.questions)
+            ? tt.questions.map(function (q) { return String(q).trim(); }).filter(Boolean).slice(0, 3) : [];
+          if (qsT.length) {
+            if (opts.onToolResult) opts.onToolResult({ id: tid2, name: ttName, ok: true, brief: '向用户提问 ' + qsT.length + ' 个问题' });
+            return clarifyResult(clarifyRounds, qsT);
+          }
         }
-        var toolResult = editToolExec(toolCall.name, toolCall, ctx);
-        toolResult = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
+        var outT = editToolExec(ttName, tt, ctx);
+        var outTStr = typeof outT === 'string' ? outT : JSON.stringify(outT);
+        var outTObj = null; try { outTObj = JSON.parse(outTStr); } catch (e3) { outTObj = null; }
+        if (opts.onToolResult) opts.onToolResult({ id: tid2, name: ttName, ok: !(outTObj && outTObj.error), brief: toolBrief(outTObj) });
         messages.push({ role: 'assistant', content: text });
-        messages.push({ role: 'user', content: '【工具结果】' + toolCall.name + '\n' + toolResult });
-        var r2 = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta);
-        if (!r2.ok) return { success: false, message: r2.message };
-        text = (r2.text || '').trim();
-        var fence2 = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i);
-        if (fence2) text = fence2[1].trim();
-        var clarify2 = parseClarify(text);
-        if (clarify2.length) return clarifyResult(clarifyRounds, clarify2);
+        messages.push({ role: 'user', content: '【工具结果】' + ttName + '\n' + outTStr });
+        attempt--;
+        continue;
       }
 
       if (!text) {
@@ -691,7 +876,7 @@
           ctx.work = b.result; ctx.touched = true;
           return { success: true, mode: 'edits', applied: b.applied, failed: b.failed, content: b.result, attempts: attempt };
         }
-        // 空便签兜底（protocol v3）：空便签没有原文可匹配，模型误用 A 时把全部 REPLACE 段拼成新全文（视同 B），不进入重试
+        // 空便签兜底（protocol v3）：空便签没有原文可匹配，误用 A 时把全部 REPLACE 段拼成新全文（视同 B）
         if (!String(ctx.work || '').trim()) {
           var rebuilt = '';
           var reRep = /<<<REPLACE>>>\s*\n([\s\S]*?)\n?<<<END>>>/ig;

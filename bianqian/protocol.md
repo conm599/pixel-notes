@@ -3,7 +3,41 @@
 > 唯一事实源：`api/ai.php`（服务端）与 `js/ai-direct.js`（浏览器直连）两端实现均以此为准。
 > 改任何参数 / prompt / 话术：**先改本文件，再同步两端代码**，并把两边头部注释的版本号升到 `protocol.md vN`。
 
-## v12（当前）
+## v13（当前）
+
+> v12→v13：**原生 tools 多厂商双模 + 全屏审阅页（站长定稿 2026-09-13）**。背景：v12 的文本协议 `<<<TOOL>>>` 仍要求模型「背格式」，多厂商（MiniMax/GLM/Kimi/DeepSeek/Gemini）表现不稳；替换块匹配失败只回一句「匹配不上」；结果确认是内嵌三 tab 弹窗，手机上无法逐处取舍。v13 做三件事：
+
+**① 原生 function calling 优先，文本协议自动兜底（双模）**
+- 统一走 OpenAI tools 格式（MiniMax/GLM/Kimi/DeepSeek 原生；Gemini 走官方 OpenAI 兼容端点），`tool_choice: "auto"`。
+- 流式捕获 `delta.tool_calls` 分片（index → id/name/arguments 拼接），非流式解析 `message.tool_calls`；服务端与直连端同构。
+- 上游拒绝 tools（HTTP 400/422，或错误信息含 tool 字样）→ 自动去掉 tools 重试一次 + 注入系统消息让模型改用文本协议 `<<<TOOL>>>{json}<<<END>>>`；文本协议分支保留。
+- 工具集（原生调用名 / 文本协议 name 相同）：
+  - `replace_text` {old_string, new_string}（兼容旧 {search, replace}）—— 默认首选；`new_string` 留空 = 删除该片段
+  - `append_text` {text}
+  - `write_note` {content}（兼容旧 `set_full_text` {text}）
+  - `read_note` {id} / `list_folders` {path}（兼容旧 `list_folder`）
+  - `ask_user` {questions[]}
+  - `finish` {}
+- 每轮必须至少调用一个工具；工具轮不消耗重试预算（≤8 轮，loopGuard >14 兜底防死循环）。
+
+**② 替换匹配三阶段 + Aider 式失败回灌**
+匹配顺序（任一阶段「唯一命中」才应用）：精确子串唯一 → 字符归一化（智能引号/破折号/省略号/NBSP；判据是归一化确实改变了原文且归一化后片段唯一）→ 逐行 trim 唯一 → 首尾锚点（≥3 行）唯一。
+失败返回 `{ok:false, error:"not_found", did_you_mean_line, did_you_mean, similarity, current_tail, hint}`：给出原文中最相似片段 + 行号 + 相似度，提示「照抄 did_you_mean 修正后重试，已成功的改动不要再发」；`ambiguous` 返回出现次数与提示。**禁止因一次失败就改走整篇重写。**
+提示词按 Cline/Roo 结构：角色（执行器非聊天）/ 工具铁律 / 工具清单 / 编辑规则 / 反跑偏（禁寒暄卖萌自称、禁客套开头、禁反问收尾、禁复述解释、工具外文字不入正文）/ 目标（只有 finish 或 ask_user 两种终止）。
+
+**③ 全屏审阅页（前端）**
+- 结果不再内嵌弹窗：`.ai-review` 全屏层，顶部 48px（取消 / 标题+待接受计数 / 全部接受）、中部逐 hunk 复选列表、底部 56px（拒绝全部 / 接受选中 k/n），375px 优先、PC 自适应。
+- 自写行级 LCS（超 200 万格放弃逐行比对，退化为「整篇一处」）产出 `segs`/`hunks`；hunk 带上下 3 行、行号、-删/+增 统计；**按勾选情况重建全文**（勾中取新、未勾取旧），预览/源码视图实时反映当前勾选结果。
+- 版本快照（上限 20）：写入编辑器前 push，「撤回这一步」可回退；撤回后回到可勾选状态。
+- 状态机：`idle → thinking → streaming → tool_call → diff_ready → awaiting_confirm → applying → done | rejected | cancelled | error`，根节点 `data-state` 暴露。
+- 生成中：工具行 `pending|running|success|error`（data-status 着色）；「停止」走 AbortController，**中断后保留已收内容**；流式滚动跟随阈值 48px。
+- 错误归一成 kind（`auth|aborted|quota|context-limit|tool-failed|network|http|unknown`），以低调灰底行卡片展示（友好文案 + 重试），取代满屏红框。
+
+**SSE 事件**（服务端 → 前端）：`phase{t}` / `delta{t}` / `tool{id,name,label,round}` / `tool_result{id,name,ok,brief}` / `done{...}`。
+
+**回归**：diff 引擎单测 24 项、原生 tools 端到端 17 项（含 `tools`/`tool_choice` 出站、分片拼接、role=tool 回喂、四场景）、浏览器审阅页 QA 27 项（桌面 + 375px：勾选/取消、全部接受、拒绝全部、撤回、错误卡片），全绿。
+
+## v12（历史）
 
 > v11→v12：**编辑 Agent 化（站长定稿 2026-09-12）**。背景：① 上游模型经 RL 训练更擅长「带上下文的工具型 Agent」，而非「一次性格式输出机」；② 站长自定义风格偏好（猫娘人格等）应当被尊重，但一次性格式输出会让人格文字/寒暄直接污染便签正文。v12 把编辑模式改为轻量 Agent：
 

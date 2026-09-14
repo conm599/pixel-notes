@@ -1779,7 +1779,8 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       credentials: 'include',
-      cache: 'no-store'
+      cache: 'no-store',
+      signal: handlers && handlers.signal ? handlers.signal : undefined
     });
     if (resp.status === 401) {
       await check401();   // 真失效才跳登录（aiApiStream）
@@ -2291,6 +2292,452 @@
     document.body.appendChild(overlay);
   }
 
+  // ============================================================
+  // AI 全屏审阅页（v13）
+  // 顶部 48px（取消 / 标题 / 全部接受）+ 中部 hunk 逐处复选 + 底部 56px（拒绝全部 / 接受选中 k-n）
+  // 支撑：自写行级 LCS diff、按勾选重建全文、版本快照撤回、生成中工具行、错误归一
+  // ============================================================
+  var AI_SNAPSHOT_MAX = 20;
+  var aiReviewEl = null;          // 审阅页根节点（null = 未打开）
+  var aiReviewState = 'idle';     // 状态机 idle|thinking|streaming|tool_call|diff_ready|awaiting_confirm|applying|done|rejected|error|cancelled
+  var aiReviewPlan = null;        // {segs, hunks, tooLarge}
+  var aiReviewSelected = [];      // 每个 hunk 是否勾选
+  var aiReviewResult = null;      // 本次 AI 结果对象
+  var aiReviewOpts = null;        // {onClose, onRegenerate}
+  var aiReviewPrev = '';          // 本次 AI 的原文（编辑器内容）
+  var aiSnapshots = [];           // 版本快照 [{before, after, at}]，上限 20
+  var aiAbortCtrl = null;         // 当前生成请求的 AbortController
+
+  function aiAbortRun() {
+    if (aiAbortCtrl) { try { aiAbortCtrl.abort(); } catch (e) {} }
+    aiAbortCtrl = null;
+  }
+
+  function aiSetState(s) {
+    aiReviewState = s;
+    if (aiReviewEl) aiReviewEl.setAttribute('data-state', s);
+  }
+
+  // 关闭审阅页并回调（onClose 里会恢复 AI 对话框输入态）
+  function aiCloseReviewAnd(state) {
+    var cb = aiReviewOpts && aiReviewOpts.onClose;
+    aiSetState(state);
+    closeAiReview();
+    if (typeof cb === 'function') cb();
+  }
+
+  // ---- 行级 LCS（自写约 45 行；monaco 95MB / @pierre-diffs 7MB / jsdiff 601KB 都不划算）----
+  function aiLineOps(A, B) {
+    var n = A.length, m = B.length, ops = [], i, j;
+    if (n === 0) { for (i = 0; i < m; i++) ops.push(['add', B[i]]); return ops; }
+    if (m === 0) { for (i = 0; i < n; i++) ops.push(['del', A[i]]); return ops; }
+    if (n * m > 2000000) return null;   // 超大文档放弃逐行比对（约 1400×1400 行），走「整篇一处」兜底
+    var w = m + 1;
+    var dp = new Int32Array((n + 1) * w);
+    for (i = n - 1; i >= 0; i--) {
+      var row = i * w, nxt = (i + 1) * w;
+      for (j = m - 1; j >= 0; j--) {
+        dp[row + j] = (A[i] === B[j]) ? dp[nxt + j + 1] + 1
+          : (dp[nxt + j] >= dp[row + j + 1] ? dp[nxt + j] : dp[row + j + 1]);
+      }
+    }
+    var a = 0, b = 0;
+    while (a < n && b < m) {
+      if (A[a] === B[b]) { ops.push(['same', A[a]]); a++; b++; }
+      else if (dp[(a + 1) * w + b] >= dp[a * w + b + 1]) { ops.push(['del', A[a]]); a++; }
+      else { ops.push(['add', B[b]]); b++; }
+    }
+    while (a < n) { ops.push(['del', A[a]]); a++; }
+    while (b < m) { ops.push(['add', B[b]]); b++; }
+    return ops;
+  }
+
+  // 归并成「未改动段 / 改动段」；每个改动段 = 一个 hunk（展示时前后各带 3 行上下文）
+  function aiBuildPlan(oldText, newText) {
+    var A = String(oldText == null ? '' : oldText).split('\n');
+    var B = String(newText == null ? '' : newText).split('\n');
+    var ops = aiLineOps(A, B), i;
+    var tooLarge = false;
+    if (!ops) {
+      tooLarge = true; ops = [];
+      for (i = 0; i < A.length; i++) ops.push(['del', A[i]]);
+      for (i = 0; i < B.length; i++) ops.push(['add', B[i]]);
+    }
+    var segs = [], p = 0;
+    while (p < ops.length) {
+      if (ops[p][0] === 'same') {
+        var ls = [];
+        while (p < ops.length && ops[p][0] === 'same') { ls.push(ops[p][1]); p++; }
+        segs.push({ type: 'same', lines: ls });
+      } else {
+        var od = [], nw = [];
+        while (p < ops.length && ops[p][0] !== 'same') {
+          if (ops[p][0] === 'del') od.push(ops[p][1]); else nw.push(ops[p][1]);
+          p++;
+        }
+        segs.push({ type: 'change', old: od, new: nw });
+      }
+    }
+    var CTX = 3, hunks = [], oldNo = 1, newNo = 1;
+    for (var s = 0; s < segs.length; s++) {
+      var seg = segs[s];
+      seg.oldStart = oldNo; seg.newStart = newNo;
+      if (seg.type === 'same') { oldNo += seg.lines.length; newNo += seg.lines.length; continue; }
+      seg.hunkIndex = hunks.length;
+      var rows = [];
+      var prev = s > 0 ? segs[s - 1] : null;
+      if (prev && prev.type === 'same') {
+        var lead = prev.lines.slice(Math.max(0, prev.lines.length - CTX));
+        var lOld = seg.oldStart - lead.length, lNew = seg.newStart - lead.length;
+        for (var li = 0; li < lead.length; li++) rows.push({ t: 'ctx', text: lead[li], oldNo: lOld + li, newNo: lNew + li });
+      }
+      for (var di = 0; di < seg.old.length; di++) rows.push({ t: 'del', text: seg.old[di], oldNo: seg.oldStart + di, newNo: null });
+      for (var ai2 = 0; ai2 < seg.new.length; ai2++) rows.push({ t: 'add', text: seg.new[ai2], oldNo: null, newNo: seg.newStart + ai2 });
+      var nx = s + 1 < segs.length ? segs[s + 1] : null;
+      if (nx && nx.type === 'same') {
+        var trail = nx.lines.slice(0, CTX);
+        var tOld = seg.oldStart + seg.old.length, tNew = seg.newStart + seg.new.length;
+        for (var ti = 0; ti < trail.length; ti++) rows.push({ t: 'ctx', text: trail[ti], oldNo: tOld + ti, newNo: tNew + ti });
+      }
+      hunks.push({
+        index: seg.hunkIndex,
+        oldStart: seg.oldStart, newStart: seg.newStart,
+        oldLines: seg.old.length, newLines: seg.new.length,
+        adds: seg.new.length, dels: seg.old.length,
+        rows: rows
+      });
+      oldNo += seg.old.length; newNo += seg.new.length;
+    }
+    return { segs: segs, hunks: hunks, tooLarge: tooLarge };
+  }
+
+  // 按勾选情况重建全文（勾中=用新内容，未勾=保留原内容）
+  function aiApplyPlan(plan, selected) {
+    var out = [];
+    for (var s = 0; s < plan.segs.length; s++) {
+      var seg = plan.segs[s];
+      if (seg.type === 'same') {
+        for (var i = 0; i < seg.lines.length; i++) out.push(seg.lines[i]);
+      } else {
+        var use = selected[seg.hunkIndex] ? seg.new : seg.old;
+        for (var k = 0; k < use.length; k++) out.push(use[k]);
+      }
+    }
+    return out.join('\n');
+  }
+
+  function aiPendingText() {
+    if (!aiReviewPlan) return newContent.value;
+    return aiApplyPlan(aiReviewPlan, aiReviewSelected);
+  }
+
+  // ---- 错误归一成 kind（借鉴 Chatbox）：低调灰底卡片，不再满屏红框 ----
+  var AI_ERR_TEXT = {
+    aborted: '已停止生成', auth: '登录状态失效，请重新登录',
+    quota: 'AI 额度不足', 'context-limit': '内容超出模型上下文长度',
+    'tool-failed': 'AI 工具调用失败', network: '网络连接失败',
+    http: '上游接口返回错误', unknown: 'AI 编辑失败'
+  };
+  function aiErrKind(msg, status) {
+    var m = String(msg || '');
+    if (status === 401 || /未登录|登录已过期|会话失效/.test(m)) return 'auth';
+    if (/abort|已停止|主动中断/.test(m)) return 'aborted';
+    if (/配额|额度|次数|用量|quota|rate limit|too many/i.test(m)) return 'quota';
+    if (/上下文|token|过长|too long|context length|maximum context/i.test(m)) return 'context-limit';
+    if (/工具|tool_?call/i.test(m)) return 'tool-failed';
+    if (/网络|fetch|NetworkError|Failed to|连不上|连接失败|超时|timeout|连接中断/i.test(m)) return 'network';
+    if (/HTTP\s*\d|上游|服务器/.test(m)) return 'http';
+    return 'unknown';
+  }
+  function aiErrCard(msg, status, onRetry) {
+    var kind = aiErrKind(msg, status);
+    var text = AI_ERR_TEXT[kind];
+    var card = mkEl('div', 'ai-err-card');
+    card.setAttribute('data-kind', kind);
+    card.appendChild(mkEl('span', 'ai-err-ic', kind === 'aborted' ? '⏹️' : '⚠️'));
+    var body = mkEl('div', 'ai-err-body');
+    body.appendChild(mkEl('div', 'ai-err-kind', text));
+    if (msg && String(msg).indexOf(text) === -1) body.appendChild(mkEl('div', 'ai-err-msg', String(msg)));
+    card.appendChild(body);
+    if (typeof onRetry === 'function') {
+      var rb = mkBtn('重试');
+      rb.className = 'btn btn-outline btn-xs ai-err-retry';
+      rb.addEventListener('click', function () {
+        if (card.parentNode) card.parentNode.removeChild(card);
+        onRetry();
+      });
+      card.appendChild(rb);
+    }
+    return card;
+  }
+
+  var AI_TOOL_LABEL = {
+    append_text: '追加内容', replace_text: '局部替换', set_full_text: '整篇写入', write_note: '整篇写入',
+    read_note: '读取便签', list_folder: '查看文件夹', list_folders: '查看文件夹', finish: '完成', ask_user: '提问'
+  };
+
+  // ---- 写入编辑器（唯一出口）+ 版本快照 ----
+  function aiWriteEditor(text) {
+    if (typeof text !== 'string') return;
+    aiSnapshots.push({ before: newContent.value, after: text, at: Date.now() });
+    if (aiSnapshots.length > AI_SNAPSHOT_MAX) aiSnapshots.shift();
+    newContent.value = text;
+    if (newPreview && newPreview.style.display !== 'none') {
+      newPreview.innerHTML = window.PixelMD.render(text);
+    }
+  }
+
+  function aiUndoLast() {
+    if (!aiSnapshots.length) { showToast('没有可撤回的 AI 改动', 'error'); return false; }
+    var snap = aiSnapshots.pop();
+    newContent.value = snap.before;
+    if (newPreview && newPreview.style.display !== 'none') {
+      newPreview.innerHTML = window.PixelMD.render(snap.before);
+    }
+    return true;
+  }
+
+  function closeAiReview() {
+    if (aiReviewEl && aiReviewEl.parentNode) aiReviewEl.parentNode.removeChild(aiReviewEl);
+    aiReviewEl = null; aiReviewPlan = null; aiReviewSelected = [];
+    aiReviewResult = null; aiReviewOpts = null;
+  }
+
+  function aiShowReviewTab(name) {
+    if (!aiReviewEl) return;
+    var panes = aiReviewEl.querySelectorAll('.rv-pane');
+    var order = { diff: 0, render: 1, src: 2 };
+    for (var i = 0; i < panes.length; i++) {
+      panes[i].style.display = (i === order[name]) ? '' : 'none';
+    }
+    var tabs = aiReviewEl.querySelectorAll('.rv-tab');
+    for (var t = 0; t < tabs.length; t++) {
+      tabs[t].classList.toggle('active', tabs[t].getAttribute('data-tab') === name);
+    }
+  }
+
+  function aiRenderHunks() {
+    if (!aiReviewEl) return;
+    var pane = aiReviewEl.querySelector('.rv-pane-diff');
+    if (!pane) return;
+    pane.innerHTML = '';
+    var plan = aiReviewPlan;
+    if (!plan || !plan.hunks.length) {
+      pane.appendChild(mkEl('div', 'rv-empty', 'AI 没有产生任何改动，可以直接关闭。'));
+      return;
+    }
+    if (plan.tooLarge) {
+      pane.appendChild(mkEl('div', 'rv-empty', '内容过长，无法逐行比对，已合并为「整篇改动」一处。'));
+    }
+    plan.hunks.forEach(function (h) {
+      var card = mkEl('div', 'rv-hunk');
+      card.setAttribute('data-hunk', String(h.index));
+      var head = mkEl('label', 'rv-hunk-head');
+      var chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.className = 'rv-chk';
+      chk.checked = !!aiReviewSelected[h.index];
+      chk.addEventListener('change', function () {
+        aiReviewSelected[h.index] = chk.checked;
+        card.classList.toggle('rv-off', !chk.checked);
+        aiSyncSelection();
+      });
+      head.appendChild(chk);
+      head.appendChild(mkEl('span', 'rv-hunk-title', '第 ' + (h.index + 1) + ' 处'));
+      head.appendChild(mkEl('span', 'rv-hunk-loc', h.newLines ? ('第 ' + h.oldStart + ' 行起，替换为 ' + h.newLines + ' 行') : ('第 ' + h.oldStart + ' 行起，删除 ' + h.dels + ' 行')));
+      var stat = mkEl('span', 'rv-hunk-stat');
+      if (h.dels) stat.appendChild(mkEl('b', 'del', '-' + h.dels));
+      if (h.adds) {
+        if (h.dels) stat.appendChild(document.createTextNode(' '));
+        stat.appendChild(mkEl('b', 'add', '+' + h.adds));
+      }
+      head.appendChild(stat);
+      card.appendChild(head);
+      var lines = mkEl('div', 'rv-lines');
+      h.rows.forEach(function (r) {
+        var ln = mkEl('div', 'rv-line ' + r.t);
+        var no = r.t === 'add' ? r.newNo : r.oldNo;
+        ln.appendChild(mkEl('span', 'rv-no', no == null ? '' : String(no)));
+        ln.appendChild(mkEl('span', 'rv-code', (r.t === 'add' ? '+ ' : r.t === 'del' ? '- ' : '  ') + r.text));
+        lines.appendChild(ln);
+      });
+      card.appendChild(lines);
+      card.classList.toggle('rv-off', !chk.checked);
+      pane.appendChild(card);
+    });
+  }
+
+  function aiSyncSelection() {
+    if (!aiReviewEl) return;
+    var k = 0, i;
+    for (i = 0; i < aiReviewSelected.length; i++) if (aiReviewSelected[i]) k++;
+    var n = aiReviewSelected.length;
+    var sel = aiReviewEl.querySelector('.rv-accept-sel');
+    if (sel) { sel.textContent = '接受选中 ' + k + '/' + n; sel.disabled = (k === 0); }
+    var src = aiReviewEl.querySelector('.rv-pane-src');
+    if (src) src.textContent = n ? aiPendingText() : (aiReviewResult && aiReviewResult.content) || '';
+    var rd = aiReviewEl.querySelector('.rv-pane-render');
+    if (rd) rd.innerHTML = window.PixelMD.render((n ? aiPendingText() : (aiReviewResult && aiReviewResult.content)) || '*(空)*');
+    aiUpdateMeta(k, n);
+  }
+
+  function aiUpdateMeta(k, n) {
+    if (!aiReviewEl) return;
+    var r = aiReviewResult || {};
+    var parts = [];
+    if (n === 0) parts.push('AI 未产生改动');
+    else parts.push('共 ' + n + ' 处改动 · 已选 ' + k + ' 处');
+    if (r.agent) parts.push('AI 工具改写');
+    else if (r.mode === 'edits' && r.applied) parts.push('替换块 ' + r.applied + ' 个');
+    if (r.failed) parts.push('未匹配跳过 ' + r.failed + ' 处');
+    if (r.attempts && r.attempts > 1) parts.push('自动纠错 ' + (r.attempts - 1) + ' 次');
+    if (r.chunked) parts.push('长文分段 ' + (r.chunks || '?') + ' 段');
+    if (aiReviewPlan && aiReviewPlan.tooLarge) parts.push('已合并为一处');
+    var info = aiReviewEl.querySelector('.rv-meta-info');
+    if (info) info.textContent = '🧩 ' + parts.join(' · ');
+    var sub = aiReviewEl.querySelector('.rv-sub');
+    if (sub) sub.textContent = n ? (k + '/' + n + ' 处待接受') : '无改动';
+  }
+
+  function aiDoApply() {
+    if (!aiReviewEl || !aiReviewPlan) return;
+    var k = 0, i;
+    for (i = 0; i < aiReviewSelected.length; i++) if (aiReviewSelected[i]) k++;
+    if (!aiReviewPlan.hunks.length) { showToast('AI 没有产生改动', 'error'); return; }
+    if (!k) { showToast('⚠️ 请至少勾选一处改动', 'error'); return; }
+    aiSetState('applying');
+    aiWriteEditor(aiPendingText());
+    aiSetState('done');
+    showToast('✅ 已接受 ' + k + ' 处改动并写入编辑器（记得保存便签）', 'success');
+    aiShowDone(k);
+  }
+
+  function aiShowDone(k) {
+    if (!aiReviewEl) return;
+    var meta = aiReviewEl.querySelector('.rv-meta');
+    if (meta) meta.style.display = 'none';
+    var body = aiReviewEl.querySelector('.rv-body');
+    if (body) {
+      body.innerHTML = '';
+      body.appendChild(mkEl('div', 'rv-done', '✅ 已接受 ' + k + ' 处改动，已写入编辑器（记得保存便签）。不满意可撤回这一步。'));
+      var hd = mkEl('div', 'rv-sub', '当前编辑器内容：');
+      hd.style.textAlign = 'left';
+      hd.style.margin = '4px 0 6px';
+      body.appendChild(hd);
+      var prev = mkEl('div', 'note-content ai-render');
+      prev.innerHTML = window.PixelMD.render(newContent.value || '*(空)*');
+      body.appendChild(prev);
+    }
+    var foot = aiReviewEl.querySelector('.rv-foot');
+    if (foot) {
+      foot.innerHTML = '';
+      var undo = mkBtn('<i class="ic ic-recycle"></i> 撤回这一步');
+      undo.className = 'btn btn-outline btn-xs rv-reject-all';
+      undo.addEventListener('click', function () {
+        if (!aiUndoLast()) return;
+        showToast('↩️ 已撤回这一步 AI 改动', 'success');
+        aiResetToDiff();
+      });
+      var fin = mkBtn('<i class="ic ic-checkall"></i> 完成');
+      fin.className = 'btn btn-primary btn-xs rv-accept-sel';
+      fin.addEventListener('click', function () { aiCloseReviewAnd('done'); });
+      foot.appendChild(undo);
+      foot.appendChild(fin);
+    }
+    aiSetState('done');
+  }
+
+  // 撤回后回到可勾选状态（重新按「原文 → AI 结果」构建 hunks）
+  function aiResetToDiff() {
+    if (!aiReviewEl || !aiReviewResult) return;
+    aiReviewPlan = aiBuildPlan(aiReviewPrev, aiReviewResult.content || '');
+    aiReviewSelected = [];
+    for (var i = 0; i < aiReviewPlan.hunks.length; i++) aiReviewSelected.push(true);
+    aiMountReview();
+    aiSetState('diff_ready');
+  }
+
+  function aiMountReview() {
+    var root = aiReviewEl;
+    if (!root) return;
+    root.innerHTML = '';
+    var n = aiReviewPlan ? aiReviewPlan.hunks.length : 0;
+
+    // 顶部 48px
+    var head = mkEl('div', 'rv-head');
+    var cancel = mkBtn('<i class="ic ic-close"></i> 取消');
+    cancel.className = 'btn btn-outline btn-xs';
+    cancel.addEventListener('click', function () { aiCloseReviewAnd('cancelled'); });
+    var tw = mkEl('div', 'rv-title-wrap');
+    tw.appendChild(mkEl('div', 'rv-title', '审阅 AI 改动'));
+    tw.appendChild(mkEl('div', 'rv-sub'));
+    var acceptAll = mkBtn('<i class="ic ic-checkall"></i> 全部接受');
+    acceptAll.className = 'btn btn-primary btn-xs';
+    acceptAll.addEventListener('click', function () {
+      for (var i = 0; i < aiReviewSelected.length; i++) aiReviewSelected[i] = true;
+      aiDoApply();
+    });
+    head.appendChild(cancel); head.appendChild(tw); head.appendChild(acceptAll);
+
+    // 元信息 + 视图切换
+    var meta = mkEl('div', 'rv-meta');
+    meta.appendChild(mkEl('div', 'rv-meta-info'));
+    var tabs = mkEl('div', 'rv-tabs');
+    var defs = [['diff', '审阅'], ['render', '预览'], ['src', '源码']];
+    defs.forEach(function (d) {
+      var b = mkBtn(d[1]);
+      b.className = 'rv-tab';
+      b.setAttribute('data-tab', d[0]);
+      b.addEventListener('click', function () { aiShowReviewTab(d[0]); });
+      tabs.appendChild(b);
+    });
+    meta.appendChild(tabs);
+
+    // 三个视图（diff 为 pane 0，与 aiShowReviewTab 的顺序约定一致）
+    var body = mkEl('div', 'rv-body');
+    var paneDiff = mkEl('div', 'rv-pane rv-pane-diff');
+    var paneRender = mkEl('div', 'note-content ai-render rv-pane rv-pane-render');
+    var paneSrc = mkEl('div', 'ai-src rv-pane rv-pane-src');
+    paneRender.style.display = 'none';
+    paneSrc.style.display = 'none';
+    body.appendChild(paneDiff); body.appendChild(paneRender); body.appendChild(paneSrc);
+
+    // 底部 56px
+    var foot = mkEl('div', 'rv-foot');
+    var rejectAll = mkBtn('拒绝全部');
+    rejectAll.className = 'btn btn-outline btn-xs rv-reject-all';
+    rejectAll.addEventListener('click', function () {
+      aiCloseReviewAnd('rejected');
+      showToast('已放弃本次 AI 改动，便签内容未改动', 'success');
+    });
+    var acceptSel = mkBtn('接受选中');
+    acceptSel.className = 'btn btn-primary btn-xs rv-accept-sel';
+    acceptSel.addEventListener('click', aiDoApply);
+    foot.appendChild(rejectAll); foot.appendChild(acceptSel);
+
+    root.appendChild(head); root.appendChild(meta); root.appendChild(body); root.appendChild(foot);
+
+    aiRenderHunks();
+    aiShowReviewTab('diff');
+    aiSyncSelection();
+  }
+
+  // 打开审阅页：result = {original, content, mode, applied, failed, attempts, chunked, agent, ...}
+  function openAiReview(result, opts) {
+    closeAiReview();
+    aiReviewResult = result || {};
+    aiReviewOpts = opts || {};
+    aiReviewPrev = typeof result.original === 'string' ? result.original : newContent.value;
+    aiReviewPlan = aiBuildPlan(aiReviewPrev, typeof result.content === 'string' ? result.content : '');
+    aiReviewSelected = [];
+    for (var i = 0; i < aiReviewPlan.hunks.length; i++) aiReviewSelected.push(true);   // 默认全选：取消勾选即拒绝该处
+    aiReviewEl = mkEl('div', 'ai-review');
+    document.body.appendChild(aiReviewEl);
+    aiMountReview();
+    aiSetState('diff_ready');
+    aiSetState('awaiting_confirm');
+  }
+
   function openAiDialog() {
     closeAiDialog();
     // 首次使用必须先同意政策
@@ -2372,15 +2819,28 @@
     var status = mkEl('div', 'ai-status');
     status.style.display = 'none';
 
-    // ---- 流式生成预览（protocol v5）：实时显示 AI 输出（剥协议标记），结束转入结果态 ----
+    // ---- 流式生成预览（protocol v5）：实时显示 AI 输出（剥协议标记）+ 工具调用行 + 可中断 ----
     var streamBox = mkEl('div', 'ai-stream');
     streamBox.style.display = 'none';
+    var streamHead = mkEl('div', 'ai-stream-head');
     var streamPhase = mkEl('div', 'ai-stream-phase');
+    var streamStop = mkBtn('<i class="ic ic-close"></i> 停止');
+    streamStop.className = 'btn btn-outline btn-xs ai-stream-stop';
+    streamStop.addEventListener('click', function () { aiAbortRun(); });
+    streamHead.appendChild(streamPhase);
+    streamHead.appendChild(streamStop);
     var streamText = mkEl('div', 'ai-stream-text');
-    streamBox.appendChild(streamPhase);
+    var toolLog = mkEl('div', 'ai-tool-log');
+    toolLog.style.display = 'none';
+    streamBox.appendChild(streamHead);
     streamBox.appendChild(streamText);
+    streamBox.appendChild(toolLog);
     var streamRaw = '';
     var streamRaf = 0;
+    var streamFollow = true;   // 滚动跟随：用户上滑离底超过 48px 就暂停自动跟随
+    streamBox.addEventListener('scroll', function () {
+      streamFollow = (streamBox.scrollHeight - streamBox.scrollTop - streamBox.clientHeight) < 48;
+    });
     function stripAiMarkers(t) {
       return String(t || '').replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '');
     }
@@ -2389,21 +2849,64 @@
       var shown = streamRaw;
       if (shown.length > 12000) shown = '…（前面已省略）\n' + shown.slice(-12000);
       streamText.textContent = stripAiMarkers(shown);
-      streamBox.scrollTop = streamBox.scrollHeight;
+      if (streamFollow) streamBox.scrollTop = streamBox.scrollHeight;
     }
     function showStream(phaseText) {
       streamRaw = '';
       streamText.textContent = '';
+      clearToolLog();
       setPhaseText(streamPhase, phaseText || '');
       streamBox.style.display = '';
+      streamFollow = true;
       streamBox.scrollTop = 0;
     }
     function onStreamPhase(t) {
       if (t) setPhaseText(streamPhase, t);
     }
     function onStreamDelta(t) {
+      aiSetState('streaming');
       streamRaw += t;
       if (!streamRaf) streamRaf = requestAnimationFrame(renderStream);
+    }
+    function clearToolLog() {
+      toolLog.innerHTML = '';
+      toolLog.style.display = 'none';
+    }
+    // 工具行 status：running → success|error（data-status 着色）
+    function onStreamTool(d) {
+      if (!d) return;
+      aiSetState('tool_call');
+      toolLog.style.display = '';
+      var row = mkEl('div', 'ai-tool-row');
+      var key = String(d.id != null ? d.id : (d.round != null ? d.round : toolLog.children.length + 1));
+      row.setAttribute('data-key', key);
+      row.setAttribute('data-status', 'running');
+      row.appendChild(mkEl('span', 'ai-tool-ic', '🔧'));
+      row.appendChild(mkEl('span', 'ai-tool-name', d.label || AI_TOOL_LABEL[d.name] || d.name || '工具'));
+      var brief = mkEl('span', 'ai-tool-brief', '进行中…');
+      row.appendChild(brief);
+      row.appendChild(mkEl('span', 'ai-tool-st', '进行中'));
+      toolLog.appendChild(row);
+      if (streamFollow) toolLog.scrollTop = toolLog.scrollHeight;
+    }
+    function onStreamToolResult(d) {
+      if (!d) return;
+      var key = String(d.id != null ? d.id : '');
+      var row = null, rows = toolLog.querySelectorAll('.ai-tool-row');
+      for (var i = rows.length - 1; i >= 0; i--) {
+        if (rows[i].getAttribute('data-key') === key) { row = rows[i]; break; }
+      }
+      if (!row && rows.length) row = rows[rows.length - 1];
+      if (!row) return;
+      var ok = d.ok !== false;
+      row.setAttribute('data-status', ok ? 'success' : 'error');
+      var brief = row.querySelector('.ai-tool-brief');
+      if (brief) {
+        brief.textContent = String(d.brief || (ok ? '完成' : '失败'));
+        if (!ok) brief.style.color = 'var(--danger)';
+      }
+      var st = row.querySelector('.ai-tool-st');
+      if (st) st.textContent = ok ? '完成' : '失败';
     }
     function hideStream() {
       streamBox.style.display = 'none';
@@ -2414,162 +2917,16 @@
     var clarifyWrap = mkEl('div', 'ai-clarify');
     clarifyWrap.style.display = 'none';
 
-    // ---- 结果确认态 ----
+    // ---- 结果确认态：交给全屏审阅页（v13），旧内嵌差异视图已移除 ----
     var aiResult = null;
-    var resultWrap = mkEl('div', 'ai-result');
-    resultWrap.style.display = 'none';
-    var resultInfo = mkEl('div', 'ai-result-info');
-    var tabs = mkEl('div', 'ai-tabs');
-    var tabDiff = mkBtn('📑 差异');
-    var tabRender = mkBtn('<i class="ic ic-eye"></i> 渲染');
-    var tabSrc = mkBtn('</> 源码');
-    tabDiff.className = 'ai-tab'; tabRender.className = 'ai-tab'; tabSrc.className = 'ai-tab';
-    tabs.appendChild(tabDiff);
-    tabs.appendChild(tabRender);
-    tabs.appendChild(tabSrc);
-    var diffBox = mkEl('div', 'ai-diff');
-    var renderBox = mkEl('div', 'note-content ai-render');
-    var srcBox = mkEl('div', 'ai-src');
-    resultWrap.appendChild(resultInfo);
-    resultWrap.appendChild(tabs);
-    resultWrap.appendChild(diffBox);
-    resultWrap.appendChild(renderBox);
-    resultWrap.appendChild(srcBox);
-
-    var foot = mkEl('div', 'md-modal-foot');
-    var runBtn = mkBtn('<i class="ic ic-robot-pink"></i> 开始编辑');
-    runBtn.className = 'btn btn-primary btn-xs';
-    var acceptBtn = mkBtn('<i class="ic ic-checkall"></i> 采纳覆盖');
-    acceptBtn.className = 'btn btn-primary btn-xs';
-    acceptBtn.style.display = 'none';
-    var regenBtn = mkBtn('<i class="ic ic-recycle"></i> 重新生成');
-    regenBtn.className = 'btn btn-outline btn-xs';
-    regenBtn.style.display = 'none';
-    var cancelBtn = mkBtn('关闭');
-    cancelBtn.className = 'btn btn-outline btn-xs';
-    var footHint = mkEl('span', 'md-hint', 'AI 处理可能需要十几秒');
-
-    function showTab(name) {
-      tabDiff.classList.toggle('active', name === 'diff');
-      tabRender.classList.toggle('active', name === 'render');
-      tabSrc.classList.toggle('active', name === 'src');
-      diffBox.style.display = name === 'diff' ? '' : 'none';
-      renderBox.style.display = name === 'render' ? '' : 'none';
-      srcBox.style.display = name === 'src' ? '' : 'none';
-    }
-    tabDiff.addEventListener('click', function () { showTab('diff'); });
-    tabRender.addEventListener('click', function () { showTab('render'); });
-    tabSrc.addEventListener('click', function () { showTab('src'); });
-
-    // 行级 LCS diff
-    function lineDiff(oldText, newText) {
-      var A = oldText.split('\n'), B = newText.split('\n');
-      var n = A.length, m = B.length;
-      if (n * m > 1200000) return null;
-      var dp = [];
-      for (var i = 0; i <= n; i++) { dp.push(new Array(m + 1).fill(0)); }
-      for (var i = n - 1; i >= 0; i--) {
-        for (var j = m - 1; j >= 0; j--) {
-          dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-        }
-      }
-      var ops = [];
-      var i = 0, j = 0;
-      while (i < n && j < m) {
-        if (A[i] === B[j]) { ops.push(['same', A[i]]); i++; j++; }
-        else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push(['del', A[i]]); i++; }
-        else { ops.push(['add', B[j]]); j++; }
-      }
-      while (i < n) { ops.push(['del', A[i]]); i++; }
-      while (j < m) { ops.push(['add', B[j]]); j++; }
-      return ops;
-    }
-
-    function buildDiff() {
-      diffBox.innerHTML = '';
-      var ops = lineDiff(aiResult.original, aiResult.content);
-      if (!ops) {
-        diffBox.appendChild(mkEl('div', 'diff-skip', '内容太长，无法生成差异视图，请切到源码查看'));
-        return;
-      }
-      // 折叠连续未改动行（超过4行只显示首尾2行）
-      var out = [];
-      var run = [];
-      function flushRun() {
-        if (run.length > 4) {
-          run.slice(0, 2).forEach(function (l) { out.push(['same', l]); });
-          out.push(['skip', (run.length - 4) + ' 行未改动']);
-          run.slice(-2).forEach(function (l) { out.push(['same', l]); });
-        } else {
-          run.forEach(function (l) { out.push(['same', l]); });
-        }
-        run = [];
-      }
-      ops.forEach(function (op) {
-        if (op[0] === 'same') run.push(op[1]);
-        else { flushRun(); out.push(op); }
-      });
-      flushRun();
-      if (out.length === 0) out.push(['skip', '没有变化']);
-      out.forEach(function (op) {
-        if (op[0] === 'skip') {
-          diffBox.appendChild(mkEl('div', 'diff-skip', '⋯ ' + op[1] + ' ⋯'));
-        } else {
-          var line = mkEl('div', 'diff-line ' + op[0]);
-          line.textContent = (op[0] === 'add' ? '+ ' : op[0] === 'del' ? '- ' : '  ') + op[1];
-          diffBox.appendChild(line);
-        }
-      });
-    }
 
     function showResultMode() {
       hideStream();
       hint.style.display = 'none';
       ta.style.display = 'none';
       status.style.display = 'none';
-      resultWrap.style.display = '';
       runBtn.style.display = 'none';
-      acceptBtn.style.display = '';
-      regenBtn.style.display = '';
-      var info;
-      if (aiResult.chunked) {
-        info = '🧩 长文分段处理（共 ' + (aiResult.chunks || '?') + ' 段，逐段下发给 AI）· ';
-      } else {
-        info = '';
-      }
-      if (aiResult.mode === 'edits') {
-        // 块数 ≠ 实际改动量：一个替换块可能塞进大量新增行（AI 润色时常见），按 diff 行数提示更符合直觉
-        var diffLines = 0;
-        var diffReady = false;
-        if (typeof aiResult.original === 'string' && typeof aiResult.content === 'string'
-            && aiResult.original.split('\n').length * aiResult.content.split('\n').length <= 4000000) {   // LCS O(m×n)，400万格以内才算（约 2000×2000 行）
-          var oldL = aiResult.original.split('\n');
-          var newL = aiResult.content.split('\n');
-          // 简单 LCS 行级差异统计
-          var m = oldL.length, n = newL.length;
-          var dp = new Array(m + 1);
-          for (var i2 = 0; i2 <= m; i2++) dp[i2] = new Array(n + 1).fill(0);
-          for (var i2 = m - 1; i2 >= 0; i2--) {
-            for (var j2 = n - 1; j2 >= 0; j2--) {
-              dp[i2][j2] = (oldL[i2] === newL[j2]) ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
-            }
-          }
-          diffLines = (m - dp[0][0]) + (n - dp[0][0]);   // 删除行 + 新增行
-          diffReady = true;
-        }
-        info += '📑 局部修改：应用了 ' + aiResult.applied + ' 个替换块' + (diffReady ? '，实际改动 ' + diffLines + ' 行' : '');
-        if (aiResult.failed) info += '，另有 ' + aiResult.failed + ' 处位置未匹配被跳过';
-      } else {
-        info += '📝 全文重写：AI 返回了整篇内容，请仔细核对差异';
-      }
-      if (aiResult.attempts && aiResult.attempts > 1) {
-        info += '（AI 首次输出有误，已自动纠错 ' + (aiResult.attempts - 1) + ' 次后成功）';
-      }
-      resultInfo.textContent = info + ' · 核对无误后点「✅ 采纳覆盖」';
-      buildDiff();
-      renderBox.innerHTML = window.PixelMD.render(aiResult.content || '*(空)*');
-      srcBox.textContent = aiResult.content;
-      showTab('diff');
+      openAiReview(aiResult, { onClose: showInputMode });
     }
 
     function showInputMode() {
@@ -2577,10 +2934,7 @@
       ta.style.display = '';
       ta.disabled = false;
       status.style.display = 'none';
-      resultWrap.style.display = 'none';
       runBtn.style.display = '';
-      acceptBtn.style.display = 'none';
-      regenBtn.style.display = 'none';
     }
 
     // 澄清提问态：AI 拿不准时逐题展示输入框，回答后带历史继续（轮数不限）
@@ -2590,10 +2944,7 @@
       ta.style.display = 'none';
       ta.disabled = true;
       status.style.display = 'none';
-      resultWrap.style.display = 'none';
       runBtn.style.display = 'none';
-      acceptBtn.style.display = 'none';
-      regenBtn.style.display = 'none';
       var roundNo = (existingRounds.length + 1);
       var tip = mkEl('div', 'ai-clarify-tip');
       tip.textContent = '🤔 AI 说它还拿不准，需要先向你确认 ' + questions.length + ' 个问题（第 ' + roundNo + ' 轮问询）。回答后继续生成；不想答了可点取消。';
@@ -2682,15 +3033,46 @@
         runBtn.innerHTML = '<i class="ic ic-robot-pink ic-spin"></i> AI 编辑中' + new Array(dots + 2).join('.');
       }, 400);
       status.style.display = 'none';
+      var staleErr = body.querySelector('.ai-err-card');
+      if (staleErr && staleErr.parentNode) staleErr.parentNode.removeChild(staleErr);
+      aiSetState('thinking');
+      aiAbortCtrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       var ok = false;
       function clearUp() {
         clearInterval(dotTimer);
         hideStream();
+        aiAbortCtrl = null;
         if (!ok && !document.querySelector('.policy-modal')) {
           runBtn.disabled = false;
           ta.disabled = false;
           runBtn.innerHTML = '<i class="ic ic-robot-pink"></i> 开始编辑';
         }
+      }
+      // 错误统一成低调卡片（kind 归一），替代满屏红框
+      function showAiError(msg, httpStatus) {
+        status.innerHTML = '';
+        status.style.display = 'none';
+        var old = body.querySelector('.ai-err-card');
+        if (old && old.parentNode) old.parentNode.removeChild(old);
+        var card = aiErrCard(msg, httpStatus, function () { runAiFlow(clarifyRounds); });
+        body.appendChild(card);
+      }
+      // 失败收尾：主动停止保留已收内容；其余走错误卡片
+      function handleRunError(e) {
+        var aborted = !!(e && (e.name === 'AbortError' || /abort|已停止/.test(String(e.message || ''))));
+        if (aborted) {
+          clearInterval(dotTimer);
+          aiAbortCtrl = null;
+          runBtn.disabled = false;
+          ta.disabled = false;
+          runBtn.innerHTML = '<i class="ic ic-robot-pink"></i> 开始编辑';
+          setPhaseText(streamPhase, '⏹️ 已停止（保留已生成内容供参考）');
+          showAiError('已停止生成', 0);
+          return;
+        }
+        clearUp();
+        var msg = String(e && e.message ? e.message : '网络错误');
+        showAiError(msg, /未登录/.test(msg) ? 401 : 0);
       }
       // 澄清响应：需要用户回答时转入澄清态（本次请求不计配额）
       function handleClarify(r) {
@@ -2721,7 +3103,10 @@
             bodyJson: prefs.ownBodyJson,
             clarifyRounds: clarifyRounds,
             onPhase: onStreamPhase,
-            onDelta: onStreamDelta
+            onDelta: onStreamDelta,
+            onTool: onStreamTool,
+            onToolResult: onStreamToolResult,
+            signal: aiAbortCtrl ? aiAbortCtrl.signal : undefined
           });
           clearUp();
           hideStream();
@@ -2731,6 +3116,7 @@
               original: newContent.value,
               content: r.content,
               mode: r.mode || 'full',
+              agent: !!r.agent,
               applied: r.applied || 0,
               failed: r.failed || 0,
               chunked: !!r.chunked,
@@ -2741,14 +3127,10 @@
             ok = true;
             showResultMode();
           } else {
-            status.textContent = '❌ ' + (r.message || 'AI 编辑失败');
-            status.style.display = 'block';
-            showToast('❌ ' + (r.message || 'AI 编辑失败'), 'error');
+            showAiError(r.message || 'AI 编辑失败', 0);
           }
         } catch (e) {
-          clearUp();
-          status.textContent = '❌ ' + String(e.message || '直连失败');
-          status.style.display = 'block';
+          handleRunError(e);
         }
         return;
       }
@@ -2774,7 +3156,8 @@
             bodyKey: prefs.ownBodyKey,
             bodyJson: prefs.ownBodyJson
           }
-        }, { onDelta: onStreamDelta, onPhase: onStreamPhase });
+        }, { onDelta: onStreamDelta, onPhase: onStreamPhase, onTool: onStreamTool, onToolResult: onStreamToolResult,
+             signal: aiAbortCtrl ? aiAbortCtrl.signal : undefined });
         clearUp();
         hideStream();
         if (r.need_policy) {
@@ -2786,6 +3169,7 @@
             original: newContent.value,
             content: r.content,
             mode: r.mode || 'full',
+            agent: !!r.agent,
             applied: r.applied || 0,
             failed: r.failed || 0,
             chunked: !!r.chunked,
@@ -2798,38 +3182,22 @@
           showResultMode();
         } else {
           if (r.usage) renderUsage(r.usage);
-          status.textContent = '❌ ' + (r.message || 'AI 编辑失败');
-          status.style.display = 'block';
-          showToast('❌ ' + (r.message || 'AI 编辑失败'), 'error');
+          showAiError(r.message || 'AI 编辑失败', 0);
         }
       } catch (e) {
-        clearUp();
-        hideStream();   // v9 修复：流式浮层必须收起，否则任何中途错误都会卡在「正在生成/回复中」
-        var msg = String(e.message || '网络错误');
-        status.textContent = '❌ ' + msg;
-        status.style.display = 'block';
-        if (msg.indexOf('未登录') === -1) showToast('❌ ' + msg, 'error');
+        handleRunError(e);
       }
     }
 
+    // 底栏（旧内嵌结果态的 foot 声明随移除块一起被清掉，这里按 v13 重新声明：开始编辑 / 关闭）
+    var foot = mkEl('div', 'md-modal-foot');
+    var runBtn = mkBtn('<i class="ic ic-robot-pink"></i> 开始编辑');
+    runBtn.className = 'btn btn-primary btn-xs';
+    var cancelBtn = mkBtn('关闭');
+    cancelBtn.className = 'btn btn-outline btn-xs';
+    var footHint = mkEl('span', 'md-hint', 'AI 处理可能需要十几秒');
+
     runBtn.addEventListener('click', function () { runAiFlow([]); });
-
-    acceptBtn.addEventListener('click', function () {
-      if (!aiResult) return;
-      newContent.value = aiResult.content;
-      if (newPreview.style.display !== 'none') {
-        newPreview.innerHTML = window.PixelMD.render(newContent.value);
-      }
-      showToast('✅ 已采纳 AI 修改并写入编辑器（记得保存便签）', 'success');
-      closeAiDialog();
-      newContent.focus();
-    });
-
-    regenBtn.addEventListener('click', function () {
-      if (aiResult && aiResult.instruction) ta.value = aiResult.instruction;
-      showInputMode();
-      ta.focus();
-    });
 
     ta.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -2841,8 +3209,6 @@
     cancelBtn.addEventListener('click', closeAiDialog);
 
     foot.appendChild(runBtn);
-    foot.appendChild(acceptBtn);
-    foot.appendChild(regenBtn);
     foot.appendChild(cancelBtn);
     foot.appendChild(footHint);
 
@@ -2853,7 +3219,6 @@
     body.appendChild(status);
     body.appendChild(streamBox);
     body.appendChild(clarifyWrap);
-    body.appendChild(resultWrap);
     modal.appendChild(body);
     modal.appendChild(foot);
     overlay.appendChild(modal);

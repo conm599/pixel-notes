@@ -370,8 +370,29 @@ function aiEditToolsSchema() {
 
 function aiEditToolLabel($name) {
     $m = array('append_text' => '追加内容', 'replace_text' => '局部替换', 'set_full_text' => '整篇写入',
-               'read_note' => '读取便签', 'list_folder' => '查看文件夹', 'finish' => '完成', 'ask_user' => '提问');
+               'write_note' => '整篇写入', 'read_note' => '读取便签', 'list_folder' => '查看文件夹',
+               'list_folders' => '查看文件夹', 'finish' => '完成', 'ask_user' => '提问');
     return isset($m[$name]) ? $m[$name] : (string)$name;
+}
+
+/** 工具结果一句话摘要（SSE tool_result.brief，前端工具行展示用） */
+function aiToolBrief($out) {
+    $o = json_decode((string)$out, true);
+    if (!is_array($o)) return '完成';
+    if (isset($o['error'])) {
+        $e = (string)$o['error'];
+        if ($e === 'ambiguous') return '出现 ' . (int)(isset($o['count']) ? $o['count'] : 0) . ' 次，需更多上下文';
+        if ($e === 'not_found') return isset($o['did_you_mean_line']) ? '未找到，最接近第 ' . (int)$o['did_you_mean_line'] . ' 行' : '未找到匹配片段';
+        if ($e === 'empty_text' || $e === 'empty_search') return '参数为空';
+        return $e;
+    }
+    if (isset($o['action'])) {
+        $map = array('append' => '已追加到末尾', 'replace' => '已替换', 'set_full' => '已整篇写入');
+        return isset($map[$o['action']]) ? $map[$o['action']] : '完成';
+    }
+    if (isset($o['notes'])) return '读取到 ' . count($o['notes']) . ' 条便签';
+    if (isset($o['content'])) return '已读取便签';
+    return '完成';
 }
 
 /** 字符归一化：仅用于匹配尝试（智能引号/破折号/省略号/NBSP → 常规字符） */
@@ -1865,7 +1886,7 @@ try {
 
             // 强制走透明代理：未配置则拒绝自有 Key 模式，杜绝服务器直连用户目标（SSRF 根因）
             $proxyPrefix = rtrim(trim(getSetting('ai_own_proxy', '')), '/');
-            if (!preg_match('#^https://#i', $proxyPrefix)) {
+            if (!preg_match('#^https://#i', $proxyPrefix) && !(getenv('PSU_AI_ALLOW_LOCAL') === '1' && preg_match('#^http://(?:localhost|127\.0\.0\.1)#i', $proxyPrefix))) {
                 jsonOut(array('success' => false, 'message' => '服务器未配置自有 Key 透明代理，请联系管理员在「AI 设置」中填写 https:// 的 CF Worker 代理地址'));
             }
             $url = $proxyPrefix . '/' . $target;
@@ -1981,7 +2002,7 @@ try {
                 $first = function_exists('mb_substr') ? mb_substr($first, 0, 24, 'UTF-8') : substr($first, 0, 48);
                 $outline .= ($ci + 1) . '. ' . $first . "\n";
             }
-            $segSystem = $system . "\n【分段模式】这是一篇长文，已分 " . $n . " 段，你只处理「本段内容」这一个段。SEARCH 段必须逐字复制自「本段内容」。若本段完全无需修改，只输出四个字：本段无需修改。";
+            $segSystem = $system . "\n【分段模式】这是一篇长文，已分 " . $n . " 段，你只处理「本段内容」这一个段。SEARCH 段必须逐字复制自「本段内容」。若本段完全无需修改，只输出四个字：本段无需修改。本段模式禁止调用任何工具，请直接输出 A（替换块）/B（整段新内容）/C（澄清）文本格式。";
 
             $newContent = $contentN;
             $applied = 0; $failed = 0;
@@ -2135,10 +2156,13 @@ try {
                     $tName = (string)$tc['name'];
                     $tArgs = json_decode((string)$tc['arguments'], true);
                     if (!is_array($tArgs)) $tArgs = array();
+                    $tid = 't' . $toolRounds;
+                    sseSend('tool', array('id' => $tid, 'name' => $tName, 'label' => aiEditToolLabel($tName), 'round' => $toolRounds));
                     sseSend('phase', array('t' => '🔧 ' . aiEditToolLabel($tName) . '…'));
                     $asstCalls[] = array('id' => (string)$tc['id'], 'type' => 'function',
                                          'function' => array('name' => $tName, 'arguments' => (string)$tc['arguments']));
                     if ($tName === 'finish') {
+                        sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => true, 'brief' => '提交改动'));
                         $result = array('success' => true, 'mode' => 'full', 'agent' => true,
                                         'content' => $work, 'usage' => $usage, 'attempts' => $attempt);
                         $roundDone = true;
@@ -2153,15 +2177,20 @@ try {
                             }
                         }
                         if (!empty($qs)) {
+                            sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => true, 'brief' => '向用户提问 ' . count($qs) . ' 个问题'));
                             aiOut(array('success' => false, 'need_clarify' => true, 'questions' => $qs,
                                           'clarifyRounds' => $clarifyRounds, 'usage' => $usage));
                         }
+                        sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => false, 'brief' => '问题为空'));
                         $toolMsgs[] = array('role' => 'tool', 'tool_call_id' => (string)$tc['id'],
                                             'content' => json_encode(array('ok' => false, 'error' => 'empty_questions'), JSON_UNESCAPED_UNICODE));
                         continue;
                     }
-                    $toolMsgs[] = array('role' => 'tool', 'tool_call_id' => (string)$tc['id'],
-                                        'content' => aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid));
+                    $tOut = aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid);
+                    $tObj = json_decode($tOut, true);
+                    $tOk = is_array($tObj) && (isset($tObj['ok']) ? (bool)$tObj['ok'] : !isset($tObj['error']));
+                    sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($tOut)));
+                    $toolMsgs[] = array('role' => 'tool', 'tool_call_id' => (string)$tc['id'], 'content' => $tOut);
                 }
                 if ($roundDone) break;
                 // 回喂：assistant(tool_calls) + 各 tool 结果
@@ -2178,9 +2207,12 @@ try {
                 if (is_array($toolCall) && isset($toolCall['name'])) {
                     $toolRounds++;
                     $tName = (string)$toolCall['name'];
+                    $tid = 't' . $toolRounds;
+                    sseSend('tool', array('id' => $tid, 'name' => $tName, 'label' => aiEditToolLabel($tName), 'round' => $toolRounds));
                     sseSend('phase', array('t' => '🔧 ' . aiEditToolLabel($tName) . '…'));
                     // finish：提交工作副本
                     if ($tName === 'finish') {
+                        sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => true, 'brief' => '提交改动'));
                         $result = array('success' => true, 'mode' => 'full', 'agent' => true,
                                         'content' => $work, 'usage' => $usage, 'attempts' => $attempt);
                         break;
@@ -2195,12 +2227,17 @@ try {
                             }
                         }
                         if (!empty($qs)) {
+                            sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => true, 'brief' => '向用户提问 ' . count($qs) . ' 个问题'));
                             aiOut(array('success' => false, 'need_clarify' => true, 'questions' => $qs,
                                           'clarifyRounds' => $clarifyRounds, 'usage' => $usage));
                         }
                         $toolResult = json_encode(array('ok' => false, 'error' => 'empty_questions'), JSON_UNESCAPED_UNICODE);
+                        sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => false, 'brief' => '问题为空'));
                     } else {
                         $toolResult = aiEditToolExec($tName, $toolCall, $work, $workTouched, $pdo, $uid);
+                        $tObj = json_decode($toolResult, true);
+                        $tOk = is_array($tObj) && (isset($tObj['ok']) ? (bool)$tObj['ok'] : !isset($tObj['error']));
+                        sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($toolResult)));
                     }
                     // 工具结果回喂（含当前长度/尾部摘要，供模型继续校准锚点）
                     $messages[] = array('role' => 'assistant', 'content' => $text);
