@@ -2307,6 +2307,8 @@
   var aiReviewPrev = '';          // 本次 AI 的原文（编辑器内容）
   var aiSnapshots = [];           // 版本快照 [{before, after, at}]，上限 20
   var aiAbortCtrl = null;         // 当前生成请求的 AbortController
+  var aiHistory = [];             // 多轮对话历史：本次打开 AI 对话框内累积的 {role, content}
+  var aiToolTrace = [];           // 本轮工具调用轨迹（用于生成给模型的进度摘要）
 
   function aiAbortRun() {
     if (aiAbortCtrl) { try { aiAbortCtrl.abort(); } catch (e) {} }
@@ -2319,8 +2321,8 @@
   }
 
   // 关闭审阅页并回调（onClose 里会恢复 AI 对话框输入态）
-  function aiCloseReviewAnd(state) {
-    var cb = aiReviewOpts && aiReviewOpts.onClose;
+  function aiCloseReviewAnd(state, overrideCb) {
+    var cb = (typeof overrideCb === 'function') ? overrideCb : (aiReviewOpts && aiReviewOpts.onClose);
     aiSetState(state);
     closeAiReview();
     if (typeof cb === 'function') cb();
@@ -2607,6 +2609,16 @@
     if (!k) { showToast('⚠️ 请至少勾选一处改动', 'error'); return; }
     aiSetState('applying');
     aiWriteEditor(aiPendingText());
+    // 记入多轮会话历史（只有真正采纳的改动才记，撤回/拒绝不留痕）
+    if (aiReviewResult) {
+      var instr = aiReviewResult.instruction || '';
+      var tl = (aiReviewResult.tools || []).filter(function (t) { return t !== '完成'; });
+      if (instr) {
+        aiHistory.push({ role: 'user', content: instr });
+        aiHistory.push({ role: 'assistant', content: tl.length ? ('（已调用工具：' + tl.join('、') + '，改动已提交到便签）') : '（已提交，无实际改动）' });
+        if (aiHistory.length > 12) aiHistory = aiHistory.slice(-12);
+      }
+    }
     aiSetState('done');
     showToast('✅ 已接受 ' + k + ' 处改动并写入编辑器（记得保存便签）', 'success');
     aiShowDone(k);
@@ -2631,17 +2643,25 @@
     var foot = aiReviewEl.querySelector('.rv-foot');
     if (foot) {
       foot.innerHTML = '';
-      var undo = mkBtn('<i class="ic ic-recycle"></i> 撤回这一步');
-      undo.className = 'btn btn-outline btn-xs rv-reject-all';
+      var undo = mkBtn('<i class="ic ic-recycle"></i> 撤回');
+      undo.className = 'btn btn-outline btn-xs rv-undo';
       undo.addEventListener('click', function () {
         if (!aiUndoLast()) return;
         showToast('↩️ 已撤回这一步 AI 改动', 'success');
         aiResetToDiff();
       });
+      // 继续对话：回到输入态并保留本会话历史 → 多轮对话
+      var cont = mkBtn('<i class="ic ic-robot-pink"></i> 继续对话');
+      cont.className = 'btn btn-outline btn-xs rv-continue';
+      cont.addEventListener('click', function () { aiCloseReviewAnd('done'); });
+      // 完成：关闭审阅页 + 关闭整个 AI 页
       var fin = mkBtn('<i class="ic ic-checkall"></i> 完成');
       fin.className = 'btn btn-primary btn-xs rv-accept-sel';
-      fin.addEventListener('click', function () { aiCloseReviewAnd('done'); });
+      fin.addEventListener('click', function () {
+        aiCloseReviewAnd('done', aiReviewOpts && aiReviewOpts.onFinish);
+      });
       foot.appendChild(undo);
+      foot.appendChild(cont);
       foot.appendChild(fin);
     }
     aiSetState('done');
@@ -2740,6 +2760,8 @@
 
   function openAiDialog() {
     closeAiDialog();
+    aiHistory = [];      // 每次打开对话框 = 新会话（会话内多轮，关闭即结束）
+    aiToolTrace = [];
     // 首次使用必须先同意政策
     if (needPolicy()) {
       openPolicyDialog(function () { openAiDialog(); });
@@ -2855,6 +2877,7 @@
       streamRaw = '';
       streamText.textContent = '';
       clearToolLog();
+      aiToolTrace = [];
       setPhaseText(streamPhase, phaseText || '');
       streamBox.style.display = '';
       streamFollow = true;
@@ -2882,7 +2905,9 @@
       row.setAttribute('data-key', key);
       row.setAttribute('data-status', 'running');
       row.appendChild(mkEl('span', 'ai-tool-ic', '🔧'));
-      row.appendChild(mkEl('span', 'ai-tool-name', d.label || AI_TOOL_LABEL[d.name] || d.name || '工具'));
+      var tLabel = d.label || AI_TOOL_LABEL[d.name] || d.name || '工具';
+      row.appendChild(mkEl('span', 'ai-tool-name', tLabel));
+      if (aiToolTrace[aiToolTrace.length - 1] !== tLabel) aiToolTrace.push(tLabel);
       var brief = mkEl('span', 'ai-tool-brief', '进行中…');
       row.appendChild(brief);
       row.appendChild(mkEl('span', 'ai-tool-st', '进行中'));
@@ -2926,7 +2951,7 @@
       ta.style.display = 'none';
       status.style.display = 'none';
       runBtn.style.display = 'none';
-      openAiReview(aiResult, { onClose: showInputMode });
+      openAiReview(aiResult, { onClose: showInputMode, onFinish: closeAiDialog });
     }
 
     function showInputMode() {
@@ -3102,6 +3127,7 @@
             bodyKey: prefs.ownBodyKey,
             bodyJson: prefs.ownBodyJson,
             clarifyRounds: clarifyRounds,
+            history: aiHistory.slice(-12),
             onPhase: onStreamPhase,
             onDelta: onStreamDelta,
             onTool: onStreamTool,
@@ -3122,7 +3148,8 @@
               chunked: !!r.chunked,
               chunks: r.chunks || 0,
               attempts: r.attempts || 1,
-              instruction: instruction
+              instruction: instruction,
+              tools: aiToolTrace.slice()
             };
             ok = true;
             showResultMode();
@@ -3143,6 +3170,7 @@
           instruction: instruction,
           policyVersion: AI_POLICY_VERSION,
           clarifyRounds: clarifyRounds,
+          history: aiHistory.slice(-12),
           prefs: {
             mode: prefs.mode,
             platformKey: prefs.platformKey,
@@ -3175,7 +3203,8 @@
             chunked: !!r.chunked,
             chunks: r.chunks || 0,
             attempts: r.attempts || 1,
-            instruction: instruction
+            instruction: instruction,
+            tools: aiToolTrace.slice()
           };
           if (r.usage) renderUsage(r.usage);
           ok = true;

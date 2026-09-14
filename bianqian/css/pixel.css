@@ -788,7 +788,9 @@ html, body { overflow-x: clip; max-width: 100%; }
   background: var(--bg-panel); flex-shrink: 0;
 }
 .rv-foot .btn { min-height: 40px; }
-.rv-foot .rv-reject-all { flex-shrink: 0; }
+.rv-foot .rv-reject-all,
+.rv-foot .rv-undo,
+.rv-foot .rv-continue { flex-shrink: 0; }
 .rv-foot .rv-accept-sel { flex: 1; justify-content: center; }
 
 .rv-done {
@@ -838,6 +840,8 @@ html, body { overflow-x: clip; max-width: 100%; }
   .rv-title-wrap { text-align: left; }
   .rv-line { font-size: 11.5px; }
   .rv-line .rv-no { width: 34px; padding-right: 6px; }
+  .rv-foot { gap: 6px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); }
+  .rv-foot .btn { padding: 6px 8px; font-size: 11px; }
 }
 
 /* AI 用量条 / 设置面板 / 政策弹窗 */

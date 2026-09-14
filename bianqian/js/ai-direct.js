@@ -58,7 +58,7 @@
       + '7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问\n'
       + '8. SEARCH 锚点最小化：能一句/一行定位就不用多行；长跨度用 <<<SKIP>>> 省略中段（见 A 格式说明）。复制大段原文进 SEARCH 是严重浪费，禁止\n'
       + '【角色】你是一名便签编辑执行器（embodied editor），任务是精确完成用户的编辑指令，不是聊天、不是角色扮演。\n'
-      + '【工具铁律】对便签内容的任何改动都必须通过工具调用完成；每轮回复必须至少调用一个工具（原生 function calling；上游不支持时改用文本协议 <<<TOOL>>>{json}<<<END>>>，二者自动切换）。\n'
+      + '【工具铁律】对便签内容的任何改动都必须通过工具调用完成；每轮回复必须至少调用一个工具（原生 function calling；上游不支持时改用文本协议 <<<TOOL>>>{json}<<<END>>>，二者自动切换）。只输出文字而没有任何工具调用＝协议违规，会被系统打回重试——禁止用文字回答用户、禁止复述或展示便签内容、禁止把整篇正文当作结果输出。\n'
       + '工具与参数（原生调用名 / 文本协议 name 相同）：\n'
       + 'replace_text {old_string, new_string} —— 局部替换（默认首选）：old_string 必须逐字复制便签当前内容且唯一，不唯一就带上前一行或后一行；new_string 留空 = 删除该片段。\n'
       + 'append_text {text} —— 追加到便签末尾（用户常要求「往后加」，优先用它；不改动已有内容）。\n'
@@ -668,15 +668,25 @@
       extra[bKey] = bVal;
     }
 
-    var messages = [
-      { role: 'system', content: buildSystemPrompt(opts.style, opts.now) },
-      {
-        role: 'user',
-        content: '【便签标题】' + (opts.title || '(无标题)') + '\n'
-          + '【当前便签内容】\n' + (opts.content ? opts.content : '(空便签)') + '\n\n'
-          + '【编辑指令】' + opts.instruction
-      }
-    ];
+    var messages = [{ role: 'system', content: buildSystemPrompt(opts.style, opts.now) }];
+    // 多轮对话历史：放在本轮指令之前（已完成的改动不要重复执行）
+    var history = [];
+    if (Array.isArray(opts.history)) {
+      opts.history.slice(-12).forEach(function (h) {
+        if (!h || typeof h.content !== 'string' || !h.content.trim()) return;
+        history.push({ role: h.role === 'assistant' ? 'assistant' : 'user', content: h.content.slice(0, 600) });
+      });
+    }
+    if (history.length) {
+      messages.push({ role: 'user', content: '【本会话此前的编辑往来（背景参考，已完成的改动不要重复执行）】' });
+      history.forEach(function (m) { messages.push(m); });
+    }
+    messages.push({
+      role: 'user',
+      content: '【便签标题】' + (opts.title || '(无标题)') + '\n'
+        + '【当前便签内容】\n' + (opts.content ? opts.content : '(空便签)') + '\n\n'
+        + '【编辑指令】' + opts.instruction
+    });
     // 注入澄清问答历史（若有），AI 见过前文不再重复提问
     clarifyContext(clarifyRounds).forEach(function (m) { messages.push(m); });
 
@@ -765,6 +775,7 @@
     var nativeTools = true;     // 上游拒绝 tools 时自动降级为文本协议
     var toolRounds = 0;
     var loopGuard = 0;
+    var noToolViolations = 0;   // 只回文字不调工具的次数（上限 3，超过即报错）
     var text = '';
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       loopGuard++;
@@ -905,9 +916,22 @@
         return { success: false, message: 'AI 指出的修改位置无法在原文中匹配，已自动重试 ' + maxAttempts + ' 轮仍失败，请重试或换个说法' };
       }
 
-      // 全文兜底：Agent 改过工作副本就用它（改动绝不丢），否则视末轮文本为整篇（旧 B 兼容）
-      return { success: true, mode: 'full', agent: !!ctx.touched,
-               content: ctx.touched ? ctx.work : cleanOutput(text), attempts: attempt };
+      // 无工具调用、无替换块：按「协议违规」处理（绝不把聊天文字当便签正文）
+      if (ctx.touched) {
+        return { success: true, mode: 'full', agent: true, content: ctx.work, attempts: attempt };
+      }
+      if (!String(opts.content || '').trim()) {
+        return { success: true, mode: 'full', content: cleanOutput(text), attempts: attempt };
+      }
+      noToolViolations++;
+      if (noToolViolations <= 3) {
+        if (opts.onPhase) opts.onPhase('⚠️ 模型只回了文字，已要求它改用工具（第 ' + noToolViolations + ' 次）');
+        messages.push({ role: 'assistant', content: text });
+        messages.push({ role: 'user', content: '【系统·协议违规】你没有调用任何工具，只输出了文字。便签编辑必须通过工具落地：replace_text（局部替换；new_string 留空=删除）、append_text（末尾追加）、write_note（整篇重写）、finish（提交）。禁止回答用户、禁止复述便签内容、禁止寒暄。请立刻调用合适的工具完成这条指令；即使认为无需改动，也必须调用 finish 交回结果。' });
+        attempt--;
+        continue;
+      }
+      return { success: false, message: '模型只回了文字、没有调用工具执行编辑（已要求改用工具 ' + noToolViolations + ' 次仍未执行），请重试或换用支持工具调用的模型' };
     }
     return { success: false, message: 'AI 编辑失败' };
   }

@@ -1802,6 +1802,18 @@ try {
             }
             if (count($clarifyRounds) >= AI_CLARIFY_INPUT_MAX) break;
         }
+        // 多轮对话历史：[{role, content}, ...]（同一次会话里此前几轮做了什么），最多 12 条、每条限长
+        $history = array();
+        $hi = (isset($input['history']) && is_array($input['history'])) ? $input['history'] : array();
+        foreach ($hi as $h) {
+            if (!is_array($h)) continue;
+            $r = (isset($h['role']) && $h['role'] === 'assistant') ? 'assistant' : 'user';
+            $c = isset($h['content']) ? trim((string)$h['content']) : '';
+            if ($c === '') continue;
+            $c = function_exists('mb_substr') ? mb_substr($c, 0, 600, 'UTF-8') : substr($c, 0, 1200);
+            $history[] = array('role' => $r, 'content' => $c);
+        }
+        if (count($history) > 12) $history = array_slice($history, -12);
         $prefs = isset($input['prefs']) && is_array($input['prefs']) ? $input['prefs'] : array();
         $style = isset($prefs['style']) ? trim((string)$prefs['style']) : '';
         // 时间感知：前端传用户浏览器当前时间（服务器不做任何时区假设）
@@ -1938,7 +1950,7 @@ try {
             . "7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问\n"
             . "8. SEARCH 锚点最小化：能一句/一行定位就不用多行；长跨度用 <<<SKIP>>> 省略中段（见 A 格式说明）。\n"
             . "【角色】你是一名便签编辑执行器（embodied editor），任务是精确完成用户的编辑指令，不是聊天、不是角色扮演。\n"
-            . "【工具铁律】对便签内容的任何改动都必须通过工具调用完成；每轮回复必须至少调用一个工具（原生 function calling，或文本协议 <<<TOOL>>>{json}<<<END>>> 二选一，按上游能力自动切换）。\n"
+            . "【工具铁律】对便签内容的任何改动都必须通过工具调用完成；每轮回复必须至少调用一个工具（原生 function calling，或文本协议 <<<TOOL>>>{json}<<<END>>> 二选一，按上游能力自动切换）。只输出文字而没有任何工具调用＝协议违规，会被系统打回重试——禁止用文字回答用户、禁止复述或展示便签内容、禁止把整篇正文当作结果输出。\n"
             . "工具与参数（原生调用名 / 文本协议 name 相同）：\n"
             . "replace_text {old_string, new_string} —— 局部替换（默认首选）：old_string 必须逐字复制便签当前内容且唯一，不唯一就带上前一行或后一行；new_string 留空 = 删除该片段。\n"
             . "append_text {text} —— 追加到便签末尾（用户常要求「往后加」，优先用它；不改动已有内容）。\n"
@@ -2098,10 +2110,13 @@ try {
             . "【当前便签内容】\n" . ($content !== '' ? $content : '(空便签)') . "\n\n"
             . "【编辑指令】" . $instruction;
 
-        $messages = array(
-            array('role' => 'system', 'content' => $system),
-            array('role' => 'user', 'content' => $userMsg),
-        );
+        $messages = array(array('role' => 'system', 'content' => $system));
+        // 多轮对话历史：放在本轮指令之前，让模型知道前几轮做过什么（不重复改、不重复问）
+        if (!empty($history)) {
+            $messages[] = array('role' => 'user', 'content' => '【本会话此前的编辑往来（背景参考，已完成的改动不要重复执行）】');
+            foreach ($history as $m) $messages[] = $m;
+        }
+        $messages[] = array('role' => 'user', 'content' => $userMsg);
         // 注入澄清问答历史（若有），AI 见过前文不再重复提问
         if (!empty($clarifyRounds)) {
             foreach (aiClarifyContext($clarifyRounds) as $m) $messages[] = $m;
@@ -2118,6 +2133,7 @@ try {
         $result = null;
         $toolRounds = 0;       // 工具轮上限（v12：8）
         $loopGuard = 0;
+        $noToolViolations = 0; // 只回文字不调工具的次数（上限 3，超过即报错，绝不把聊天文字当正文）
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             $loopGuard++;
             if ($loopGuard > 14) break;
@@ -2330,12 +2346,36 @@ try {
                 aiOut(array('success' => false, 'message' => $lastErrText . '，已自动重试 ' . $maxAttempts . ' 轮仍失败，请重试或换个说法', 'usage' => $usage));
             }
 
-            // ===== 无工具调用的兜底：改过就用工作副本；否则视末轮文本为整篇（旧 B 兼容）=====
-            $result = array('success' => true, 'mode' => 'full',
-                            'agent' => $workTouched ? true : false,
-                            'content' => $workTouched ? $work : aiCleanOutput($text),
-                            'usage' => $usage, 'attempts' => $attempt);
-            break;        }
+            // ===== 无工具调用、无替换块：按「协议违规」处理 =====
+            // 硬规则：绝不能把模型的聊天文字当成便签正文（旧 B 兜底正是「AI 一直在回答用户」的根因）。
+            // 只有两种情况可以接受纯文字：① 工具已改过工作副本（用工作副本）；② 原本是空便签（视为从零创作）。
+            if ($workTouched) {
+                $result = array('success' => true, 'mode' => 'full', 'agent' => true,
+                                'content' => $work, 'usage' => $usage, 'attempts' => $attempt);
+                break;
+            }
+            if (trim($content) === '') {
+                $result = array('success' => true, 'mode' => 'full',
+                                'content' => aiCleanOutput($text), 'usage' => $usage, 'attempts' => $attempt);
+                break;
+            }
+            $noToolViolations++;
+            $lastErrText = '模型只回了文字、没有调用工具执行编辑';
+            if ($noToolViolations <= 3) {
+                sseSend('phase', array('t' => '⚠️ 模型只回了文字，已要求它改用工具（第 ' . $noToolViolations . ' 次）'));
+                $messages[] = array('role' => 'assistant', 'content' => $text);
+                $messages[] = array('role' => 'user', 'content' =>
+                    "【系统·协议违规】你没有调用任何工具，只输出了文字。便签编辑必须通过工具落地："
+                    . "replace_text（局部替换；new_string 留空=删除该片段）、append_text（末尾追加）、"
+                    . "write_note（整篇重写）、finish（提交）。禁止回答用户、禁止复述便签内容、禁止寒暄。"
+                    . "请立刻调用合适的工具完成这条指令；即使你认为无需改动，也必须调用 finish 交回结果。");
+                $attempt--;   // 违规重试不消耗锚点失败预算（loopGuard 兜底）
+                continue;
+            }
+            aiOut(array('success' => false,
+                        'message' => $lastErrText . '（已要求改用工具 ' . $noToolViolations . ' 次仍未执行），请重试或换用支持工具调用的模型',
+                        'usage' => $usage));
+        }
         // 循环结束仍无结果（工具轮打满/守卫触发）：工作副本有改动就用它，绝不丢用户改动
         if ($result === null && $workTouched) {
             $result = array('success' => true, 'mode' => 'full', 'agent' => true,
