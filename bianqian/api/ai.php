@@ -395,6 +395,62 @@ function aiToolBrief($out) {
     return '完成';
 }
 
+/** 解析 <invoke name="x">…<parameter name="k">v</parameter>…</invoke> 参数块 */
+function aiParseInvokeParams($block) {
+    $args = array();
+    if (preg_match_all('/<parameter\s+name\s*=\s*"([^"]+)"\s*>([\s\S]*?)<\/parameter>/i', (string)$block, $ps, PREG_SET_ORDER)) {
+        foreach ($ps as $p) $args[$p[1]] = trim($p[2]);
+        return $args;
+    }
+    $j = json_decode(trim((string)$block), true);
+    return is_array($j) ? $j : array();
+}
+
+/**
+ * 解析模型写在正文里的工具调用（v13.3）。
+ * 背景：很多 OpenAI 兼容端点（尤其聚合代理）不会把 tools 映射成原生 tool_calls，
+ * 模型会按自己的训练格式把调用直接写在文本里，常见三种：
+ *   ① <tool_call>{"name":"x","arguments":{...}}</tool_call>                     （Qwen/GLM）
+ *   ② <tool_call><function=write_note>{json}</function></tool_call>              （站长实测截图）
+ *   ③ <tool_call><invoke name="x"><parameter name="k">v</parameter></invoke></tool_call>（MiniMax 系）
+ * 返回 [{name, arguments, arguments_raw}]；识别不到返回空数组。
+ */
+function aiParseTextToolCalls($text) {
+    $out = array();
+    $t = (string)$text;
+    if ($t === '' || (stripos($t, '<tool_call') === false && stripos($t, '<function') === false && stripos($t, '<invoke') === false)) return $out;
+    if (preg_match_all('/<(?:minimax:)?tool_call[^>]*>([\s\S]*?)<\/(?:minimax:)?tool_call>/i', $t, $ms, PREG_SET_ORDER)) {
+        foreach ($ms as $m) {
+            $inner = trim($m[1]);
+            if (preg_match('/<function\s*=\s*([A-Za-z0-9_]+)\s*>([\s\S]*?)<\/function>/i', $inner, $fm)) {
+                $args = json_decode(trim($fm[2]), true);
+                $out[] = array('name' => $fm[1], 'arguments' => is_array($args) ? $args : array(), 'arguments_raw' => trim($fm[2]));
+                continue;
+            }
+            if (preg_match('/<invoke[^>]*name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/invoke>/i', $inner, $im)) {
+                $args = aiParseInvokeParams($im[2]);
+                $out[] = array('name' => $im[1], 'arguments' => $args,
+                               'arguments_raw' => json_encode($args, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0));
+                continue;
+            }
+            $j = json_decode($inner, true);
+            if (is_array($j) && isset($j['name'])) {
+                $args = isset($j['arguments']) && is_array($j['arguments']) ? $j['arguments'] : null;
+                if ($args === null) { $args = $j; unset($args['name']); }   // 参数平铺在顶层
+                $out[] = array('name' => (string)$j['name'], 'arguments' => $args,
+                               'arguments_raw' => json_encode($args, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0));
+            }
+        }
+    }
+    if (empty($out) && preg_match_all('/<function\s*=\s*([A-Za-z0-9_]+)\s*>([\s\S]*?)<\/function>/i', $t, $ms2, PREG_SET_ORDER)) {
+        foreach ($ms2 as $m) {
+            $args = json_decode(trim($m[2]), true);
+            $out[] = array('name' => $m[1], 'arguments' => is_array($args) ? $args : array(), 'arguments_raw' => trim($m[2]));
+        }
+    }
+    return $out;
+}
+
 /** 字符归一化：仅用于匹配尝试（智能引号/破折号/省略号/NBSP → 常规字符） */
 function aiEditNormChars($t) {
     $map = array('“' => '"', '”' => '"',
@@ -2141,7 +2197,9 @@ try {
             $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta,
                         $nativeTools ? $editTools : null, $toolsRejected);
             // 上游不支持 tools（400/422 或明确报 tools 错误）→ 去掉 tools 重试一次，转文本协议
-            if (!$r['ok'] && $nativeTools && ($toolsRejected || preg_match('/tool/i', (string)$r['err']))) {
+            // 只有错误明确指向 tools 参数能力（tool_choice / tools / tool use / function call / 工具调用）才降级；
+            // 旧的 /tool/i 过宽——任何带 "tool" 字样的瞬时错误都会把支持工具的模型误判为不支持
+            if (!$r['ok'] && $nativeTools && ($toolsRejected || preg_match('/tool_choice|tools|tool[\s_-]?use|function[\s_-]?call|工具调用|不支持工具/i', (string)$r['err']))) {
                 $nativeTools = false;
                 sseSend('phase', array('t' => 'ℹ️ 该模型不支持原生工具调用，切换文本协议'));
                 $messages[] = array('role' => 'user', 'content' => '【系统】当前上游不支持原生工具调用，请改用文本协议输出（<<<TOOL>>>{json}<<<END>>>）。');
@@ -2212,6 +2270,58 @@ try {
                 // 回喂：assistant(tool_calls) + 各 tool 结果
                 $messages[] = array('role' => 'assistant', 'content' => ($text !== '' ? $text : null), 'tool_calls' => $asstCalls);
                 foreach ($toolMsgs as $m) $messages[] = $m;
+                $attempt--;
+                continue;
+            }
+
+            // ===== 文本内嵌工具调用（v13.3：模型按训练格式把调用写在正文里，端点没映射成原生 tool_calls）=====
+            $tTools = aiParseTextToolCalls($text);
+            if (!empty($tTools) && $toolRounds < 8) {
+                $roundDone = false;
+                $fedBack = '';
+                foreach ($tTools as $tc) {
+                    if ($toolRounds >= 8) break;
+                    $toolRounds++;
+                    $tName = (string)$tc['name'];
+                    $tArgs = is_array($tc['arguments']) ? $tc['arguments'] : array();
+                    $tid = 't' . $toolRounds;
+                    sseSend('tool', array('id' => $tid, 'name' => $tName, 'label' => aiEditToolLabel($tName), 'round' => $toolRounds));
+                    sseSend('phase', array('t' => '🔧 ' . aiEditToolLabel($tName) . '…'));
+                    if ($tName === 'finish') {
+                        sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => true, 'brief' => '提交改动'));
+                        $result = array('success' => true, 'mode' => 'full', 'agent' => true,
+                                        'content' => $work, 'usage' => $usage, 'attempts' => $attempt);
+                        $roundDone = true;
+                        break;
+                    }
+                    if ($tName === 'ask_user') {
+                        $qs = array();
+                        if (isset($tArgs['questions']) && is_array($tArgs['questions'])) {
+                            foreach ($tArgs['questions'] as $q) {
+                                $q = trim((string)$q);
+                                if ($q !== '' && count($qs) < AI_CLARIFY_MAX_QUESTIONS) $qs[] = $q;
+                            }
+                        }
+                        if (!empty($qs)) {
+                            sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => true, 'brief' => '向用户提问 ' . count($qs) . ' 个问题'));
+                            aiOut(array('success' => false, 'need_clarify' => true, 'questions' => $qs,
+                                          'clarifyRounds' => $clarifyRounds, 'usage' => $usage));
+                        }
+                        sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => false, 'brief' => '问题为空'));
+                        $fedBack .= '【工具结果】ask_user' . "\n" . json_encode(array('ok' => false, 'error' => 'empty_questions'), JSON_UNESCAPED_UNICODE) . "\n\n";
+                        continue;
+                    }
+                    $tOut = aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid);
+                    $tObj = json_decode($tOut, true);
+                    $tOk = is_array($tObj) && (isset($tObj['ok']) ? (bool)$tObj['ok'] : !isset($tObj['error']));
+                    sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($tOut)));
+                    $fedBack .= '【工具结果】' . $tName . "\n" . $tOut . "\n\n";
+                }
+                if ($roundDone) break;
+                // 正文里的调用已执行（散文部分不写入便签）；回喂结果让模型继续
+                $messages[] = array('role' => 'assistant', 'content' => $text);
+                $messages[] = array('role' => 'user', 'content' => rtrim($fedBack)
+                    . "\n已执行的改动已生效（正文文字不会写入便签）。还有未完成的改动就继续调用工具，全部完成则调用 finish。");
                 $attempt--;
                 continue;
             }
@@ -2353,6 +2463,22 @@ try {
                 $result = array('success' => true, 'mode' => 'full', 'agent' => true,
                                 'content' => $work, 'usage' => $usage, 'attempts' => $attempt);
                 break;
+            }
+            // 正文里还残留工具调用语法 → 解析失败，绝不能写进便签（哪怕便签为空，站长实测截图场景）
+            if (preg_match('/<tool_call|<function\s*=|<invoke|<<<TOOL/i', $text)) {
+                $noToolViolations++;
+                if ($noToolViolations <= 3) {
+                    sseSend('phase', array('t' => '⚠️ 输出里混入了工具调用语法，已要求重新输出'));
+                    $messages[] = array('role' => 'assistant', 'content' => $text);
+                    $messages[] = array('role' => 'user', 'content' =>
+                        '【系统·格式错误】你的输出里混有工具调用语法标记（如 <tool_call>、<function=>）。'
+                        . '系统无法解析它们，它们也绝不能出现在便签正文里。请重新输出：直接调用工具，或只输出纯正文内容，不要把工具调用写进正文。');
+                    $attempt--;
+                    continue;
+                }
+                aiOut(array('success' => false,
+                            'message' => '模型输出的工具调用格式无法解析（已重试 ' . $noToolViolations . ' 次），请重试或换个说法',
+                            'usage' => $usage));
             }
             if (trim($content) === '') {
                 $result = array('success' => true, 'mode' => 'full',

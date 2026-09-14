@@ -151,7 +151,7 @@ if (!isset($_SESSION['user_id'])) {
     <script src="js/tutorial-data.js?v=1"></script>
 
     <script src="js/Sortable.min.js"></script>
-    <script src="js/ai-direct.js?v=20"></script>
+    <script src="js/ai-direct.js?v=21"></script>
     <script src="js/selection.js?v=6"></script>
     <!-- 联动配置以 JSON 数据块注入（CSP script-src 'self' 禁止内联可执行脚本，数据块不执行不受限）；app.js 解析后传给 ImgBridge -->
     <script type="application/json" id="imgBridgeCfg">{"tuchangBase": <?php echo json_encode(siblingUrl('tuchang', '/'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES); ?>,
