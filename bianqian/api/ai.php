@@ -5,7 +5,7 @@
  * action=test   : 管理员测试上游连通性
  * action=prefs  : 读取/保存用户 AI 偏好（跨端同步，用户主动勾选）
  *
- * 实现以 protocol.md v10 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / 整理 Agent SSE 的唯一事实源），改动需与 js/ai-direct.js 同步
+ * 实现以 protocol.md v8 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / 整理 Agent SSE 的唯一事实源），改动需与 js/ai-direct.js 同步
  *
  * 安全设计：
  * - 管理员的上游 Key 存于 pn_settings，永不下发浏览器
@@ -65,16 +65,7 @@ define('AI_CLARIFY_MAX_QUESTIONS', 3);
  */
 function aiParseClarify($text) {
     $questions = array();
-    $m = null;
-    if (is_string($text)) {
-        if (preg_match('/<<<CLARIFY>>>\s*\n([\s\S]*?)\n?<<<END>>>/i', $text, $m)
-            || preg_match('/<{1,3}\s*CLARIFY\s*>{1,3}\s*\n?([\s\S]*?)\n?\s*<{0,3}\s*\/?\s*CLARIFY\s*>{1,3}/i', $text, $m)) {
-            // 命中：标准 <<<CLARIFY>>>…<<<END>>> 或宽容变体 <CLARIFY>…</CLARIFY>
-        } else {
-            $m = null;
-        }
-    }
-    if (is_array($m)) {
+    if (is_string($text) && preg_match('/<<<CLARIFY>>>\s*\n([\s\S]*?)\n?<<<END>>>/i', $text, $m)) {
         foreach (explode("\n", trim($m[1])) as $line) {
             $line = trim($line);
             if ($line === '') continue;
@@ -127,16 +118,9 @@ function aiOut($payload) {
  * 必须在澄清解析与替换块提取之后使用，不得提前。
  */
 function aiCleanOutput($text) {
-    $t = preg_replace('/<{1,3}\s*\/?\s*(?:SEARCH|REPLACE|END|CLARIFY|SKIP)\s*>{1,3}/i', '', (string)$text);
-    // 模型偶发用 <<<B>>> / <<B>> 等分节标记：双尖括号起才剥（单尖括号 <b> 是合法 HTML 粗体，绝不碰）
-    $t = preg_replace('/<{2,3}\s*\/?\s*[ABC]\s*>{2,3}/i', '', $t);
+    $t = preg_replace('/<<<(?:SEARCH|REPLACE|END|CLARIFY|SKIP)>>>/i', '', (string)$text);
     // 剥推理模型的思考标签（<think>...</think>、<thinking>...</thinking>），含未闭合的残留头
     $t = preg_replace('/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/i', '', $t);
-    // 剥头部「格式标签行」（模型复述系统提示词输出格式清单：如「+ B. 全文重写」「A. 局部修改」），最多剥 3 行
-    $leak = '/^\s*[+\＋]?\s*[ABC]\．?[ \t]*(?:局部修改|全文重写|澄清提问)(?:【[^\n】]*】)?[^\n]*\n?/u';
-    for ($i = 0; $i < 3 && preg_match($leak, $t); $i++) {
-        $t = preg_replace($leak, '', $t, 1);
-    }
     return trim((string)$t);
 }
 
@@ -339,6 +323,62 @@ function aiApplyBlocksSeq($content, $blocks) {
  * @param PDO $pdo         数据库连接
  * @param int $uid         当前登录用户 id
  */
+/**
+ * 编辑 Agent 工具：对工作副本执行文本改动（v12）
+ * 只在服务端持有工作副本上改；聊天文字永不进内容
+ */
+function aiEditToolLabel($name) {
+    $m = array('append_text' => '追加内容', 'replace_text' => '局部替换', 'set_full_text' => '整篇写入',
+               'read_note' => '读取便签', 'list_folder' => '查看文件夹', 'finish' => '完成', 'ask_user' => '提问');
+    return isset($m[$name]) ? $m[$name] : (string)$name;
+}
+
+function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid) {
+    $jp = defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0;
+    $excerpt = function () use ($work) {
+        $len = function_exists('mb_strlen') ? mb_strlen($work, 'UTF-8') : strlen($work);
+        $tail = function_exists('mb_substr') ? mb_substr($work, max(0, $len - 120), 120, 'UTF-8') : substr($work, -120);
+        return array('current_length' => $len, 'current_tail' => $tail);
+    };
+    switch ((string)$name) {
+        case 'append_text':
+            $t = trim((string)(isset($args['text']) ? $args['text'] : ''));
+            if ($t === '') return json_encode(array('ok' => false, 'error' => 'empty_text'), $jp);
+            $work = ($work === '' ? $t : rtrim($work) . "\n\n" . $t);
+            $touched = true;
+            return json_encode(array_merge(array('ok' => true, 'action' => 'append'), $excerpt()), $jp);
+        case 'replace_text':
+            $se = (string)(isset($args['search']) ? $args['search'] : '');
+            $rp = (string)(isset($args['replace']) ? $args['replace'] : '');
+            if ($se === '') return json_encode(array('ok' => false, 'error' => 'empty_search'), $jp);
+            $cnt = substr_count($work, $se);
+            if ($cnt === 1) {
+                $work = str_replace($se, $rp, $work);
+                $touched = true;
+                return json_encode(array_merge(array('ok' => true, 'action' => 'replace', 'matched' => 'exact'), $excerpt()), $jp);
+            }
+            if ($cnt > 1) {
+                return json_encode(array_merge(array('ok' => false, 'error' => 'ambiguous', 'count' => $cnt,
+                    'hint' => 'search 在便签中出现 ' . $cnt . ' 次，请加长 search 使其唯一（多带相邻行）'), $excerpt()), $jp);
+            }
+            // 0 次命中：给一次行级宽容匹配（去行尾空白 + 空白归一），仍失败则如实报错
+            $res = aiApplyBlock($work, $se, $rp, array());
+            if ($res !== null) {
+                $work = $res['c'];
+                $touched = true;
+                return json_encode(array_merge(array('ok' => true, 'action' => 'replace', 'matched' => 'line_level'), $excerpt()), $jp);
+            }
+            return json_encode(array_merge(array('ok' => false, 'error' => 'not_found',
+                'hint' => 'search 必须逐字复制当前便签内容（含空格/换行/Markdown 符号）；上面 current_tail 可参考，或先 read_note 重读全文'), $excerpt()), $jp);
+        case 'set_full_text':
+            $work = str_replace("\r\n", "\n", (string)(isset($args['text']) ? $args['text'] : ''));
+            $touched = true;
+            return json_encode(array_merge(array('ok' => true, 'action' => 'set_full'), $excerpt()), $jp);
+        default:
+            return aiRunTool((string)$name, $args, $pdo, $uid);
+    }
+}
+
 function aiRunTool($name, $args, $pdo, $uid) {
     switch ((string)$name) {
         case 'list_folder': {
@@ -437,6 +477,11 @@ function aiEndpointHostSafe($url, &$verifiedIp = null) {
     $verifiedIp = null;
     $p = @parse_url($url);
     if (!is_array($p) || empty($p['host'])) return false;
+    // 本地开发门（与 PSU_LOCAL_HTTP 同模式）：PSU_AI_ALLOW_LOCAL=1 时放行本机地址用于 mock 上游联调；生产不设此变量零影响
+    if (getenv('PSU_AI_ALLOW_LOCAL') === '1') {
+        $h0 = strtolower(trim((string)$p['host'], '[]'));
+        if ($h0 === 'localhost' || $h0 === '127.0.0.1' || $h0 === '::1') return true;
+    }
     $host = strtolower(trim((string)$p['host'], '[]'));
     $host = rtrim($host, '.');
     if ($host === '') return false;
@@ -1691,7 +1736,7 @@ try {
             $extra[$bKey] = $bVal;
         }
 
-        $system = "你是便签编辑引擎（无感情、无人格），不是聊天助手、更不是角色扮演伙伴。除两种输出外，输出中任何其它内容都算错误：① 澄清提问块（仅当必须澄清，格式见 C）② 编辑结果（A 替换块或 B 全文）。严禁寒暄、卖萌、自称（如「梦梦」等任何昵称）、解释你在做什么、复述指令、emoji 装饰、任何前言与后语。\n"
+        $system = "你是一个便签编辑代理。用户会给你一篇 Markdown 便签（可能为空）和一条编辑指令，你要精准地完成编辑。\n"
             . "【输出格式（三选一）】\n"
             . "A. 局部修改（默认首选）：只改动需要改的地方。每个改动输出一个替换块，格式严格如下：\n"
             . "<<<SEARCH>>>\n"
@@ -1699,9 +1744,9 @@ try {
             . "<<<REPLACE>>>\n"
             . "（修改后的文字）\n"
             . "<<<END>>>\n"
-            . "可以有多个替换块，按顺序排列。纯删除某句/某段：SEARCH 放目标句（必要时带一行紧邻上下文保证唯一），REPLACE 留空（紧跟 <<<END>>>），严禁用 B 做纯删除。\n"
+            . "可以有多个替换块，按顺序排列。\n"
             . "【SEARCH 最小化（硬性规则，治 token 浪费）】SEARCH 只放「定位所需的最短锚点」：通常是要修改的那一句/那一行，最多加一行紧邻上下文，严禁为了保险复制整段、整节或大段原文——SEARCH 明显长于 REPLACE 属于浪费，必须改用更短锚点。要定位的位置在很长段落/列表中部时，用 SKIP 省略中段：SEARCH 写成「首行锚点」一行 + 一行 <<<SKIP>>> + 「尾行锚点」一行（每个 SEARCH 最多一个 <<<SKIP>>>），首尾锚点必须是原文中逐字存在的行；引擎会圈定首尾锚点之间的整个跨度整体替换为 REPLACE，所以 REPLACE 必须包含该跨度改写后的完整内容。\n"
-            . "B. 全文重写【最后手段，严禁滥用】：仅当改动遍布全文、无法用 ≤3 个替换块定位时才允许，只限四类——① 整篇翻译 ② 整体重构/重排 ③ 全文风格统一 ④ 从零创作。改个错别字、加/删一段、改一两句、调整局部格式，都属于 A，用 B 一律视为错误输出。决策方法：先尝试把指令拆成 SEARCH/REPLACE 块，拆得出来就必须用 A；SEARCH 锚点匹配失败时把锚点改短改准重试，严禁降级成全文重写。输出 B 全文时第一行就是正文本身，严禁在开头复述「B. 全文重写」「A.」「C.」等格式标签行。\n"
+            . "B. 全文重写：仅当指令要求整体重构、全文翻译、全文总结、从零创作时，才直接输出完整的新便签全文。\n"
             . "C. 澄清提问（只要存在任何疑问就必须使用，优先级最高，出现时必须只输出这个）：\n"
             . "<<<CLARIFY>>>\n"
             . "（一个问题一行，最多 3 个，简洁具体；不要重复已经问过的问题）\n"
@@ -1711,12 +1756,24 @@ try {
             . "【硬性规则】\n"
             . "1. 绝对禁止删除、改写、移动用户已有的链接、URL、HTML 标签、图片/音频/视频/iframe 嵌入和代码块，除非指令明确要求处理它们\n"
             . "2. 用户没让改的部分必须一字不动，只做最小限度的必要修改，禁止顺手润色或重排\n"
-            . "3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出；严禁寒暄/自称/角色扮演/复述指令——你是编辑引擎不是聊天对象\n"
+            . "3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出\n"
             . "4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n"
             . "5. 便签标题不在你负责范围内，只编辑正文\n"
             . "6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n"
             . "7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问\n"
-            . "8. SEARCH 锚点最小化：能一句/一行定位就不用多行；长跨度用 <<<SKIP>>> 省略中段（见 A 格式说明）。复制大段原文进 SEARCH 是严重浪费，禁止\n"
+            . "8. SEARCH 锚点最小化：能一句/一行定位就不用多行；长跨度用 <<<SKIP>>> 省略中段（见 A 格式说明）。\n"
+            . "【编辑 Agent 工作方式（v12，首选）】对便签内容的任何改动都必须通过工具调用落地；你在工具之外写的散文只作为简要说明展示给用户，绝不会写进便签。\n"
+            . "工具调用格式（一轮一个）：\n"
+            . "<<<TOOL>>>\n"
+            . "{\"name\", ...}   —— 可用工具：\n"
+            . "{\"name\":\"append_text\",\"text\":\"要追加到便签末尾的完整 Markdown\"}   —— 末尾追加（用户习惯：优先追加，不动已有内容）\n"
+            . "{\"name\":\"replace_text\",\"search\":\"当前便签中逐字存在的片段\",\"replace\":\"替换后文字（删除该片段则留空）\"}   —— 局部替换；search 不唯一会返回 ambiguous，加相邻行即可\n"
+            . "{\"name\":\"set_full_text\",\"text\":\"整篇新内容\"}   —— 仅整篇重写/翻译时用\n"
+            . "{\"name\":\"read_note\",\"id\":123} / {\"name\":\"list_folder\",\"path\":\"工作/项目A\"}   —— 只读查看\n"
+            . "{\"name\":\"ask_user\",\"questions\":[\"问题1\",\"问题2\"]}   —— 需要澄清时提问（替代 CLARIFY 块）\n"
+            . "{\"name\":\"finish\"}   —— 所有改动完成后必须调用它提交结果\n"
+            . "<<<END>>>\n"
+            . "工作流：理解指令 →（必要时 read_note 先读全文）→ 用工具逐个完成改动 → 调用 finish 提交。工具返回 not_found/ambiguous 时修正参数重试（read_note 重读全文再复制），严禁因此改用整篇重写。\n"
             . "\n【图片尺寸】图片默认撑满便签可用宽度。用户嫌图片太大/太小要求调整某张图片的显示大小时，用 HTML 图片标签加 width 数字属性：固定宽度写 <img src=\"图片URL\" width=\"360\">，按容器比例写 <img src=\"图片URL\" width=\"50%\">。严禁 style 属性、严禁 width=\"300px\" 这类带 px 的写法、严禁用 div 包裹缩放——这些都不会生效；Markdown 的 ![alt](url) 写法无法指定尺寸。调整尺寸时只加/改 width，图片 URL 与其余内容一字不动\n"
             . "【工具调用（可选，仅限需要查看其他便签或文件夹内容时）】\n"
             . "你可以调用工具查看文件夹结构或某条便签的内容（只读），调用格式：\n"
@@ -1875,12 +1932,18 @@ try {
             foreach (aiClarifyContext($clarifyRounds) as $m) $messages[] = $m;
         }
 
-        // 自纠错循环：SEARCH 块匹配失败时，带上上下文告诉 AI 哪里错了，最多 3 轮
-        $maxAttempts = 3;
+        // ===== v12 编辑 Agent：工作副本 + 多轮工具循环（工具轮不消耗重试预算）=====
+        $work = str_replace("\r\n", "\n", $content);   // 工作副本：所有改动在此累积
+        $workTouched = false;
+        $lastText = '';
+        $maxAttempts = 3;      // 非工具轮的重试预算（空白/锚点失败）
         $lastErrText = '';
         $result = null;
-        $toolRounds = 0;   // 本轮工具调用次数（上限 5）
+        $toolRounds = 0;       // 工具轮上限（v12：8）
+        $loopGuard = 0;
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $loopGuard++;
+            if ($loopGuard > 14) break;
             sseSend('phase', array('t' => $attempt > 1 ? '🔁 自动纠错第 ' . ($attempt - 1) . ' 次…' : '🤖 正在生成…'));
             $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta);
 
@@ -1895,18 +1958,43 @@ try {
             if (preg_match('/^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/i', $text, $m)) {
                 $text = trim($m[1]);
             }
-            // ===== 工具调用块：<<<TOOL>>>{json}<<<END>>> =====
-            if ($toolRounds < 5 && preg_match('/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i', $text, $tm)) {
+            $lastText = $text;
+            // ===== 工具调用块：<<<TOOL>>>{json}<<<END>>>（编辑 Agent v12）=====
+            if ($toolRounds < 8 && preg_match('/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i', $text, $tm)) {
                 $toolJson = trim($tm[1]);
                 $toolCall = json_decode($toolJson, true);
                 if (is_array($toolCall) && isset($toolCall['name'])) {
                     $toolRounds++;
-                    sseSend('phase', array('t' => '🔧 工具调用：' . (string)$toolCall['name'] . '...'));
-                    $toolResult = aiRunTool((string)$toolCall['name'], $toolCall, $pdo, $uid);
-                    // 工具结果回喂
+                    $tName = (string)$toolCall['name'];
+                    sseSend('phase', array('t' => '🔧 ' . aiEditToolLabel($tName) . '…'));
+                    // finish：提交工作副本
+                    if ($tName === 'finish') {
+                        $result = array('success' => true, 'mode' => 'full', 'agent' => true,
+                                        'content' => $work, 'usage' => $usage, 'attempts' => $attempt);
+                        break;
+                    }
+                    // ask_user：转澄清流程
+                    if ($tName === 'ask_user') {
+                        $qs = array();
+                        if (isset($toolCall['questions']) && is_array($toolCall['questions'])) {
+                            foreach ($toolCall['questions'] as $q) {
+                                $q = trim((string)$q);
+                                if ($q !== '' && count($qs) < AI_CLARIFY_MAX_QUESTIONS) $qs[] = $q;
+                            }
+                        }
+                        if (!empty($qs)) {
+                            aiOut(array('success' => false, 'need_clarify' => true, 'questions' => $qs,
+                                          'clarifyRounds' => $clarifyRounds, 'usage' => $usage));
+                        }
+                        $toolResult = json_encode(array('ok' => false, 'error' => 'empty_questions'), JSON_UNESCAPED_UNICODE);
+                    } else {
+                        $toolResult = aiEditToolExec($tName, $toolCall, $work, $workTouched, $pdo, $uid);
+                    }
+                    // 工具结果回喂（含当前长度/尾部摘要，供模型继续校准锚点）
                     $messages[] = array('role' => 'assistant', 'content' => $text);
-                    $messages[] = array('role' => 'user', 'content' => '【工具结果】' . (string)$toolCall['name'] . "\n" . $toolResult);
-                    continue;   // 工具回复后让 AI 继续生成
+                    $messages[] = array('role' => 'user', 'content' => '【工具结果】' . $tName . "\n" . $toolResult);
+                    $attempt--;   // 工具轮不消耗重试预算（loopGuard 兜底防死循环）
+                    continue;
                 }
                 // JSON 解析失败：当作普通文本继续处理
             }
@@ -1927,8 +2015,8 @@ try {
                 aiOut(array('success' => false, 'message' => $lastErrText, 'usage' => $usage));
             }
 
-            // ===== 局部修改协议：解析 <<<SEARCH>>>/<<<REPLACE>>>/<<<END>>> 块 =====
-            $contentN = str_replace("\r\n", "\n", $content);
+            // ===== 兼容旧局部修改协议（作用于工作副本）=====
+            $contentN = $work;
             if (preg_match_all('/<<<SEARCH>>>\s*\n([\s\S]*?)\n?<<<REPLACE>>>\s*\n([\s\S]*?)\n?<<<END>>>/i', $text, $mm, PREG_SET_ORDER)) {
                 $newContent = $contentN;
                 $pairs = array();
@@ -1944,6 +2032,7 @@ try {
                 $failed = $seq['failed'];
                 $badSearches = $seq['bad'];
                 if ($applied > 0) {
+                    $work = $newContent; $workTouched = true;
                     $result = array(
                         'success' => true,
                         'mode'    => 'edits',
@@ -1984,7 +2073,7 @@ try {
                             return function_exists('mb_substr') ? '「' . mb_substr($t, 0, 20, 'UTF-8') . '…」' : '「' . substr($t, 0, 30) . '…」';
                         }, array_slice($badSearches, 0, 3)));
                     }
-                    $feedback .= "严禁改用全文重写（B 格式）逃生——本指令必须以替换块完成。请重新输出替换块完成原指令：" . $instruction;
+                    $feedback .= "请重新输出替换块完成原指令：" . $instruction;
                     $messages[] = array('role' => 'assistant', 'content' => $text);
                     $messages[] = array('role' => 'user', 'content' => $feedback);
                     continue;
@@ -1992,26 +2081,17 @@ try {
                 aiOut(array('success' => false, 'message' => $lastErrText . '，已自动重试 ' . $maxAttempts . ' 轮仍失败，请重试或换个说法', 'usage' => $usage));
             }
 
-            // ===== 全文重写模式（含 B 浪费回炉守卫：小改动却交全文 → 打回重做 A）=====
-            $fullText = aiCleanOutput($text);
-            if (trim($content) !== '' && $attempt < $maxAttempts) {
-                // 行级重合度：全文行在原文中出现的占比 ≥93% → 明显可用局部修改完成
-                $oldLines = array_count_values(preg_split('/\n/', str_replace("\r\n", "\n", $content)));
-                $newLines = preg_split('/\n/', str_replace("\r\n", "\n", $fullText));
-                $newLineCount = count($newLines);
-                $common = 0;
-                foreach ($newLines as $l) { if ($l !== '' && isset($oldLines[$l]) && $oldLines[$l] > 0) { $common++; $oldLines[$l]--; } }
-                $ratio = $newLineCount > 0 ? $common / $newLineCount : 0;
-                if ($ratio >= 0.93) {
-                    $feedback = "你把整篇便签全文重写了，但与原文逐行对比 " . round($ratio * 100) . "% 未变——这个指令明显可以用局部修改（A 格式替换块）完成。"
-                        . "严禁全文重写：请只输出改动的 SEARCH/REPLACE 替换块完成原指令：" . $instruction;
-                    $messages[] = array('role' => 'assistant', 'content' => $text);
-                    $messages[] = array('role' => 'user', 'content' => $feedback);
-                    continue;   // 打回重做 A（最后一轮不放行守卫，绝不阻塞用户）
-                }
-            }
-            $result = array('success' => true, 'mode' => 'full', 'content' => $fullText, 'usage' => $usage, 'attempts' => $attempt);
+            // ===== 无工具调用的兜底：改过就用工作副本；否则视末轮文本为整篇（旧 B 兼容）=====
+            $result = array('success' => true, 'mode' => 'full',
+                            'agent' => $workTouched ? true : false,
+                            'content' => $workTouched ? $work : aiCleanOutput($text),
+                            'usage' => $usage, 'attempts' => $attempt);
             break;        }
+        // 循环结束仍无结果（工具轮打满/守卫触发）：工作副本有改动就用它，绝不丢用户改动
+        if ($result === null && $workTouched) {
+            $result = array('success' => true, 'mode' => 'full', 'agent' => true,
+                            'content' => $work, 'usage' => $usage, 'attempts' => $attempt);
+        }
         } // 结束单发模式（$result === null 分支）
 
         if ($result === null) {
