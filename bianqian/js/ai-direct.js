@@ -31,7 +31,7 @@
   }
 
   function buildSystemPrompt(style, now) {
-    var s = '你是一个便签编辑代理。用户会给你一篇 Markdown 便签（可能为空）和一条编辑指令，你要精准地完成编辑。\n'
+    var s = '你是便签编辑引擎（无感情、无人格），不是聊天助手、更不是角色扮演伙伴。除两种输出外，输出中任何其它内容都算错误：① 澄清提问块（仅当必须澄清，格式见 C）② 编辑结果（A 替换块或 B 全文）。严禁寒暄、卖萌、自称（如「梦梦」等任何昵称）、解释你在做什么、复述指令、emoji 装饰、任何前言与后语。\n'
       + '【输出格式（三选一）】\n'
       + 'A. 局部修改（默认首选）：只改动需要改的地方。每个改动输出一个替换块，格式严格如下：\n'
       + '<<<SEARCH>>>\n'
@@ -51,7 +51,7 @@
       + '【硬性规则】\n'
       + '1. 绝对禁止删除、改写、移动用户已有的链接、URL、HTML 标签、图片/音频/视频/iframe 嵌入和代码块，除非指令明确要求处理它们\n'
       + '2. 用户没让改的部分必须一字不动，只做最小限度的必要修改，禁止顺手润色或重排\n'
-      + '3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出\n'
+      + '3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出；严禁寒暄/自称/角色扮演/复述指令——你是编辑引擎不是聊天对象\n'
       + '4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n'
       + '5. 便签标题不在你负责范围内，只编辑正文\n'
       + '6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n'
@@ -72,7 +72,8 @@
   // 解析澄清提问块 <<<CLARIFY>>>...<<<END>>>，返回问题数组
   function parseClarify(text) {
     var qs = [];
-    var m = /<<<CLARIFY>>>\s*\n([\s\S]*?)\n?<<<END>>>/i.exec(String(text || ''));
+    var src = String(text || '');
+    var m = /<<<CLARIFY>>>\s*\n([\s\S]*?)\n?<<<END>>>/i.exec(src) || /<{1,3}\s*CLARIFY\s*>{1,3}\s*\n?([\s\S]*?)\n?\s*<{0,3}\s*\/?\s*CLARIFY\s*>{1,3}/i.exec(src);
     if (m) {
       m[1].split('\n').forEach(function (line) {
         line = line.trim().replace(/^\s*[\d\-*.#)・•]+[.\s]*/, '').trim();
@@ -152,10 +153,15 @@
   // 输出净化（protocol v4）：全文重写 / 整段重写路径专用，删除全部协议标记串后 trim；
   // 必须在澄清解析与替换块提取之后使用，不得提前
   function cleanOutput(text) {
-      // 剥头部「格式标签行」（模型复述输出格式清单：如「+ B. 全文重写」），最多剥 3 行
-  var leak = /^\s*[+\uff0b]?\s*[ABC][.\uff0e]?[ \t]*(?:局部修改|全文重写|澄清提问)(?:【[^\n】]*】)?[^\n]*\n?/;
-  for (var gi = 0; gi < 3 && leak.test(t); gi++) t = t.replace(leak, '');
-return String(text || '').replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '').replace(/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/gi, '').trim();
+    // 协议标记净化：SEARCH/REPLACE/END/CLARIFY/SKIP 的 1-3 尖括号变体；字母分节标记 <<<B>>> 仅双尖括号起（保护 <b> 合法 HTML）
+    var t = String(text || '')
+      .replace(/<{1,3}\s*\/?\s*(?:SEARCH|REPLACE|END|CLARIFY|SKIP)\s*>{1,3}/gi, '')
+      .replace(/<{2,3}\s*\/?\s*[ABC]\s*>{2,3}/gi, '')
+      .replace(/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/gi, '');
+    // 剥头部「格式标签行」（模型复述输出格式清单：如「+ B. 全文重写」），最多剥 3 行
+    var leak = /^\s*[+\uff0b]?\s*[ABC][.\uff0e]?[ \t]*(?:局部修改|全文重写|澄清提问)(?:【[^\n】]*】)?[^\n]*\n?/;
+    for (var gi = 0; gi < 3 && leak.test(t); gi++) t = t.replace(leak, '');
+    return t.trim();
   }
 
   // 宽容匹配辅助：空白集为 [ \t\r\n\f\v　]（ASCII 空白 + 全角空格），与 api/ai.php 逐字一致
