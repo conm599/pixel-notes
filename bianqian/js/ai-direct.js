@@ -173,6 +173,53 @@
     return '完成';
   }
 
+  // 解析 <invoke name="x">…<parameter name="k">v</parameter>…</invoke>
+  function parseInvokeParams(block) {
+    var args = {}, m, re = /<parameter\s+name\s*=\s*"([^"]+)"\s*>([\s\S]*?)<\/parameter>/ig;
+    while ((m = re.exec(String(block || ''))) !== null) args[m[1]] = m[2].trim();
+    if (Object.keys(args).length) return args;
+    try { var j = JSON.parse(String(block || '').trim()); return (j && typeof j === 'object') ? j : {}; } catch (e) { return {}; }
+  }
+
+  // 解析模型写在正文里的工具调用（v13.3）：
+  // ① <tool_call>{"name":"x","arguments":{...}}</tool_call>（Qwen/GLM）
+  // ② <tool_call><function=write_note>{json}</function></tool_call>（站长实测）
+  // ③ <tool_call><invoke name="x"><parameter name="k">v</parameter></invoke></tool_call>（MiniMax 系）
+  function parseTextToolCalls(text) {
+    var t = String(text || ''), out = [];
+    if (!t) return out;
+    if (!/<(?:minimax:)?tool_call/i.test(t) && !/<function/i.test(t) && !/<invoke/i.test(t)) return out;
+    var re = /<(?:minimax:)?tool_call[^>]*>([\s\S]*?)<\/(?:minimax:)?tool_call>/ig, m;
+    while ((m = re.exec(t)) !== null) {
+      var inner = m[1].trim();
+      var fm = /<function\s*=\s*([A-Za-z0-9_]+)\s*>([\s\S]*?)<\/function>/i.exec(inner);
+      if (fm) {
+        var a1 = {}; try { a1 = JSON.parse(fm[2].trim()); } catch (e) { a1 = {}; }
+        out.push({ name: fm[1], arguments: (a1 && typeof a1 === 'object') ? a1 : {} });
+        continue;
+      }
+      var im = /<invoke[^>]*name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/invoke>/i.exec(inner);
+      if (im) { out.push({ name: im[1], arguments: parseInvokeParams(im[2]) }); continue; }
+      try {
+        var j = JSON.parse(inner);
+        if (j && j.name) {
+          var args;
+          if (j.arguments && typeof j.arguments === 'object') args = j.arguments;
+          else { args = {}; for (var k in j) if (k !== 'name') args[k] = j[k]; }
+          out.push({ name: String(j.name), arguments: args });
+        }
+      } catch (e) {}
+    }
+    if (!out.length) {
+      var re2 = /<function\s*=\s*([A-Za-z0-9_]+)\s*>([\s\S]*?)<\/function>/ig, m2;
+      while ((m2 = re2.exec(t)) !== null) {
+        var a2 = {}; try { a2 = JSON.parse(m2[2].trim()); } catch (e) { a2 = {}; }
+        out.push({ name: m2[1], arguments: (a2 && typeof a2 === 'object') ? a2 : {} });
+      }
+    }
+    return out;
+  }
+
   // 文本协议工具块解析
   function matchTextTool(text) {
     var m = /<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i.exec(String(text || ''));
@@ -783,7 +830,8 @@
       if (opts.onPhase) opts.onPhase(attempt > 1 ? '🔁 自动纠错第 ' + (attempt - 1) + ' 次…' : '🤖 正在生成…');
       var r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta,
                              nativeTools ? tools : null, opts.signal);
-      if (!r.ok && nativeTools && (r.toolsRejected || /tool/i.test(String(r.message || '')))) {
+      // 只有错误明确指向 tools 参数能力才降级；旧 /tool/i 过宽——瞬时错误里带 "tool" 就误判为不支持
+      if (!r.ok && nativeTools && (r.toolsRejected || /tool_choice|tools|tool[\s_-]?use|function[\s_-]?call|工具调用|不支持工具/i.test(String(r.message || '')))) {
         nativeTools = false;
         if (opts.onPhase) opts.onPhase('ℹ️ 该模型不支持原生工具调用，切换文本协议');
         messages.push({ role: 'user', content: '【系统】当前上游不支持原生工具调用，请改用文本协议输出（<<<TOOL>>>{json}<<<END>>>）。' });
@@ -838,6 +886,48 @@
         messages.push({ role: 'assistant', content: text !== '' ? text : null, tool_calls: asstCalls });
         for (var mi = 0; mi < toolMsgs.length; mi++) messages.push(toolMsgs[mi]);
         attempt--;   // 工具轮不消耗重试预算（loopGuard 兜底防死循环）
+        continue;
+      }
+
+      // ===== 文本内嵌工具调用（v13.3：模型按训练格式把调用写在正文里，端点没映射成原生 tool_calls）=====
+      var tTools = parseTextToolCalls(text);
+      if (tTools.length && toolRounds < 8) {
+        var fedBack = '';
+        for (var xi = 0; xi < tTools.length; xi++) {
+          if (toolRounds >= 8) break;
+          toolRounds++;
+          var tcn = tTools[xi];
+          var xName = String(tcn.name || '');
+          var xArgs = tcn.arguments || {};
+          var xid = 't' + toolRounds;
+          if (opts.onTool) opts.onTool({ id: xid, name: xName, label: editToolLabel(xName), round: toolRounds });
+          if (opts.onPhase) opts.onPhase('🔧 ' + editToolLabel(xName) + '…');
+          if (xName === 'finish') {
+            if (opts.onToolResult) opts.onToolResult({ id: xid, name: xName, ok: true, brief: '提交改动' });
+            return { success: true, mode: 'full', agent: true, content: ctx.work, attempts: attempt };
+          }
+          if (xName === 'ask_user') {
+            var xQs = Array.isArray(xArgs.questions) ? xArgs.questions.map(function (q) { return String(q).trim(); }).filter(Boolean).slice(0, 3) : [];
+            if (xQs.length) {
+              if (opts.onToolResult) opts.onToolResult({ id: xid, name: xName, ok: true, brief: '向用户提问 ' + xQs.length + ' 个问题' });
+              return clarifyResult(clarifyRounds, xQs);
+            }
+            if (opts.onToolResult) opts.onToolResult({ id: xid, name: xName, ok: false, brief: '问题为空' });
+            fedBack += '【工具结果】ask_user' + '\n' + JSON.stringify({ ok: false, error: 'empty_questions' }) + '\n\n';
+            continue;
+          }
+          var xOut = editToolExec(xName, xArgs, ctx);
+          var xStr = typeof xOut === 'string' ? xOut : JSON.stringify(xOut);
+          var xObj = null; try { xObj = JSON.parse(xStr); } catch (xe2) { xObj = null; }
+          var xOk = xObj ? (xObj.ok === undefined ? !xObj.error : !!xObj.ok) : true;
+          if (opts.onToolResult) opts.onToolResult({ id: xid, name: xName, ok: xOk, brief: toolBrief(xObj) });
+          fedBack += '【工具结果】' + xName + '\n' + xStr + '\n\n';
+        }
+        // 正文里的调用已执行（散文部分不写入便签）；回喂结果让模型继续
+        messages.push({ role: 'assistant', content: text });
+        messages.push({ role: 'user', content: fedBack.replace(/\s+$/, '')
+          + '\n已执行的改动已生效（正文文字不会写入便签）。还有未完成的改动就继续调用工具，全部完成则调用 finish。' });
+        attempt--;
         continue;
       }
 
@@ -919,6 +1009,18 @@
       // 无工具调用、无替换块：按「协议违规」处理（绝不把聊天文字当便签正文）
       if (ctx.touched) {
         return { success: true, mode: 'full', agent: true, content: ctx.work, attempts: attempt };
+      }
+      // 正文里还残留工具调用语法 → 解析失败，绝不能写进便签（哪怕便签为空）
+      if (/<tool_call|<function\s*=|<invoke|<<<TOOL/i.test(text)) {
+        noToolViolations++;
+        if (noToolViolations <= 3) {
+          if (opts.onPhase) opts.onPhase('⚠️ 输出里混入了工具调用语法，已要求重新输出');
+          messages.push({ role: 'assistant', content: text });
+          messages.push({ role: 'user', content: '【系统·格式错误】你的输出里混有工具调用语法标记（如 <tool_call>、<function=>）。系统无法解析它们，它们也绝不能出现在便签正文里。请重新输出：直接调用工具，或只输出纯正文内容，不要把工具调用写进正文。' });
+          attempt--;
+          continue;
+        }
+        return { success: false, message: '模型输出的工具调用格式无法解析（已重试 ' + noToolViolations + ' 次），请重试' };
       }
       if (!String(opts.content || '').trim()) {
         return { success: true, mode: 'full', content: cleanOutput(text), attempts: attempt };
