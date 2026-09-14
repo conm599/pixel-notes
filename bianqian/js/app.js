@@ -2499,6 +2499,50 @@
     return true;
   }
 
+  // 改动摘要：把勾中的 hunk 概括成「旧→新」短句（给模型做上下文，也给用户看）
+  function aiChangeSummary() {
+    var plan = aiReviewPlan, sel = aiReviewSelected;
+    if (!plan || !plan.hunks) return '无改动';
+    function cut(t) { t = String(t == null ? '' : t).trim(); return t.length > 18 ? t.slice(0, 18) + '…' : t; }
+    var parts = [], selected = 0;
+    for (var i = 0; i < plan.hunks.length; i++) {
+      if (!sel[i]) continue;
+      selected++;
+      if (parts.length >= 3) continue;
+      var h = plan.hunks[i], del = '', add = '';
+      for (var r = 0; r < h.rows.length; r++) {
+        if (!del && h.rows[r].t === 'del') del = h.rows[r].text;
+        if (!add && h.rows[r].t === 'add') add = h.rows[r].text;
+      }
+      if (del && add) parts.push('“' + cut(del) + '”→“' + cut(add) + '”');
+      else if (del) parts.push('删除“' + cut(del) + '”');
+      else if (add) parts.push('新增“' + cut(add) + '”');
+    }
+    if (!parts.length) return '空行调整';
+    return parts.join('；') + (selected > parts.length ? '；等 ' + selected + ' 处' : '');
+  }
+
+  // 会话记录（AI 对话框内可见的多轮上下文；DOM 只有一处 AI 对话框，直接查）
+  function aiConvAppend(userText, aiText) {
+    var box = document.querySelector('.ai-conv');
+    if (!box) return;
+    box.style.display = '';
+    var t = document.createElement('div');
+    t.className = 'ai-turn';
+    t.appendChild(mkEl('div', 'ai-turn-u', '你：' + userText));
+    t.appendChild(mkEl('div', 'ai-turn-a', 'AI：' + aiText));
+    box.appendChild(t);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function aiConvNote(text) {
+    var box = document.querySelector('.ai-conv');
+    if (!box) return;
+    box.style.display = '';
+    box.appendChild(mkEl('div', 'ai-turn-note', text));
+    box.scrollTop = box.scrollHeight;
+  }
+
   function closeAiReview() {
     if (aiReviewEl && aiReviewEl.parentNode) aiReviewEl.parentNode.removeChild(aiReviewEl);
     aiReviewEl = null; aiReviewPlan = null; aiReviewSelected = [];
@@ -2607,74 +2651,19 @@
     for (i = 0; i < aiReviewSelected.length; i++) if (aiReviewSelected[i]) k++;
     if (!aiReviewPlan.hunks.length) { showToast('AI 没有产生改动', 'error'); return; }
     if (!k) { showToast('⚠️ 请至少勾选一处改动', 'error'); return; }
+    var summary = aiChangeSummary();
+    var instr = aiReviewResult ? (aiReviewResult.instruction || '') : '';
     aiSetState('applying');
     aiWriteEditor(aiPendingText());
-    // 记入多轮会话历史（只有真正采纳的改动才记，撤回/拒绝不留痕）
-    if (aiReviewResult) {
-      var instr = aiReviewResult.instruction || '';
-      var tl = (aiReviewResult.tools || []).filter(function (t) { return t !== '完成'; });
-      if (instr) {
-        aiHistory.push({ role: 'user', content: instr });
-        aiHistory.push({ role: 'assistant', content: tl.length ? ('（已调用工具：' + tl.join('、') + '，改动已提交到便签）') : '（已提交，无实际改动）' });
-        if (aiHistory.length > 12) aiHistory = aiHistory.slice(-12);
-      }
+    // 多轮历史：带「具体改了什么」，模型下一轮才知道前文，而不是只知道调过哪个工具
+    if (instr) {
+      aiHistory.push({ role: 'user', content: instr });
+      aiHistory.push({ role: 'assistant', content: '（已写入便签：' + summary + '）' });
+      if (aiHistory.length > 12) aiHistory = aiHistory.slice(-12);
     }
-    aiSetState('done');
-    showToast('✅ 已接受 ' + k + ' 处改动并写入编辑器（记得保存便签）', 'success');
-    aiShowDone(k);
-  }
-
-  function aiShowDone(k) {
-    if (!aiReviewEl) return;
-    var meta = aiReviewEl.querySelector('.rv-meta');
-    if (meta) meta.style.display = 'none';
-    var body = aiReviewEl.querySelector('.rv-body');
-    if (body) {
-      body.innerHTML = '';
-      body.appendChild(mkEl('div', 'rv-done', '✅ 已接受 ' + k + ' 处改动，已写入编辑器（记得保存便签）。不满意可撤回这一步。'));
-      var hd = mkEl('div', 'rv-sub', '当前编辑器内容：');
-      hd.style.textAlign = 'left';
-      hd.style.margin = '4px 0 6px';
-      body.appendChild(hd);
-      var prev = mkEl('div', 'note-content ai-render');
-      prev.innerHTML = window.PixelMD.render(newContent.value || '*(空)*');
-      body.appendChild(prev);
-    }
-    var foot = aiReviewEl.querySelector('.rv-foot');
-    if (foot) {
-      foot.innerHTML = '';
-      var undo = mkBtn('<i class="ic ic-recycle"></i> 撤回');
-      undo.className = 'btn btn-outline btn-xs rv-undo';
-      undo.addEventListener('click', function () {
-        if (!aiUndoLast()) return;
-        showToast('↩️ 已撤回这一步 AI 改动', 'success');
-        aiResetToDiff();
-      });
-      // 继续对话：回到输入态并保留本会话历史 → 多轮对话
-      var cont = mkBtn('<i class="ic ic-robot-pink"></i> 继续对话');
-      cont.className = 'btn btn-outline btn-xs rv-continue';
-      cont.addEventListener('click', function () { aiCloseReviewAnd('done'); });
-      // 完成：关闭审阅页 + 关闭整个 AI 页
-      var fin = mkBtn('<i class="ic ic-checkall"></i> 完成');
-      fin.className = 'btn btn-primary btn-xs rv-accept-sel';
-      fin.addEventListener('click', function () {
-        aiCloseReviewAnd('done', aiReviewOpts && aiReviewOpts.onFinish);
-      });
-      foot.appendChild(undo);
-      foot.appendChild(cont);
-      foot.appendChild(fin);
-    }
-    aiSetState('done');
-  }
-
-  // 撤回后回到可勾选状态（重新按「原文 → AI 结果」构建 hunks）
-  function aiResetToDiff() {
-    if (!aiReviewEl || !aiReviewResult) return;
-    aiReviewPlan = aiBuildPlan(aiReviewPrev, aiReviewResult.content || '');
-    aiReviewSelected = [];
-    for (var i = 0; i < aiReviewPlan.hunks.length; i++) aiReviewSelected.push(true);
-    aiMountReview();
-    aiSetState('diff_ready');
+    aiConvAppend(instr || '（编辑指令）', '已写入编辑器 · ' + summary);
+    showToast('✅ 已写入 ' + k + ' 处改动（记得保存便签），可直接继续下一条指令', 'success');
+    aiCloseReviewAnd('done');   // 直接回到对话输入，不需要「继续对话」按钮
   }
 
   function aiMountReview() {
@@ -2808,6 +2797,10 @@
     hint.textContent = '描述你想让 AI 对编辑器里的便签做什么。AI 默认只做局部修改（链接、嵌入内容不会被动到），结果会先展示差异对比，确认采纳后才会覆盖编辑器。';
 
     var usageBar = mkEl('div', 'ai-usage');
+
+    // 多轮会话记录（可见上下文）
+    var convBox = mkEl('div', 'ai-conv');
+    convBox.style.display = 'none';
 
     function renderUsage(u) {
       var p = loadAiPrefs();
@@ -2947,6 +2940,7 @@
 
     function showResultMode() {
       hideStream();
+      ta.value = '';   // 聊天式：这一轮已发出并进入审阅，清空输入框方便直接写下一句
       hint.style.display = 'none';
       ta.style.display = 'none';
       status.style.display = 'none';
@@ -3222,7 +3216,16 @@
     var foot = mkEl('div', 'md-modal-foot');
     var runBtn = mkBtn('<i class="ic ic-robot-pink"></i> 开始编辑');
     runBtn.className = 'btn btn-primary btn-xs';
-    var cancelBtn = mkBtn('关闭');
+    var undoBtn = mkBtn('<i class="ic ic-recycle"></i> 撤回上一步');
+    undoBtn.className = 'btn btn-outline btn-xs';
+    undoBtn.addEventListener('click', function () {
+      if (!aiUndoLast()) return;
+      aiConvNote('↩️ 已撤回上一步 AI 写入');
+      // 告知模型撤回事件，避免下一轮误以为改动还在
+      aiHistory.push({ role: 'assistant', content: '（用户撤回了上一步改动）' });
+      showToast('↩️ 已撤回上一步 AI 改动', 'success');
+    });
+    var cancelBtn = mkBtn('<i class="ic ic-checkall"></i> 完成');
     cancelBtn.className = 'btn btn-outline btn-xs';
     var footHint = mkEl('span', 'md-hint', 'AI 处理可能需要十几秒');
 
@@ -3238,12 +3241,14 @@
     cancelBtn.addEventListener('click', closeAiDialog);
 
     foot.appendChild(runBtn);
+    foot.appendChild(undoBtn);
     foot.appendChild(cancelBtn);
     foot.appendChild(footHint);
 
     modal.appendChild(head);
     body.appendChild(hint);
     body.appendChild(usageBar);
+    body.appendChild(convBox);
     body.appendChild(ta);
     body.appendChild(status);
     body.appendChild(streamBox);

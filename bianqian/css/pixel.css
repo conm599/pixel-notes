@@ -642,6 +642,18 @@ html, body { overflow-x: clip; max-width: 100%; }
   color: var(--text-primary); white-space: pre-wrap; word-break: break-word;
 }
 
+/* AI 会话记录（多轮可见上下文，v13.2） */
+.ai-conv {
+  margin-bottom: 10px; max-height: 190px; overflow-y: auto;
+  border: 2px dashed var(--border-color); background: rgba(74, 240, 255, 0.04);
+  padding: 8px 10px;
+}
+.ai-turn { padding: 5px 0; border-bottom: 2px dashed rgba(42, 42, 90, 0.5); }
+.ai-turn:last-child { border-bottom: none; }
+.ai-turn-u { font-size: 12px; color: var(--text-primary); line-height: 1.75; word-break: break-word; }
+.ai-turn-a { font-size: 11px; color: var(--accent2); line-height: 1.75; word-break: break-word; margin-top: 2px; }
+.ai-turn-note { font-size: 11px; color: var(--text-dim); line-height: 1.75; padding: 3px 0; }
+
 /* AI 澄清提问区 */
 .ai-clarify {
   margin-top: 10px; border: 2px dashed var(--accent); padding: 10px;
@@ -793,10 +805,6 @@ html, body { overflow-x: clip; max-width: 100%; }
 .rv-foot .rv-continue { flex-shrink: 0; }
 .rv-foot .rv-accept-sel { flex: 1; justify-content: center; }
 
-.rv-done {
-  border: 2px solid var(--success); background: rgba(0, 255, 136, 0.08);
-  padding: 12px 14px; margin-bottom: 12px; font-size: 13px; line-height: 1.9;
-}
 .rv-empty { text-align: center; color: var(--text-dim); font-size: 13px; padding: 40px 12px; line-height: 2; }
 
 /* 生成中的工具调用行 */
