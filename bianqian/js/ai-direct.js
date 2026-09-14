@@ -4,7 +4,7 @@
  * 当用户在 AI 设置中填写了自己的透明反代（Workers）地址时，
  * AI 编辑请求从浏览器直接发送到用户自己的代理，完全不经过 Pixel Notes 平台。
  *
- * 实现以 protocol.md v10 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / SKIP 锚 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
+ * 实现以 protocol.md v9 为准（分段参数 / prompt 模板 / 纠错话术 / 澄清提问 / TOOL 工具块 / SKIP 锚 / 整理 Agent SSE 的唯一事实源），改动需与 api/ai.php 同步
  *
  * 接口：window.AIDirect.edit({ title, content, instruction, style, proxy, baseUrl, apiKey, model })
  * 返回：Promise<{ success, content, mode, applied, failed, message }>
@@ -31,7 +31,7 @@
   }
 
   function buildSystemPrompt(style, now) {
-    var s = '你是便签编辑引擎（无感情、无人格），不是聊天助手、更不是角色扮演伙伴。除两种输出外，输出中任何其它内容都算错误：① 澄清提问块（仅当必须澄清，格式见 C）② 编辑结果（A 替换块或 B 全文）。严禁寒暄、卖萌、自称（如「梦梦」等任何昵称）、解释你在做什么、复述指令、emoji 装饰、任何前言与后语。\n'
+    var s = '你是一个便签编辑代理。用户会给你一篇 Markdown 便签（可能为空）和一条编辑指令，你要精准地完成编辑。\n'
       + '【输出格式（三选一）】\n'
       + 'A. 局部修改（默认首选）：只改动需要改的地方。每个改动输出一个替换块，格式严格如下：\n'
       + '<<<SEARCH>>>\n'
@@ -39,9 +39,9 @@
       + '<<<REPLACE>>>\n'
       + '（修改后的文字）\n'
       + '<<<END>>>\n'
-      + '可以有多个替换块，按顺序排列。纯删除某句/某段：SEARCH 放目标句（必要时带一行紧邻上下文保证唯一），REPLACE 留空（紧跟 <<<END>>>），严禁用 B 做纯删除。\n'
+      + '可以有多个替换块，按顺序排列。\n'
       + '【SEARCH 最小化（硬性规则，治 token 浪费）】SEARCH 只放「定位所需的最短锚点」：通常是要修改的那一句/那一行，最多加一行紧邻上下文，严禁为了保险复制整段、整节或大段原文——SEARCH 明显长于 REPLACE 属于浪费，必须改用更短锚点。要定位的位置在很长段落/列表中部时，用 SKIP 省略中段：SEARCH 写成「首行锚点」一行 + 一行 <<<SKIP>>> + 「尾行锚点」一行（每个 SEARCH 最多一个 <<<SKIP>>>），首尾锚点必须是原文中逐字存在的行；引擎会圈定首尾锚点之间的整个跨度整体替换为 REPLACE，所以 REPLACE 必须包含该跨度改写后的完整内容。\n'
-      + 'B. 全文重写【最后手段，严禁滥用】：仅当改动遍布全文、无法用 ≤3 个替换块定位时才允许，只限四类——① 整篇翻译 ② 整体重构/重排 ③ 全文风格统一 ④ 从零创作。改个错别字、加/删一段、改一两句、调整局部格式，都属于 A，用 B 一律视为错误输出。决策方法：先尝试把指令拆成 SEARCH/REPLACE 块，拆得出来就必须用 A；SEARCH 锚点匹配失败时把锚点改短改准重试，严禁降级成全文重写。输出 B 全文时第一行就是正文本身，严禁在开头复述「B. 全文重写」「A.」「C.」等格式标签行。\n'
+      + 'B. 全文重写：仅当指令要求整体重构、全文翻译、全文总结、从零创作时，才直接输出完整的新便签全文。\n'
       + 'C. 澄清提问（当且仅当指令有歧义、缺关键信息或者你拿不准用户到底要改成什么样时使用，优先级最高，出现时必须只输出这个）：\n'
       + '<<<CLARIFY>>>\n'
       + '（一个问题一行，最多 3 个，简洁具体；不要重复已经问过的问题）\n'
@@ -51,12 +51,23 @@
       + '【硬性规则】\n'
       + '1. 绝对禁止删除、改写、移动用户已有的链接、URL、HTML 标签、图片/音频/视频/iframe 嵌入和代码块，除非指令明确要求处理它们\n'
       + '2. 用户没让改的部分必须一字不动，只做最小限度的必要修改，禁止顺手润色或重排\n'
-      + '3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出；严禁寒暄/自称/角色扮演/复述指令——你是编辑引擎不是聊天对象\n'
+      + '3. 不要输出任何解释、前言、结束语，不要用代码围栏（```）包裹整个输出\n'
       + '4. 保持 Markdown 格式；便签支持：标题/加粗/斜体/列表/引用/链接/图片/任务列表/代码块\n'
       + '5. 便签标题不在你负责范围内，只编辑正文\n'
       + '6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n'
       + '7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问\n'
       + '8. SEARCH 锚点最小化：能一句/一行定位就不用多行；长跨度用 <<<SKIP>>> 省略中段（见 A 格式说明）。复制大段原文进 SEARCH 是严重浪费，禁止\n'
+      + '【编辑 Agent 工作方式（v12，首选）】对便签内容的任何改动都必须通过工具调用落地；工具之外的散文只作简要说明展示，绝不会写进便签。\n'
+      + '工具调用格式（一轮一个）：\n'
+      + '<<<TOOL>>>\n'
+      + '{\'name\':\'append_text\',\'text\':\'要追加到末尾的完整 Markdown\'}   —— 末尾追加（用户习惯：优先追加，不动已有内容）\n'
+      + '{\'name\':\'replace_text\',\'search\':\'当前便签中逐字存在的片段\',\'replace\':\'替换后文字（删除留空）\'}   —— 局部替换；search 不唯一会返回 ambiguous\n'
+      + '{\'name\':\'set_full_text\',\'text\':\'整篇新内容\'}   —— 仅整篇重写/翻译时用\n'
+      + '{\'name\':\'read_note\',\'id\':123} / {\'name\':\'list_folder\',\'path\':\'工作/项目A\'}   —— 只读查看\n'
+      + '{\'name\':\'ask_user\',\'questions\':[\'问题1\']}   —— 需澄清时提问（替代 CLARIFY 块）\n'
+      + '{\'name\':\'finish\'}   —— 全部改完必须调用提交\n'
+      + '<<<END>>>\n'
+      + '工作流：理解指令 →（必要时 read_note 先读全文）→ 工具逐个改动 → finish 提交。工具报 not_found/ambiguous 时修正参数重试，严禁因此改用整篇重写。\n'
       + '\n【图片尺寸】图片默认撑满便签可用宽度。用户嫌图片太大/太小要求调整某张图片的显示大小时，用 HTML 图片标签加 width 数字属性：固定宽度写 <img src="图片URL" width="360">，按容器比例写 <img src="图片URL" width="50%">。严禁 style 属性、严禁 width="300px" 这类带 px 的写法、严禁用 div 包裹缩放——这些都不会生效；Markdown 的 ![alt](url) 写法无法指定尺寸。调整尺寸时只加/改 width，图片 URL 与其余内容一字不动\n'
       + '【工具调用（可选）】当你需要查看便签所在文件夹或其他文件夹里有什么时，可以调用工具。输出格式：\n'
       + '<<<TOOL>>>\n'
@@ -70,10 +81,43 @@
   }
 
   // 解析澄清提问块 <<<CLARIFY>>>...<<<END>>>，返回问题数组
+  // 编辑 Agent 工具（v12）：对工作副本执行改动；聊天文字永不进内容
+  function editToolLabel(name) {
+    var m = { append_text: '追加内容', replace_text: '局部替换', set_full_text: '整篇写入', read_note: '读取便签', list_folder: '查看文件夹', finish: '完成', ask_user: '提问' };
+    return m[name] || name;
+  }
+  function editToolExec(name, args, ctx) {   // ctx = { work, touched }
+    function excerpt() {
+      var w = ctx.work;
+      return { current_length: w.length, current_tail: w.slice(-120) };
+    }
+    if (name === 'append_text') {
+      var t = String((args && args.text) || '').trim();
+      if (!t) return { ok: false, error: 'empty_text' };
+      ctx.work = ctx.work === '' ? t : ctx.work.replace(/\s+$/, '') + '\n\n' + t;
+      ctx.touched = true;
+      return Object.assign({ ok: true, action: 'append' }, excerpt());
+    }
+    if (name === 'replace_text') {
+      var se = String((args && args.search) || '');
+      var rp = String((args && args.replace) || '');
+      if (!se) return { ok: false, error: 'empty_search' };
+      var cnt = ctx.work.split(se).length - 1;
+      if (cnt === 1) { ctx.work = ctx.work.split(se).join(rp); ctx.touched = true; return Object.assign({ ok: true, action: 'replace', matched: 'exact' }, excerpt()); }
+      if (cnt > 1) return { ok: false, error: 'ambiguous', count: cnt, hint: 'search 出现 ' + cnt + ' 次，请加长使其唯一' };
+      return Object.assign({ ok: false, error: 'not_found', hint: 'search 必须逐字复制当前内容（含空格/换行/Markdown 符号），可用 current_tail 或先 read_note 重读' }, excerpt());
+    }
+    if (name === 'set_full_text') {
+      ctx.work = String((args && args.text) || '').replace(/\r\n/g, '\n');
+      ctx.touched = true;
+      return Object.assign({ ok: true, action: 'set_full' }, excerpt());
+    }
+    return runLocalTool(args || { name: name });   // 只读工具（read_note / list_folder）
+  }
+
   function parseClarify(text) {
     var qs = [];
-    var src = String(text || '');
-    var m = /<<<CLARIFY>>>\s*\n([\s\S]*?)\n?<<<END>>>/i.exec(src) || /<{1,3}\s*CLARIFY\s*>{1,3}\s*\n?([\s\S]*?)\n?\s*<{0,3}\s*\/?\s*CLARIFY\s*>{1,3}/i.exec(src);
+    var m = /<<<CLARIFY>>>\s*\n([\s\S]*?)\n?<<<END>>>/i.exec(String(text || ''));
     if (m) {
       m[1].split('\n').forEach(function (line) {
         line = line.trim().replace(/^\s*[\d\-*.#)・•]+[.\s]*/, '').trim();
@@ -153,15 +197,7 @@
   // 输出净化（protocol v4）：全文重写 / 整段重写路径专用，删除全部协议标记串后 trim；
   // 必须在澄清解析与替换块提取之后使用，不得提前
   function cleanOutput(text) {
-    // 协议标记净化：SEARCH/REPLACE/END/CLARIFY/SKIP 的 1-3 尖括号变体；字母分节标记 <<<B>>> 仅双尖括号起（保护 <b> 合法 HTML）
-    var t = String(text || '')
-      .replace(/<{1,3}\s*\/?\s*(?:SEARCH|REPLACE|END|CLARIFY|SKIP)\s*>{1,3}/gi, '')
-      .replace(/<{2,3}\s*\/?\s*[ABC]\s*>{2,3}/gi, '')
-      .replace(/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/gi, '');
-    // 剥头部「格式标签行」（模型复述输出格式清单：如「+ B. 全文重写」），最多剥 3 行
-    var leak = /^\s*[+\uff0b]?\s*[ABC][.\uff0e]?[ \t]*(?:局部修改|全文重写|澄清提问)(?:【[^\n】]*】)?[^\n]*\n?/;
-    for (var gi = 0; gi < 3 && leak.test(t); gi++) t = t.replace(leak, '');
-    return t.trim();
+    return String(text || '').replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '').replace(/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/gi, '').trim();
   }
 
   // 宽容匹配辅助：空白集为 [ \t\r\n\f\v　]（ASCII 空白 + 全角空格），与 api/ai.php 逐字一致
@@ -591,6 +627,8 @@
 
     // 自纠错循环：SEARCH 块匹配失败时，带上上下文告诉 AI 哪里错了，最多 3 轮
     var maxAttempts = 3;
+    var ctx = { work: String(opts.content || '').replace(/\r\n/g, '\n'), touched: false };   // v12 工作副本
+    var lastText = '';
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       if (opts.onPhase) opts.onPhase(attempt > 1 ? '🔁 自动纠错第 ' + (attempt - 1) + ' 次…' : '🤖 正在生成…');
       var r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta);
@@ -607,7 +645,7 @@
 
       // ===== TOOL 块（浏览器端执行，数据全在页面内存 notesById/foldersById 里） =====
       var toolRounds = 0;
-      while (toolRounds < 5) {
+      while (toolRounds < 8) {
         var toolMatch = text.match(/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i);
         if (!toolMatch) break;
         var toolCall = null;
@@ -615,7 +653,17 @@
         if (!toolCall || !toolCall.name) break;
         toolRounds++;
         if (opts.onPhase) opts.onPhase('🔧 工具调用：' + toolCall.name + '...');
-        var toolResult = runLocalTool(toolCall);
+        if (opts.onPhase) opts.onPhase('🔧 ' + editToolLabel(toolCall.name) + '…');
+        // v12 编辑工具：finish 提交 / ask_user 澄清 / 读写工具作用于工作副本
+        if (toolCall.name === 'finish') {
+          return { success: true, mode: 'full', agent: true, content: ctx.work, attempts: attempt };
+        }
+        if (toolCall.name === 'ask_user') {
+          var qs = Array.isArray(toolCall.questions) ? toolCall.questions.map(function (q) { return String(q).trim(); }).filter(Boolean).slice(0, 3) : [];
+          if (qs.length) return clarifyResult(clarifyRounds, qs);
+        }
+        var toolResult = editToolExec(toolCall.name, toolCall, ctx);
+        toolResult = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
         messages.push({ role: 'assistant', content: text });
         messages.push({ role: 'user', content: '【工具结果】' + toolCall.name + '\n' + toolResult });
         var r2 = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta);
@@ -637,13 +685,14 @@
         return { success: false, message: r.message || 'AI 返回了空内容' };
       }
 
-      var b = applyBlocks(text, opts.content || '');
+      var b = applyBlocks(text, ctx.work);
       if (b.hasBlocks) {
         if (b.applied > 0) {
+          ctx.work = b.result; ctx.touched = true;
           return { success: true, mode: 'edits', applied: b.applied, failed: b.failed, content: b.result, attempts: attempt };
         }
         // 空便签兜底（protocol v3）：空便签没有原文可匹配，模型误用 A 时把全部 REPLACE 段拼成新全文（视同 B），不进入重试
-        if (!String(opts.content || '').trim()) {
+        if (!String(ctx.work || '').trim()) {
           var rebuilt = '';
           var reRep = /<<<REPLACE>>>\s*\n([\s\S]*?)\n?<<<END>>>/ig;
           var rm;
@@ -663,7 +712,7 @@
             }).join(' / ');
             fb += '你上轮的 SEARCH 段开头分别是：' + preview;
           }
-          fb += '严禁改用全文重写（B 格式）逃生——本指令必须以替换块完成。请重新输出替换块完成原指令：' + opts.instruction;
+          fb += '请重新输出替换块完成原指令：' + opts.instruction;
           messages.push({ role: 'assistant', content: text });
           messages.push({ role: 'user', content: fb });
           continue;
@@ -671,28 +720,9 @@
         return { success: false, message: 'AI 指出的修改位置无法在原文中匹配，已自动重试 ' + maxAttempts + ' 轮仍失败，请重试或换个说法' };
       }
 
-      // 全文重写模式
-
-      // B 浪费回炉守卫：小改动却交全文 → 打回重做 A（最后轮放行，绝不阻塞用户）
-      var fullText = cleanOutput(text);
-      if (opts.content && String(opts.content).trim() && attempt < maxAttempts) {
-        var oldLines = {};
-        var NL = String.fromCharCode(10), CR = String.fromCharCode(13);
-        var oldSrc = String(opts.content).split(CR).join(NL).split(NL);
-        var newLines = fullText.split(CR).join(NL).split(NL);
-        var common = 0;
-        oldSrc.forEach(function (l) { if (l !== '') oldLines[l] = (oldLines[l] || 0) + 1; });
-        newLines.forEach(function (l) { if (l !== '' && oldLines[l] > 0) { common++; oldLines[l]--; } });
-        var ratio = newLines.length > 0 ? common / newLines.length : 0;
-        if (ratio >= 0.93) {
-          var fb2 = '你把整篇便签全文重写了，但与原文逐行对比 ' + Math.round(ratio * 100) + '% 未变——这个指令明显可以用局部修改（A 格式替换块）完成。'
-              + '严禁全文重写：请只输出改动的 SEARCH/REPLACE 替换块完成原指令：' + opts.instruction;
-          messages.push({ role: 'assistant', content: text });
-          messages.push({ role: 'user', content: fb2 });
-          continue;   // 打回重做 A
-        }
-      }
-      return { success: true, mode: 'full', content: fullText, attempts: attempt };
+      // 全文兜底：Agent 改过工作副本就用它（改动绝不丢），否则视末轮文本为整篇（旧 B 兼容）
+      return { success: true, mode: 'full', agent: !!ctx.touched,
+               content: ctx.touched ? ctx.work : cleanOutput(text), attempts: attempt };
     }
     return { success: false, message: 'AI 编辑失败' };
   }
