@@ -327,10 +327,126 @@ function aiApplyBlocksSeq($content, $blocks) {
  * 编辑 Agent 工具：对工作副本执行文本改动（v12）
  * 只在服务端持有工作副本上改；聊天文字永不进内容
  */
+/** 原生 tool_calls 归一：流式分片 → [{id,name,arguments}]，过滤空名 */
+function aiNormToolCalls($tcBuf) {
+    $out = array();
+    if (!is_array($tcBuf)) return $out;
+    foreach ($tcBuf as $ix => $tc) {
+        $name = isset($tc['name']) ? trim((string)$tc['name']) : '';
+        if ($name === '') continue;
+        $id = isset($tc['id']) && $tc['id'] !== '' ? (string)$tc['id'] : ('call_' . $ix);
+        $out[] = array('id' => $id, 'name' => $name, 'arguments' => isset($tc['arguments']) ? (string)$tc['arguments'] : '');
+    }
+    return $out;
+}
+
+/** 编辑 Agent 原生工具 schema（OpenAI 格式；MiniMax/GLM/Kimi/DeepSeek/Gemini-OpenAI 端点通用） */
+function aiEditToolsSchema() {
+    $props = function ($defs) { return array('type' => 'object', 'properties' => $defs); };
+    return array(
+        array('type' => 'function', 'function' => array('name' => 'replace_text',
+            'description' => '在便签中把 old_string 替换为 new_string（最常用）。old_string 必须与便签当前内容逐字一致（含空格/换行/Markdown 符号），且必须唯一；不唯一时加相邻行使其唯一。new_string 留空 = 删除该片段。',
+            'parameters' => $props(array('old_string' => array('type' => 'string', 'description' => '要被替换的原文片段（逐字复制，含前后各 1-2 行上下文以保证唯一）'), 'new_string' => array('type' => 'string', 'description' => '替换后的文字；留空则删除该片段'))))), 
+        array('type' => 'function', 'function' => array('name' => 'append_text',
+            'description' => '把内容追加到便签末尾（用户偏好追加式写作时优先用它；不改动已有内容）。',
+            'parameters' => $props(array('text' => array('type' => 'string', 'description' => '要追加的完整 Markdown 内容'))))), 
+        array('type' => 'function', 'function' => array('name' => 'write_note',
+            'description' => '整篇重写便签（仅用于整篇翻译/整体重构；必须给出完整内容，严禁用「其余不变」之类省略）。',
+            'parameters' => $props(array('content' => array('type' => 'string', 'description' => '完整的新便签内容'))))), 
+        array('type' => 'function', 'function' => array('name' => 'read_note',
+            'description' => '读取某条便签的完整内容（默认当前便签无需调用）。',
+            'parameters' => $props(array('id' => array('type' => 'integer', 'description' => '便签 id'))))), 
+        array('type' => 'function', 'function' => array('name' => 'list_folders',
+            'description' => '列出文件夹结构或某个文件夹下的便签清单。',
+            'parameters' => $props(array('path' => array('type' => 'string', 'description' => '文件夹路径，如 工作/项目A；主页填 主页'))))), 
+        array('type' => 'function', 'function' => array('name' => 'ask_user',
+            'description' => '指令有歧义或缺关键信息时向用户提问（一次最多 3 个问题）。',
+            'parameters' => $props(array('questions' => array('type' => 'array', 'items' => array('type' => 'string'), 'description' => '问题列表'))))), 
+        array('type' => 'function', 'function' => array('name' => 'finish',
+            'description' => '所有改动完成后调用，提交结果。',
+            'parameters' => $props(array()))),
+    );
+}
+
 function aiEditToolLabel($name) {
     $m = array('append_text' => '追加内容', 'replace_text' => '局部替换', 'set_full_text' => '整篇写入',
                'read_note' => '读取便签', 'list_folder' => '查看文件夹', 'finish' => '完成', 'ask_user' => '提问');
     return isset($m[$name]) ? $m[$name] : (string)$name;
+}
+
+/** 字符归一化：仅用于匹配尝试（智能引号/破折号/省略号/NBSP → 常规字符） */
+function aiEditNormChars($t) {
+    $map = array('“' => '"', '”' => '"',
+        '‘' => "'", '’' => "'",
+        '—' => '-', '–' => '-', '…' => '...',
+        chr(0xC2) . chr(0xA0) => ' ');
+    return strtr((string)$t, $map);
+}
+
+/** 行级修剪（去每行首尾空白） */
+function aiEditTrimLines($t) {
+    $lines = explode("\n", str_replace("\r\n", "\n", (string)$t));
+    foreach ($lines as $i => $l) $lines[$i] = trim($l);
+    return implode("\n", $lines);
+}
+
+/** 在 $work 中找与 $search 最相似的行窗口（失败回灌用）：返回 [行号, 片段] */
+function aiEditBestMatch($work, $search) {
+    $wl = explode("\n", (string)$work);
+    $sl = explode("\n", trim((string)$search));
+    $n = count($sl);
+    if ($n < 1 || count($wl) < 1) return null;
+    $best = null; $bestScore = 0.0;
+    for ($i = 0; $i + $n <= count($wl); $i++) {
+        $win = array_slice($wl, $i, $n);
+        similar_text(aiEditTrimLines(implode("\n", $win)), aiEditTrimLines(implode("\n", $sl)), $pct);
+        if ($pct > $bestScore) { $bestScore = $pct; $best = array($i + 1, implode("\n", $win)); }
+    }
+    return ($best !== null && $bestScore >= 45.0) ? array('line' => $best[0], 'excerpt' => $best[1], 'score' => (int)round($bestScore)) : null;
+}
+
+/** 三阶段替换：精确唯一 → 逐行 trim 唯一 → 首尾锚点(≥3行) → 失败。返回 ['ok'=>bool,'how'=>string,'best'=>?array] */
+function aiEditApplyReplace(&$work, $search, $replace, &$how) {
+    $how = '';
+    if ($search === '') return array('ok' => false, 'best' => null);
+    // ① 精确（含字符归一化后的精确）
+    if (substr_count($work, $search) === 1) { $work = str_replace($search, $replace, $work); $how = 'exact'; return array('ok' => true, 'best' => null); }
+    $nw = aiEditNormChars($work); $ns = aiEditNormChars($search);
+    if ($nw !== $work && substr_count($nw, $ns) === 1) {
+        $pos = strpos($nw, $ns);
+        $work = substr($work, 0, $pos) . $replace . substr($work, $pos + strlen($ns));
+        $how = 'normalized'; return array('ok' => true, 'best' => null);
+    }
+    // ② 逐行 trim 唯一（保留原文行集，替换整块）
+    $tw = aiEditTrimLines($work); $ts = aiEditTrimLines($search);
+    if ($ts !== '' && substr_count($tw, $ts) === 1) {
+        $pos = strpos($tw, $ts);
+        $startLine = substr_count(substr($tw, 0, $pos), "\n");
+        $spanLines = substr_count($ts, "\n") + 1;
+        $wl = explode("\n", $work);
+        $before = implode("\n", array_slice($wl, 0, $startLine));
+        $after = implode("\n", array_slice($wl, $startLine + $spanLines));
+        $work = ($before !== '' ? $before . "\n" : '') . $replace . ($after !== '' ? "\n" . $after : '');
+        $how = 'line_trim'; return array('ok' => true, 'best' => null);
+    }
+    // ③ 首尾锚点（≥3 行）：首末行 trim 后唯一命中则整块替换
+    $sl = explode("\n", trim($search));
+    if (count($sl) >= 3) {
+        $first = trim($sl[0]); $last = trim($sl[count($sl) - 1]);
+        $wl = explode("\n", $work);
+        $hits = array();
+        for ($i = 0; $i + count($sl) <= count($wl); $i++) {
+            if (trim($wl[$i]) === $first && trim($wl[$i + count($sl) - 1]) === $last) $hits[] = $i;
+        }
+        if (count($hits) === 1) {
+            $i = $hits[0];
+            $before = implode("\n", array_slice($wl, 0, $i));
+            $after = implode("\n", array_slice($wl, $i + count($sl)));
+            $work = ($before !== '' ? $before . "\n" : '') . $replace . ($after !== '' ? "\n" . $after : '');
+            $how = 'anchor'; return array('ok' => true, 'best' => null);
+        }
+    }
+    return array('ok' => false, 'best' => aiEditBestMatch($work, $search));
 }
 
 function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid) {
@@ -348,34 +464,43 @@ function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid) {
             $touched = true;
             return json_encode(array_merge(array('ok' => true, 'action' => 'append'), $excerpt()), $jp);
         case 'replace_text':
-            $se = (string)(isset($args['search']) ? $args['search'] : '');
-            $rp = (string)(isset($args['replace']) ? $args['replace'] : '');
-            if ($se === '') return json_encode(array('ok' => false, 'error' => 'empty_search'), $jp);
-            $cnt = substr_count($work, $se);
-            if ($cnt === 1) {
-                $work = str_replace($se, $rp, $work);
+            $se = (string)(isset($args['old_string']) ? $args['old_string'] : (isset($args['search']) ? $args['search'] : ''));
+            $rp = (string)(isset($args['new_string']) ? $args['new_string'] : (isset($args['replace']) ? $args['replace'] : ''));
+            if (trim($se) === '') return json_encode(array('ok' => false, 'error' => 'empty_search'), $jp);
+            $cntExact = substr_count($work, $se);
+            if ($cntExact > 1) {
+                return json_encode(array_merge(array('ok' => false, 'error' => 'ambiguous', 'count' => $cntExact,
+                    'hint' => 'old_string 在便签中出现 ' . $cntExact . ' 次；请把前后各 1-2 行一起放进 old_string 使其唯一'), $excerpt()), $jp);
+            }
+            $how = '';
+            $r = aiEditApplyReplace($work, $se, $rp, $how);
+            if ($r['ok']) {
                 $touched = true;
-                return json_encode(array_merge(array('ok' => true, 'action' => 'replace', 'matched' => 'exact'), $excerpt()), $jp);
+                return json_encode(array_merge(array('ok' => true, 'action' => 'replace', 'matched' => $how), $excerpt()), $jp);
             }
-            if ($cnt > 1) {
-                return json_encode(array_merge(array('ok' => false, 'error' => 'ambiguous', 'count' => $cnt,
-                    'hint' => 'search 在便签中出现 ' . $cnt . ' 次，请加长 search 使其唯一（多带相邻行）'), $excerpt()), $jp);
+            // Aider 式失败回灌：给原文最相似片段 + 行号 + 重试指令
+            $fb = array('ok' => false, 'error' => 'not_found',
+                'hint' => 'old_string 必须逐字复制便签当前内容（含空格/换行/Markdown 符号）。');
+            if (!empty($r['best'])) {
+                $fb['did_you_mean_line'] = $r['best']['line'];
+                $fb['did_you_mean'] = $r['best']['excerpt'];
+                $fb['similarity'] = $r['best']['score'];
+                $fb['hint'] .= '便签第 ' . $r['best']['line'] . ' 行附近有相似内容（相似度 ' . $r['best']['score'] . '%），请照抄 did_you_mean 修正 old_string 后重试；已成功的替换不要再发。';
+            } else {
+                $fb['hint'] .= '当前便签内容见 current_tail；可先调用 read_note 重读全文再复制。';
             }
-            // 0 次命中：给一次行级宽容匹配（去行尾空白 + 空白归一），仍失败则如实报错
-            $res = aiApplyBlock($work, $se, $rp, array());
-            if ($res !== null) {
-                $work = $res['c'];
-                $touched = true;
-                return json_encode(array_merge(array('ok' => true, 'action' => 'replace', 'matched' => 'line_level'), $excerpt()), $jp);
-            }
-            return json_encode(array_merge(array('ok' => false, 'error' => 'not_found',
-                'hint' => 'search 必须逐字复制当前便签内容（含空格/换行/Markdown 符号）；上面 current_tail 可参考，或先 read_note 重读全文'), $excerpt()), $jp);
+            return json_encode(array_merge($fb, $excerpt()), $jp);
+        case 'write_note':
         case 'set_full_text':
-            $work = str_replace("\r\n", "\n", (string)(isset($args['text']) ? $args['text'] : ''));
+            $full = isset($args['content']) ? $args['content'] : (isset($args['text']) ? $args['text'] : '');
+            $work = str_replace("\r\n", "\n", (string)$full);
             $touched = true;
             return json_encode(array_merge(array('ok' => true, 'action' => 'set_full'), $excerpt()), $jp);
         default:
-            return aiRunTool((string)$name, $args, $pdo, $uid);
+            $alias = array('list_folders' => 'list_folder', 'list_folder' => 'list_folder', 'read_note' => 'read_note');
+            $rn = isset($alias[$name]) ? $alias[$name] : (string)$name;
+            if ($rn === 'list_folder' && !isset($args['path'])) $args['path'] = '主页';
+            return aiRunTool($rn, $args, $pdo, $uid);
     }
 }
 
@@ -541,7 +666,7 @@ function ownEndpoint($baseUrl) {
  * 调用 OpenAI 兼容 chat/completions（url/key/model 由调用方指定）
  * $onDelta 非空时走流式（stream:true），逐 token 回调转发；上游不支持流式则自动降级为整段返回（结果不变）
  */
-function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null, $onDelta = null) {
+function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null, $onDelta = null, $tools = null, &$toolsRejected = null) {
     global $AI_SSE;   // SSE 保活心跳需要感知是否已在事件流模式（sseStart 置位）
     $payloadArr = array(
         'model' => $model,
@@ -549,6 +674,12 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
         'max_tokens' => $maxTokens,
         'temperature' => 0.1,
     );
+    // 原生 tool calling（OpenAI 兼容：MiniMax/GLM/Kimi/DeepSeek/Gemini-OpenAI 端点等）
+    if (is_array($tools) && !empty($tools)) {
+        $payloadArr['tools'] = $tools;
+        $payloadArr['tool_choice'] = 'auto';
+    }
+    $toolsRejected = false;
     // 额外请求体参数（仅自有 Key 模式）：深度思考预设 + 用户自定义 Body，后者优先
     if (is_array($extra)) {
         foreach ($extra as $k => $v) {
@@ -574,7 +705,7 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
         );
         if ($onDelta !== null) {
             // 流式：WRITEFUNCTION 逐块解析上游 SSE 的 data 行，提取 delta.content 即时回调
-            $sseBuf = ''; $raw = '';            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $data) use (&$sseBuf, &$text, &$raw, $onDelta) {
+            $sseBuf = ''; $raw = ''; $tcBuf = array();            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $data) use (&$sseBuf, &$text, &$raw, $onDelta, &$tcBuf) {
                 if ($data === '') return 0;
                 $raw .= $data;
                 $sseBuf .= $data;
@@ -591,6 +722,16 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
                     if (isset($j['choices'][0]['delta']['content']) && is_string($j['choices'][0]['delta']['content'])) $delta = $j['choices'][0]['delta']['content'];
                     elseif (isset($j['choices'][0]['text']) && is_string($j['choices'][0]['text'])) $delta = $j['choices'][0]['text'];
                     if ($delta !== '') { $text .= $delta; $onDelta($delta); }
+                    // 原生 tool_calls 分片累积（index → id/name/arguments）
+                    if (isset($j['choices'][0]['delta']['tool_calls']) && is_array($j['choices'][0]['delta']['tool_calls'])) {
+                        foreach ($j['choices'][0]['delta']['tool_calls'] as $tc) {
+                            $ix = isset($tc['index']) ? (int)$tc['index'] : 0;
+                            if (!isset($tcBuf[$ix])) $tcBuf[$ix] = array('id' => '', 'name' => '', 'arguments' => '');
+                            if (isset($tc['id']) && $tc['id'] !== '') $tcBuf[$ix]['id'] = (string)$tc['id'];
+                            if (isset($tc['function']['name'])) $tcBuf[$ix]['name'] .= (string)$tc['function']['name'];
+                            if (isset($tc['function']['arguments'])) $tcBuf[$ix]['arguments'] .= (string)$tc['function']['arguments'];
+                        }
+                    }
                 }
                 return strlen($data);
             };
@@ -661,7 +802,9 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
             if ($msg === '') $msg = 'HTTP ' . $status;
             return array('ok' => false, 'text' => '', 'err' => '上游错误：' . mb_substr($msg, 0, 200, 'UTF-8'));
         }
-        if ($text !== '') return array('ok' => true, 'text' => $text, 'err' => '');
+        if ($text !== '' || !empty($tcBuf)) {
+            return array('ok' => true, 'text' => $text, 'err' => '', 'tool_calls' => aiNormToolCalls($tcBuf));
+        }
         // 收到 200 但无任何 content 增量：要么上游不支持流式（整段 JSON，往下解析），要么只输出了思考
         if (strpos($bodyStr, '"reasoning_content"') !== false) {
             return array('ok' => false, 'text' => '', 'err' => '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens');
@@ -682,6 +825,17 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
 
     $msgObj = isset($json['choices'][0]['message']) && is_array($json['choices'][0]['message']) ? $json['choices'][0]['message'] : array();
     $text = isset($msgObj['content']) ? trim((string)$msgObj['content']) : '';
+    $nativeTc = array();
+    if (isset($msgObj['tool_calls']) && is_array($msgObj['tool_calls'])) {
+        foreach ($msgObj['tool_calls'] as $tc) {
+            if (!is_array($tc)) continue;
+            $nativeTc[] = array(
+                'id'   => isset($tc['id']) ? (string)$tc['id'] : ('call_' . count($nativeTc)),
+                'name' => isset($tc['function']['name']) ? (string)$tc['function']['name'] : '',
+                'arguments' => isset($tc['function']['arguments']) ? (string)$tc['function']['arguments'] : '',
+            );
+        }
+    }
     $reasoning = isset($msgObj['reasoning_content']) ? trim((string)$msgObj['reasoning_content']) : '';
     if ($text === '' && $reasoning !== '') {
         return array('ok' => false, 'text' => '', 'err' => '模型只返回了思考过程没有正文，请换用非推理模型或调大 max_tokens');
@@ -690,7 +844,7 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
     if ($text === '') {
         return array('ok' => false, 'text' => '', 'err' => 'AI 返回了空内容，原始响应：' . mb_substr($bodyStr, 0, 200, 'UTF-8'));
     }
-    return array('ok' => true, 'text' => $text, 'err' => '');
+    return array('ok' => true, 'text' => $text, 'err' => '', 'tool_calls' => $nativeTc);
 }
 
 /**
@@ -845,7 +999,7 @@ try {
                 jsonOut(array('success' => false, 'message' => '今日自有 Key 调用次数已达上限（' . AI_OWN_DAILY_LIMIT . '，北京时间 8:00 重置）'));
             }
             $proxyPrefix = rtrim(trim(getSetting('ai_own_proxy', '')), '/');
-            if (!preg_match('#^https://#i', $proxyPrefix)) {
+            if (!preg_match('#^https://#i', $proxyPrefix) && !(getenv('PSU_AI_ALLOW_LOCAL') === '1' && preg_match('#^http://(?:localhost|127\.0\.0\.1)#i', $proxyPrefix))) {
                 jsonOut(array('success' => false, 'message' => '服务器未配置自有 Key 透明代理，请联系管理员在「AI 设置」中填写'));
             }
             $url = $proxyPrefix . '/' . $target;
@@ -1762,18 +1916,18 @@ try {
             . "6. 便签内容为空时【严禁使用 A 格式】：空便签没有任何原文可供 SEARCH 匹配，输出替换块必定失败。指令是创作新内容就直接用 B 格式输出完整新全文；指令像是要编辑已有内容但无从下手时，用 C 澄清提问确认用户想要什么\n"
             . "7. 选择 B（全文重写）时，输出只能是新便签全文本身：开头与结尾都不得有任何提问、选项、说明或客套话；若对风格/格式/长度等拿不准，必须改用 C 先提问，严禁先输出一版再反问\n"
             . "8. SEARCH 锚点最小化：能一句/一行定位就不用多行；长跨度用 <<<SKIP>>> 省略中段（见 A 格式说明）。\n"
-            . "【编辑 Agent 工作方式（v12，首选）】对便签内容的任何改动都必须通过工具调用落地；你在工具之外写的散文只作为简要说明展示给用户，绝不会写进便签。\n"
-            . "工具调用格式（一轮一个）：\n"
-            . "<<<TOOL>>>\n"
-            . "{\"name\", ...}   —— 可用工具：\n"
-            . "{\"name\":\"append_text\",\"text\":\"要追加到便签末尾的完整 Markdown\"}   —— 末尾追加（用户习惯：优先追加，不动已有内容）\n"
-            . "{\"name\":\"replace_text\",\"search\":\"当前便签中逐字存在的片段\",\"replace\":\"替换后文字（删除该片段则留空）\"}   —— 局部替换；search 不唯一会返回 ambiguous，加相邻行即可\n"
-            . "{\"name\":\"set_full_text\",\"text\":\"整篇新内容\"}   —— 仅整篇重写/翻译时用\n"
-            . "{\"name\":\"read_note\",\"id\":123} / {\"name\":\"list_folder\",\"path\":\"工作/项目A\"}   —— 只读查看\n"
-            . "{\"name\":\"ask_user\",\"questions\":[\"问题1\",\"问题2\"]}   —— 需要澄清时提问（替代 CLARIFY 块）\n"
-            . "{\"name\":\"finish\"}   —— 所有改动完成后必须调用它提交结果\n"
-            . "<<<END>>>\n"
-            . "工作流：理解指令 →（必要时 read_note 先读全文）→ 用工具逐个完成改动 → 调用 finish 提交。工具返回 not_found/ambiguous 时修正参数重试（read_note 重读全文再复制），严禁因此改用整篇重写。\n"
+            . "【角色】你是一名便签编辑执行器（embodied editor），任务是精确完成用户的编辑指令，不是聊天、不是角色扮演。\n"
+            . "【工具铁律】对便签内容的任何改动都必须通过工具调用完成；每轮回复必须至少调用一个工具（原生 function calling，或文本协议 <<<TOOL>>>{json}<<<END>>> 二选一，按上游能力自动切换）。\n"
+            . "工具与参数（原生调用名 / 文本协议 name 相同）：\n"
+            . "replace_text {old_string, new_string} —— 局部替换（默认首选）：old_string 必须逐字复制便签当前内容且唯一，不唯一就带上前一行或后一行；new_string 留空 = 删除该片段。\n"
+            . "append_text {text} —— 追加到便签末尾（用户常要求「往后加」，优先用它；不改动已有内容）。\n"
+            . "write_note {content} —— 整篇重写（仅整篇翻译/整体重构；必须给完整内容，严禁省略占位）。\n"
+            . "read_note {id} / list_folders {path} —— 只读查看（当前便签内容已给你，一般无需读）。\n"
+            . "ask_user {questions:[...]} —— 指令有歧义或缺信息时提问（最多 3 个）。\n"
+            . "finish {} —— 所有改动完成后必须调用，提交结果。\n"
+            . "【编辑规则】只输出改动、不要复制大段未变内容；同一处的多次改动用多个工具调用按顺序做；工具返回错误（not_found/ambiguous）时，照抄返回的 did_you_mean 片段修正 old_string 重试，已成功的改动不要重发；严禁因为一次失败就改用整篇重写。\n"
+            . "【反跑偏（硬性）】① 不得寒暄、卖萌、自称、加 emoji 装饰；② 不得以「好的/当然/没问题/Sure/OK」等客套开头；③ 不得在结束时反问或邀请继续对话；④ 不得复述指令、不得解释你在做什么超过一句话；⑤ 工具之外的文字只作为进度说明，永远不会写进便签。\n"
+            . "【目标】用户目标只有两种终止方式：改完并调用 finish，或调用 ask_user 提问。不要来回闲聊。\n"
             . "\n【图片尺寸】图片默认撑满便签可用宽度。用户嫌图片太大/太小要求调整某张图片的显示大小时，用 HTML 图片标签加 width 数字属性：固定宽度写 <img src=\"图片URL\" width=\"360\">，按容器比例写 <img src=\"图片URL\" width=\"50%\">。严禁 style 属性、严禁 width=\"300px\" 这类带 px 的写法、严禁用 div 包裹缩放——这些都不会生效；Markdown 的 ![alt](url) 写法无法指定尺寸。调整尺寸时只加/改 width，图片 URL 与其余内容一字不动\n"
             . "【工具调用（可选，仅限需要查看其他便签或文件夹内容时）】\n"
             . "你可以调用工具查看文件夹结构或某条便签的内容（只读），调用格式：\n"
@@ -1936,6 +2090,8 @@ try {
         $work = str_replace("\r\n", "\n", $content);   // 工作副本：所有改动在此累积
         $workTouched = false;
         $lastText = '';
+        $editTools = aiEditToolsSchema();   // 原生 tools（OpenAI 兼容多厂商）
+        $nativeTools = true;                 // 上游拒绝 tools 时自动降级为文本协议
         $maxAttempts = 3;      // 非工具轮的重试预算（空白/锚点失败）
         $lastErrText = '';
         $result = null;
@@ -1945,7 +2101,15 @@ try {
             $loopGuard++;
             if ($loopGuard > 14) break;
             sseSend('phase', array('t' => $attempt > 1 ? '🔁 自动纠错第 ' . ($attempt - 1) . ' 次…' : '🤖 正在生成…'));
-            $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta);
+            $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta,
+                        $nativeTools ? $editTools : null, $toolsRejected);
+            // 上游不支持 tools（400/422 或明确报 tools 错误）→ 去掉 tools 重试一次，转文本协议
+            if (!$r['ok'] && $nativeTools && ($toolsRejected || preg_match('/tool/i', (string)$r['err']))) {
+                $nativeTools = false;
+                sseSend('phase', array('t' => 'ℹ️ 该模型不支持原生工具调用，切换文本协议'));
+                $messages[] = array('role' => 'user', 'content' => '【系统】当前上游不支持原生工具调用，请改用文本协议输出（<<<TOOL>>>{json}<<<END>>>）。');
+                $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta, null, $toolsRejected);
+            }
 
             if (!$r['ok']) {
                 aiOut(array('success' => false, 'message' => $r['err'], 'usage' => $usage));
@@ -1959,7 +2123,55 @@ try {
                 $text = trim($m[1]);
             }
             $lastText = $text;
-            // ===== 工具调用块：<<<TOOL>>>{json}<<<END>>>（编辑 Agent v12）=====
+            // ===== 原生 tool_calls（OpenAI 兼容多厂商：MiniMax/GLM/Kimi/DeepSeek/Gemini-OpenAI 端点）=====
+            if (!empty($r['tool_calls'])) {
+                $tcList = $r['tool_calls'];
+                $roundDone = false;
+                $asstCalls = array();
+                $toolMsgs = array();
+                foreach ($tcList as $tc) {
+                    if ($toolRounds >= 8) break;
+                    $toolRounds++;
+                    $tName = (string)$tc['name'];
+                    $tArgs = json_decode((string)$tc['arguments'], true);
+                    if (!is_array($tArgs)) $tArgs = array();
+                    sseSend('phase', array('t' => '🔧 ' . aiEditToolLabel($tName) . '…'));
+                    $asstCalls[] = array('id' => (string)$tc['id'], 'type' => 'function',
+                                         'function' => array('name' => $tName, 'arguments' => (string)$tc['arguments']));
+                    if ($tName === 'finish') {
+                        $result = array('success' => true, 'mode' => 'full', 'agent' => true,
+                                        'content' => $work, 'usage' => $usage, 'attempts' => $attempt);
+                        $roundDone = true;
+                        break;
+                    }
+                    if ($tName === 'ask_user') {
+                        $qs = array();
+                        if (isset($tArgs['questions']) && is_array($tArgs['questions'])) {
+                            foreach ($tArgs['questions'] as $q) {
+                                $q = trim((string)$q);
+                                if ($q !== '' && count($qs) < AI_CLARIFY_MAX_QUESTIONS) $qs[] = $q;
+                            }
+                        }
+                        if (!empty($qs)) {
+                            aiOut(array('success' => false, 'need_clarify' => true, 'questions' => $qs,
+                                          'clarifyRounds' => $clarifyRounds, 'usage' => $usage));
+                        }
+                        $toolMsgs[] = array('role' => 'tool', 'tool_call_id' => (string)$tc['id'],
+                                            'content' => json_encode(array('ok' => false, 'error' => 'empty_questions'), JSON_UNESCAPED_UNICODE));
+                        continue;
+                    }
+                    $toolMsgs[] = array('role' => 'tool', 'tool_call_id' => (string)$tc['id'],
+                                        'content' => aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid));
+                }
+                if ($roundDone) break;
+                // 回喂：assistant(tool_calls) + 各 tool 结果
+                $messages[] = array('role' => 'assistant', 'content' => ($text !== '' ? $text : null), 'tool_calls' => $asstCalls);
+                foreach ($toolMsgs as $m) $messages[] = $m;
+                $attempt--;
+                continue;
+            }
+
+            // ===== 工具调用块：<<<TOOL>>>{json}<<<END>>>（文本协议兜底）=====
             if ($toolRounds < 8 && preg_match('/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i', $text, $tm)) {
                 $toolJson = trim($tm[1]);
                 $toolCall = json_decode($toolJson, true);
