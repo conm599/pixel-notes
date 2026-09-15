@@ -86,14 +86,15 @@
     args = args || {};
     function excerpt() {
       var w = ctx.work;
-      return { current_length: w.length, current_tail: w.slice(-120) };
+      return { current_length: w.length, current_tail: w.slice(-600) };
     }
     if (name === 'append_text') {
       var t = String(args.text || '').trim();
       if (!t) return { ok: false, error: 'empty_text' };
       ctx.work = ctx.work === '' ? t : ctx.work.replace(/\s+$/, '') + '\n\n' + t;
       ctx.touched = true;
-      return Object.assign({ ok: true, action: 'append' }, excerpt());
+      // appended = 本次追加的内容；current_tail = 追加之后的便签末尾（模型据此确认结果）
+      return Object.assign({ ok: true, action: 'append', appended: t.slice(0, 300) }, excerpt());
     }
     if (name === 'replace_text') {
       var se = String(args.old_string !== undefined ? args.old_string : (args.search !== undefined ? args.search : ''));
@@ -165,7 +166,11 @@
       if (o.error === 'note_not_found' || o.error === 'folder_not_found') return '目标不存在';
       return String(o.error);
     }
-    if (o.action === 'append') return '已追加到末尾';
+    if (o.action === 'append') {
+      var ap = o.appended ? String(o.appended).replace(/\s+/g, ' ') : '';
+      if (ap) return '已追加「' + (ap.length > 30 ? ap.slice(0, 30) + '…' : ap) + '」';
+      return '已追加到末尾';
+    }
     if (o.action === 'replace') return '已替换';
     if (o.action === 'set_full') return '已整篇写入';
     if (o.notes) return '读取到 ' + o.notes.length + ' 条便签';
@@ -218,6 +223,36 @@
       }
     }
     return out;
+  }
+
+  // 末尾片段（详情展示用）
+  function tailSnippet(tail, n) {
+    n = n || 300;
+    tail = String(tail || '');
+    return tail.length > n ? '…' + tail.slice(-n) : tail;
+  }
+
+  // 工具输出的人类可读详情（工具卡片展开可见）
+  function toolDetail(o, max) {
+    max = max || 1200;
+    if (!o || typeof o !== 'object') {
+      var raw = String(o == null ? '' : o);
+      return raw.length > max ? raw.slice(0, max) + '…' : raw;
+    }
+    if (o.error) {
+      var L = ['错误：' + o.error];
+      if (o.hint) L.push(o.hint);
+      if (o.did_you_mean) L.push('最相似片段（第 ' + o.did_you_mean_line + ' 行）：' + '\n' + o.did_you_mean);
+      return L.join('\n');
+    }
+    var tail = tailSnippet(o.current_tail, 300);
+    if (o.action === 'append') return '追加的内容：' + '\n' + (o.appended || '') + '\n' + '—— 追加后的便签末尾 ——' + '\n' + tail;
+    if (o.action === 'replace') return '已替换' + (o.matched ? '（匹配方式：' + o.matched + '）' : '') + '\n' + '—— 替换后的便签末尾 ——' + '\n' + tail;
+    if (o.action === 'set_full') return '已整篇写入，共 ' + o.current_length + ' 字' + '\n' + '—— 末尾 ——' + '\n' + tail;
+    var t;
+    try { t = JSON.stringify(o, null, 2); } catch (e) { t = String(o); }
+    if (t && t.length > max) t = t.slice(0, max) + '…';
+    return t || '';
   }
 
   // 文本协议工具块解析
@@ -880,7 +915,7 @@
           var outStr = typeof out === 'string' ? out : JSON.stringify(out);
           var outObj = null; try { outObj = JSON.parse(outStr); } catch (e2) { outObj = null; }
           var okFlag = outObj ? (outObj.ok === undefined ? !outObj.error : !!outObj.ok) : true;
-          if (opts.onToolResult) opts.onToolResult({ id: tid, name: tName, ok: okFlag, brief: toolBrief(outObj) });
+          if (opts.onToolResult) opts.onToolResult({ id: tid, name: tName, ok: okFlag, brief: toolBrief(outObj), detail: toolDetail(outObj) });
           toolMsgs.push({ role: 'tool', tool_call_id: tc.id, content: outStr });
         }
         messages.push({ role: 'assistant', content: text !== '' ? text : null, tool_calls: asstCalls });
@@ -920,7 +955,7 @@
           var xStr = typeof xOut === 'string' ? xOut : JSON.stringify(xOut);
           var xObj = null; try { xObj = JSON.parse(xStr); } catch (xe2) { xObj = null; }
           var xOk = xObj ? (xObj.ok === undefined ? !xObj.error : !!xObj.ok) : true;
-          if (opts.onToolResult) opts.onToolResult({ id: xid, name: xName, ok: xOk, brief: toolBrief(xObj) });
+          if (opts.onToolResult) opts.onToolResult({ id: xid, name: xName, ok: xOk, brief: toolBrief(xObj), detail: toolDetail(xObj) });
           fedBack += '【工具结果】' + xName + '\n' + xStr + '\n\n';
         }
         // 正文里的调用已执行（散文部分不写入便签）；回喂结果让模型继续
@@ -954,7 +989,7 @@
         var outT = editToolExec(ttName, tt, ctx);
         var outTStr = typeof outT === 'string' ? outT : JSON.stringify(outT);
         var outTObj = null; try { outTObj = JSON.parse(outTStr); } catch (e3) { outTObj = null; }
-        if (opts.onToolResult) opts.onToolResult({ id: tid2, name: ttName, ok: !(outTObj && outTObj.error), brief: toolBrief(outTObj) });
+        if (opts.onToolResult) opts.onToolResult({ id: tid2, name: ttName, ok: !(outTObj && outTObj.error), brief: toolBrief(outTObj), detail: toolDetail(outTObj) });
         messages.push({ role: 'assistant', content: text });
         messages.push({ role: 'user', content: '【工具结果】' + ttName + '\n' + outTStr });
         attempt--;

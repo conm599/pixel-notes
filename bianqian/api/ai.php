@@ -381,6 +381,49 @@ function aiEditToolLabel($name) {
     return isset($m[$name]) ? $m[$name] : (string)$name;
 }
 
+/** 末尾片段（详情展示用）：取 tail 的最后 n 字 */
+function aiTailSnippet($tail, $n = 300) {
+    $tail = (string)$tail;
+    if (function_exists('mb_substr')) {
+        $len = mb_strlen($tail, 'UTF-8');
+        return $len > $n ? '…' . mb_substr($tail, $len - $n, $n, 'UTF-8') : $tail;
+    }
+    return strlen($tail) > $n ? '…' . substr($tail, -$n) : $tail;
+}
+
+/** 工具输出的人类可读详情（SSE tool_result.detail，前端工具卡片展开可见） */
+function aiToolDetail($out, $max = 1200) {
+    $flags = defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0;
+    if (defined('JSON_PRETTY_PRINT')) $flags = $flags | JSON_PRETTY_PRINT;
+    $o = json_decode((string)$out, true);
+    if (!is_array($o)) {
+        $t = (string)$out;
+        if (function_exists('mb_substr') && mb_strlen($t, 'UTF-8') > $max) $t = mb_substr($t, 0, $max, 'UTF-8') . '…';
+        return $t;
+    }
+    if (!empty($o['error'])) {
+        $L = array('错误：' . $o['error']);
+        if (!empty($o['hint'])) $L[] = $o['hint'];
+        if (!empty($o['did_you_mean'])) $L[] = '最相似片段（第 ' . (int)$o['did_you_mean_line'] . ' 行）：' . "\n" . $o['did_you_mean'];
+        return implode("\n", $L);
+    }
+    $act = isset($o['action']) ? (string)$o['action'] : '';
+    $tail = isset($o['current_tail']) ? aiTailSnippet($o['current_tail'], 300) : '';
+    if ($act === 'append') {
+        return '追加的内容：' . "\n" . (isset($o['appended']) ? $o['appended'] : '') . "\n" . '—— 追加后的便签末尾 ——' . "\n" . $tail;
+    }
+    if ($act === 'replace') {
+        return '已替换' . (!empty($o['matched']) ? '（匹配方式：' . $o['matched'] . '）' : '') . "\n" . '—— 替换后的便签末尾 ——' . "\n" . $tail;
+    }
+    if ($act === 'set_full') {
+        return '已整篇写入，共 ' . (int)$o['current_length'] . ' 字' . "\n" . '—— 末尾 ——' . "\n" . $tail;
+    }
+    $t = json_encode($o, $flags);
+    if (!is_string($t)) $t = (string)$out;
+    if (function_exists('mb_substr') && mb_strlen($t, 'UTF-8') > $max) $t = mb_substr($t, 0, $max, 'UTF-8') . '…';
+    return $t;
+}
+
 /** 工具结果一句话摘要（SSE tool_result.brief，前端工具行展示用） */
 function aiToolBrief($out) {
     $o = json_decode((string)$out, true);
@@ -393,7 +436,15 @@ function aiToolBrief($out) {
         return $e;
     }
     if (isset($o['action'])) {
-        $map = array('append' => '已追加到末尾', 'replace' => '已替换', 'set_full' => '已整篇写入');
+        $map = array('replace' => '已替换', 'set_full' => '已整篇写入');
+        if ($o['action'] === 'append') {
+            $ap = isset($o['appended']) ? trim(preg_replace('/\s+/u', ' ', (string)$o['appended'])) : '';
+            if ($ap !== '') {
+                if (function_exists('mb_substr') && mb_strlen($ap, 'UTF-8') > 30) $ap = mb_substr($ap, 0, 30, 'UTF-8') . '…';
+                return '已追加「' . $ap . '」';
+            }
+            return '已追加到末尾';
+        }
         return isset($map[$o['action']]) ? $map[$o['action']] : '完成';
     }
     if (isset($o['notes'])) return '读取到 ' . count($o['notes']) . ' 条便签';
@@ -536,7 +587,7 @@ function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid) {
     $jp = defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0;
     $excerpt = function () use ($work) {
         $len = function_exists('mb_strlen') ? mb_strlen($work, 'UTF-8') : strlen($work);
-        $tail = function_exists('mb_substr') ? mb_substr($work, max(0, $len - 120), 120, 'UTF-8') : substr($work, -120);
+        $tail = function_exists('mb_substr') ? mb_substr($work, max(0, $len - 600), 600, 'UTF-8') : substr($work, -600);
         return array('current_length' => $len, 'current_tail' => $tail);
     };
     switch ((string)$name) {
@@ -545,7 +596,9 @@ function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid) {
             if ($t === '') return json_encode(array('ok' => false, 'error' => 'empty_text'), $jp);
             $work = ($work === '' ? $t : rtrim($work) . "\n\n" . $t);
             $touched = true;
-            return json_encode(array_merge(array('ok' => true, 'action' => 'append'), $excerpt()), $jp);
+            // appended = 本次追加的内容；current_tail = 追加之后的便签末尾（模型据此确认结果）
+            $ap = function_exists('mb_substr') ? mb_substr($t, 0, 300, 'UTF-8') : substr($t, 0, 300);
+            return json_encode(array_merge(array('ok' => true, 'action' => 'append', 'appended' => $ap), $excerpt()), $jp);
         case 'replace_text':
             $se = (string)(isset($args['old_string']) ? $args['old_string'] : (isset($args['search']) ? $args['search'] : ''));
             $rp = (string)(isset($args['new_string']) ? $args['new_string'] : (isset($args['replace']) ? $args['replace'] : ''));
@@ -2269,7 +2322,7 @@ try {
                     $tOut = aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid);
                     $tObj = json_decode($tOut, true);
                     $tOk = is_array($tObj) && (isset($tObj['ok']) ? (bool)$tObj['ok'] : !isset($tObj['error']));
-                    sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($tOut)));
+                    sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($tOut), 'detail' => aiToolDetail($tOut)));
                     $toolMsgs[] = array('role' => 'tool', 'tool_call_id' => (string)$tc['id'], 'content' => $tOut);
                 }
                 if ($roundDone) break;
@@ -2320,7 +2373,7 @@ try {
                     $tOut = aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid);
                     $tObj = json_decode($tOut, true);
                     $tOk = is_array($tObj) && (isset($tObj['ok']) ? (bool)$tObj['ok'] : !isset($tObj['error']));
-                    sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($tOut)));
+                    sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($tOut), 'detail' => aiToolDetail($tOut)));
                     $fedBack .= '【工具结果】' . $tName . "\n" . $tOut . "\n\n";
                 }
                 if ($roundDone) break;
@@ -2369,7 +2422,7 @@ try {
                         $toolResult = aiEditToolExec($tName, $toolCall, $work, $workTouched, $pdo, $uid);
                         $tObj = json_decode($toolResult, true);
                         $tOk = is_array($tObj) && (isset($tObj['ok']) ? (bool)$tObj['ok'] : !isset($tObj['error']));
-                        sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($toolResult)));
+                        sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($toolResult), 'detail' => aiToolDetail($toolResult)));
                     }
                     // 工具结果回喂（含当前长度/尾部摘要，供模型继续校准锚点）
                     $messages[] = array('role' => 'assistant', 'content' => $text);

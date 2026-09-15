@@ -2308,7 +2308,8 @@
   var aiSnapshots = [];           // 版本快照 [{before, after, at}]，上限 20
   var aiAbortCtrl = null;         // 当前生成请求的 AbortController
   var aiHistory = [];             // 多轮对话历史：本次打开 AI 对话框内累积的 {role, content}
-  var aiToolTrace = [];           // 本轮工具调用轨迹（用于生成给模型的进度摘要）
+  var aiToolTrace = [];           // 本轮工具调用轨迹（标签，用于生成给模型的进度摘要）
+  var aiToolDetails = [];         // 本轮工具明细 [{label, brief, ok, detail}]（用于对话气泡里的工具卡片）
 
   function aiAbortRun() {
     if (aiAbortCtrl) { try { aiAbortCtrl.abort(); } catch (e) {} }
@@ -2522,16 +2523,83 @@
     return parts.join('；') + (selected > parts.length ? '；等 ' + selected + ' 处' : '');
   }
 
-  // 会话记录（AI 对话框内可见的多轮上下文；DOM 只有一处 AI 对话框，直接查）
-  function aiConvAppend(userText, aiText) {
+  // ---- 对话式消息渲染（v13.5）----
+  function aiMsgTime() {
+    var d = new Date();
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  // 可折叠工具卡片（对应参考产品的工具调用块）
+  function aiToolCard(label, brief, ok, detail) {
+    var card = mkEl('div', 'ai-tool-card');
+    card.setAttribute('data-status', ok === false ? 'error' : 'success');
+    var head = mkEl('div', 'ai-tool-head');
+    head.appendChild(mkEl('span', 'ai-tool-ic', ok === false ? '⚠️' : '🔧'));
+    head.appendChild(mkEl('span', 'ai-tool-name', label || '工具'));
+    head.appendChild(mkEl('span', 'ai-tool-brief', brief || ''));
+    if (detail) head.appendChild(mkEl('span', 'ai-tool-arrow', '\u203a'));
+    card.appendChild(head);
+    if (detail) {
+      var body = mkEl('div', 'ai-tool-body', detail);
+      body.style.display = 'none';
+      card.appendChild(body);
+      head.addEventListener('click', function () {
+        var open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : '';
+        card.classList.toggle('open', !open);
+      });
+    }
+    return card;
+  }
+
+  // 追加一轮对话：用户气泡 + AI 气泡（含工具卡片/说明/动作行）
+  function aiConvAppend(userText, aiText, tools) {
     var box = document.querySelector('.ai-conv');
     if (!box) return;
     box.style.display = '';
-    var t = document.createElement('div');
-    t.className = 'ai-turn';
-    t.appendChild(mkEl('div', 'ai-turn-u', '你：' + userText));
-    t.appendChild(mkEl('div', 'ai-turn-a', 'AI：' + aiText));
-    box.appendChild(t);
+
+    var u = mkEl('div', 'ai-msg ai-msg-user');
+    var uh = mkEl('div', 'ai-msg-head');
+    uh.appendChild(mkEl('span', 'ai-msg-time', aiMsgTime()));
+    uh.appendChild(mkEl('span', 'ai-msg-name', '你'));
+    u.appendChild(uh);
+    u.appendChild(mkEl('div', 'ai-msg-bubble', userText));
+    box.appendChild(u);
+
+    var a = mkEl('div', 'ai-msg ai-msg-ai');
+    var ah = mkEl('div', 'ai-msg-head');
+    ah.appendChild(mkEl('span', 'ai-avatar', 'AI'));
+    ah.appendChild(mkEl('span', 'ai-msg-name', '便签 AI'));
+    ah.appendChild(mkEl('span', 'ai-msg-time', aiMsgTime()));
+    a.appendChild(ah);
+    (tools || []).forEach(function (t) {
+      a.appendChild(aiToolCard(t.label, t.brief, t.ok, t.detail));
+    });
+    if (aiText) a.appendChild(mkEl('div', 'ai-msg-text', aiText));
+
+    var acts = mkEl('div', 'ai-msg-actions');
+    var cp = mkBtn('<i class="ic ic-copy"></i>', '复制这段说明');
+    cp.className = 'ai-act';
+    cp.addEventListener('click', function () {
+      try {
+        navigator.clipboard.writeText(aiText || '');
+        showToast('📋 已复制', 'success');
+      } catch (e) { showToast('复制失败', 'error'); }
+    });
+    var rf = mkBtn('<i class="ic ic-recycle"></i>', '用同一句指令重试');
+    rf.className = 'ai-act';
+    rf.addEventListener('click', function () {
+      var inp = document.querySelector('.ai-modal .ai-instruction');
+      if (inp) { inp.value = userText; inp.focus(); }
+      var run = document.querySelector('.ai-modal .md-modal-foot .btn-primary');
+      if (run) run.click();
+    });
+    acts.appendChild(cp);
+    acts.appendChild(rf);
+    a.appendChild(acts);
+
+    box.appendChild(a);
     box.scrollTop = box.scrollHeight;
   }
 
@@ -2539,7 +2607,7 @@
     var box = document.querySelector('.ai-conv');
     if (!box) return;
     box.style.display = '';
-    box.appendChild(mkEl('div', 'ai-turn-note', text));
+    box.appendChild(mkEl('div', 'ai-msg-note', text));
     box.scrollTop = box.scrollHeight;
   }
 
@@ -2661,7 +2729,7 @@
       aiHistory.push({ role: 'assistant', content: '（已写入便签：' + summary + '）' });
       if (aiHistory.length > 12) aiHistory = aiHistory.slice(-12);
     }
-    aiConvAppend(instr || '（编辑指令）', '已写入编辑器 · ' + summary);
+    aiConvAppend(instr || '（编辑指令）', '已写入编辑器 · ' + summary, aiToolDetails.slice());
     showToast('✅ 已写入 ' + k + ' 处改动（记得保存便签），可直接继续下一条指令', 'success');
     aiCloseReviewAnd('done');   // 直接回到对话输入，不需要「继续对话」按钮
   }
@@ -2871,6 +2939,7 @@
       streamText.textContent = '';
       clearToolLog();
       aiToolTrace = [];
+      aiToolDetails = [];
       setPhaseText(streamPhase, phaseText || '');
       streamBox.style.display = '';
       streamFollow = true;
@@ -2925,6 +2994,9 @@
       }
       var st = row.querySelector('.ai-tool-st');
       if (st) st.textContent = ok ? '完成' : '失败';
+      aiToolDetails.push({ label: (row.querySelector('.ai-tool-name') || {}).textContent || '工具',
+                           brief: String(d.brief || (ok ? '完成' : '失败')), ok: ok,
+                           detail: String(d.detail || '') });
     }
     function hideStream() {
       streamBox.style.display = 'none';
@@ -3245,15 +3317,24 @@
     foot.appendChild(cancelBtn);
     foot.appendChild(footHint);
 
+    // 底部对话输入条（输入框 + 发送钮）
+    var composer = mkEl('div', 'ai-composer');
+    composer.appendChild(ta);
+    var sendBtn = mkBtn('<i class="ic ic-send"></i>', '发送（Ctrl+Enter）');
+    sendBtn.className = 'ai-send';
+    sendBtn.type = 'button';
+    sendBtn.addEventListener('click', function () { runBtn.click(); });
+    composer.appendChild(sendBtn);
+
     modal.appendChild(head);
     body.appendChild(hint);
     body.appendChild(usageBar);
     body.appendChild(convBox);
-    body.appendChild(ta);
     body.appendChild(status);
     body.appendChild(streamBox);
     body.appendChild(clarifyWrap);
     modal.appendChild(body);
+    modal.appendChild(composer);
     modal.appendChild(foot);
     overlay.appendChild(modal);
     overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) closeAiDialog(); });
