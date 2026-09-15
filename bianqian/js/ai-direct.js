@@ -129,7 +129,7 @@
   function editToolsSchema() {
     function fn(name, desc, props, required) {
       return { type: 'function', function: { name: name, description: desc,
-        parameters: { type: 'object', properties: props, required: required || [] } } };
+        parameters: { type: 'object', properties: props || {}, required: required || [], additionalProperties: true } } };
     }
     return [
       fn('replace_text', '局部替换：old_string 必须逐字复制便签当前内容且唯一，不唯一就带上前一行或后一行。', { old_string: { type: 'string' }, new_string: { type: 'string', description: '替换后文字；留空表示删除该片段' } }, ['old_string', 'new_string']),
@@ -831,7 +831,7 @@
       var r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta,
                              nativeTools ? tools : null, opts.signal);
       // 只有错误明确指向 tools 参数能力才降级；旧 /tool/i 过宽——瞬时错误里带 "tool" 就误判为不支持
-      if (!r.ok && nativeTools && (r.toolsRejected || /tool_choice|tools|tool[\s_-]?use|function[\s_-]?call|工具调用|不支持工具/i.test(String(r.message || '')))) {
+      if (!r.ok && nativeTools && (r.toolsRejected || /tool_choice|tools|tool[\s_-]?use|function[\s_-]?call|工具调用|不支持工具|invalid.{0,24}(parameter|schema|properties)|tool\s*\d+\s*function|is not of type/i.test(String(r.message || '')))) {
         nativeTools = false;
         if (opts.onPhase) opts.onPhase('ℹ️ 该模型不支持原生工具调用，切换文本协议');
         messages.push({ role: 'user', content: '【系统】当前上游不支持原生工具调用，请改用文本协议输出（<<<TOOL>>>{json}<<<END>>>）。' });
