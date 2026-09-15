@@ -342,7 +342,13 @@ function aiNormToolCalls($tcBuf) {
 
 /** 编辑 Agent 原生工具 schema（OpenAI 格式；MiniMax/GLM/Kimi/DeepSeek/Gemini-OpenAI 端点通用） */
 function aiEditToolsSchema() {
-    $props = function ($defs) { return array('type' => 'object', 'properties' => $defs); };
+    // 注意：properties 为空时必须序列化成 {}（对象）而不是 []（数组）——
+    // 否则 '"properties":[]' 会被严格校验的上游拒绝：Tool 6 function has invalid 'parameters' schema: [] is not of type 'object'
+    $props = function ($defs) {
+        return array('type' => 'object',
+                     'properties' => (is_array($defs) && empty($defs)) ? new stdClass() : $defs,
+                     'additionalProperties' => true);
+    };
     return array(
         array('type' => 'function', 'function' => array('name' => 'replace_text',
             'description' => '在便签中把 old_string 替换为 new_string（最常用）。old_string 必须与便签当前内容逐字一致（含空格/换行/Markdown 符号），且必须唯一；不唯一时加相邻行使其唯一。new_string 留空 = 删除该片段。',
@@ -2199,7 +2205,7 @@ try {
             // 上游不支持 tools（400/422 或明确报 tools 错误）→ 去掉 tools 重试一次，转文本协议
             // 只有错误明确指向 tools 参数能力（tool_choice / tools / tool use / function call / 工具调用）才降级；
             // 旧的 /tool/i 过宽——任何带 "tool" 字样的瞬时错误都会把支持工具的模型误判为不支持
-            if (!$r['ok'] && $nativeTools && ($toolsRejected || preg_match('/tool_choice|tools|tool[\s_-]?use|function[\s_-]?call|工具调用|不支持工具/i', (string)$r['err']))) {
+            if (!$r['ok'] && $nativeTools && ($toolsRejected || preg_match('/tool_choice|tools|tool[\s_-]?use|function[\s_-]?call|工具调用|不支持工具|invalid.{0,24}(parameter|schema|properties)|tool\s*\d+\s*function|is not of type/i', (string)$r['err']))) {
                 $nativeTools = false;
                 sseSend('phase', array('t' => 'ℹ️ 该模型不支持原生工具调用，切换文本协议'));
                 $messages[] = array('role' => 'user', 'content' => '【系统】当前上游不支持原生工具调用，请改用文本协议输出（<<<TOOL>>>{json}<<<END>>>）。');
