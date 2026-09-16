@@ -12,6 +12,42 @@
 (function () {
   'use strict';
 
+  // UTF-16 安全清洗（v13.6）：slice 截断 emoji 会产生孤立代理项，JSON.stringify 输出非法转义，
+  // PHP json_decode 会直接失败 → 请求被丢弃（表现为「未知操作」）
+  function utf16Sanitize(s) {
+    s = String(s == null ? '' : s);
+    var out = '', i, c, n;
+    for (i = 0; i < s.length; i++) {
+      c = s.charCodeAt(i);
+      if (c >= 0xD800 && c <= 0xDBFF) {
+        n = (i + 1 < s.length) ? s.charCodeAt(i + 1) : 0;
+        if (n >= 0xDC00 && n <= 0xDFFF) { out += s.charAt(i) + s.charAt(i + 1); i++; }
+        else out += '\uFFFD';
+      } else if (c >= 0xDC00 && c <= 0xDFFF) {
+        out += '\uFFFD';
+      } else {
+        out += s.charAt(i);
+      }
+    }
+    return out;
+  }
+
+  // 出站 JSON 深度清洗（v13.6）：必须在 stringify 之前——stringify 会把孤立代理项
+  // 转成 \ud83c 文本转义，之后再清洗就看不到真正的非法字符了。
+  function utf16SanitizeDeep(v, depth) {
+    if (typeof v === 'string') return utf16Sanitize(v);
+    if (v == null || typeof v !== 'object') return v;
+    if ((depth || 0) > 8) return v;
+    if (Object.prototype.toString.call(v) === '[object Array]') {
+      var arr = [];
+      for (var i = 0; i < v.length; i++) arr.push(utf16SanitizeDeep(v[i], (depth || 0) + 1));
+      return arr;
+    }
+    var o = {};
+    for (var k in v) { if (Object.prototype.hasOwnProperty.call(v, k)) o[k] = utf16SanitizeDeep(v[k], (depth || 0) + 1); }
+    return o;
+  }
+
   function normalizeEndpoint(base) {
     var b = String(base || '').trim();
     if (!b) return '';
@@ -610,7 +646,7 @@
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + apiKey
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(utf16SanitizeDeep(payload, 0)),
         signal: ctrl ? ctrl.signal : undefined
       });
     } catch (e) {
@@ -756,7 +792,7 @@
     if (Array.isArray(opts.history)) {
       opts.history.slice(-12).forEach(function (h) {
         if (!h || typeof h.content !== 'string' || !h.content.trim()) return;
-        history.push({ role: h.role === 'assistant' ? 'assistant' : 'user', content: h.content.slice(0, 600) });
+        history.push({ role: h.role === 'assistant' ? 'assistant' : 'user', content: utf16Sanitize(h.content.slice(0, 600)) });
       });
     }
     if (history.length) {

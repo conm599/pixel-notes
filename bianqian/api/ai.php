@@ -1016,8 +1016,23 @@ try {
     }
     $uid = (int)$_SESSION['user_id'];
 
-    $input = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($input)) $input = array();
+    // 请求体解析（v13.6）：对「被截断的表情符号」产生的孤立代理项转义先修复再解析。
+    // 前端 slice() 截断 emoji 会产出 \uD8xx 这类非法转义，json_decode 直接失败，
+    // 旧代码会静默降级成空 action，最终报出误导性的「未知操作」。
+    $rawInput = (string)file_get_contents('php://input');
+    $input = ($rawInput === '') ? array() : json_decode($rawInput, true);
+    if (!is_array($input) && $rawInput !== '') {
+        $repaired = preg_replace_callback(
+            '/\\u(d[89ab][0-9a-f]{2})(?!\\u[dD][c-f][0-9a-f]{2})/i',
+            function ($m) { return "\u{FFFD}"; }, $rawInput);
+        $repaired = preg_replace_callback(
+            '/(?<!\\u[dD][89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})/i',
+            function ($m) { return "\u{FFFD}"; }, $repaired);
+        $input = json_decode($repaired, true);
+    }
+    if (!is_array($input)) {
+        jsonOut(array('success' => false, 'message' => '请求数据编码异常（可能含被截断的表情符号），请刷新页面后重试'));
+    }
     $action = isset($input['action']) ? (string)$input['action'] : '';
 
     // ================= 管理员测试上游 =================

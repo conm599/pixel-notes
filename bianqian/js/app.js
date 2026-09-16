@@ -33,7 +33,7 @@
     var resp = await fetch(API_BASE, {
       method: method,
       headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
+      body: body ? jbody(body) : undefined,
       credentials: 'include',
       cache: 'no-store'
     });
@@ -57,7 +57,7 @@
         credentials: 'include',
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'check' })
+        body: jbody({ action: 'check' })
       });
       var j = null;
       try { j = JSON.parse(await r.text()); } catch (e) { j = null; }
@@ -234,6 +234,46 @@
     return el;
   }
 
+  // ---- UTF-16 安全（v13.6）----
+  // slice() 截断表情符号会产生「孤立代理项」，JSON.stringify 输出 \uD8xx 这类非法转义，
+  // PHP json_decode 直接失败 → 整个请求被丢弃（表现为「未知操作」）。出站 JSON 一律先清洗。
+  function utf16Sanitize(s) {
+    s = String(s == null ? '' : s);
+    var out = '', i, c, n;
+    for (i = 0; i < s.length; i++) {
+      c = s.charCodeAt(i);
+      if (c >= 0xD800 && c <= 0xDBFF) {           // 高位代理项：必须紧跟低位才算合法
+        n = (i + 1 < s.length) ? s.charCodeAt(i + 1) : 0;
+        if (n >= 0xDC00 && n <= 0xDFFF) { out += s.charAt(i) + s.charAt(i + 1); i++; }
+        else out += '\uFFFD';
+      } else if (c >= 0xDC00 && c <= 0xDFFF) {   // 孤立低位代理项
+        out += '\uFFFD';
+      } else {
+        out += s.charAt(i);
+      }
+    }
+    return out;
+  }
+  // 安全截断：先切再清洗（切点落在 emoji 中间也不会产出非法字符）
+  function safeSlice(str, n) { return utf16Sanitize(String(str == null ? '' : str).slice(0, n)); }
+  // 出站 JSON（所有 POST body 都走它）
+  // 注意：必须在 stringify 之前清洗——stringify 会把孤立代理项转成 \ud83c 这种文本转义，
+  // 之后再清洗就看不到真正的非法字符了。
+  function utf16SanitizeDeep(v, depth) {
+    if (typeof v === 'string') return utf16Sanitize(v);
+    if (v == null || typeof v !== 'object') return v;
+    if ((depth || 0) > 8) return v;
+    if (Object.prototype.toString.call(v) === '[object Array]') {
+      var arr = [];
+      for (var i = 0; i < v.length; i++) arr.push(utf16SanitizeDeep(v[i], (depth || 0) + 1));
+      return arr;
+    }
+    var o = {};
+    for (var k in v) { if (Object.prototype.hasOwnProperty.call(v, k)) o[k] = utf16SanitizeDeep(v[k], (depth || 0) + 1); }
+    return o;
+  }
+  function jbody(obj) { return JSON.stringify(utf16SanitizeDeep(obj, 0)); }
+
   function mkBtn(label, title) {
     var b = document.createElement('button');
     b.type = 'button';
@@ -272,7 +312,7 @@
     var resp = await fetch(FOLDER_API, {
       method: method,
       headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
+      body: body ? jbody(body) : undefined,
       credentials: 'include',
       cache: 'no-store'
     });
@@ -1297,7 +1337,7 @@
       var n = notesById[k];
       var snippet = (function () {
         var t = (n.content || '').replace(/\s+/g, ' ').trim();
-        return t.length > 80 ? t.slice(0, 77) + '...' : t;
+        return t.length > 80 ? safeSlice(t, 77) + '...' : t;
       })();
       var path = n.folder_id ? folderChain(n.folder_id).map(function (f) { return f.name; }).join(' / ') : '主页';
       return { id: n.id, title: n.title || '(无标题)', snippet: snippet, current_path: path };
@@ -1466,7 +1506,7 @@
       var resp = await fetch('api/ai.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'classify_apply', ops: ops }),
+        body: jbody({ action: 'classify_apply', ops: ops }),
         credentials: 'include',
         cache: 'no-store'
       });
@@ -1500,7 +1540,7 @@
       var resp = await fetch('api/ai.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'classify_undo' }),
+        body: jbody({ action: 'classify_undo' }),
         credentials: 'include',
         cache: 'no-store'
       });
@@ -1524,7 +1564,7 @@
       var resp = await fetch('api/ai.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'classify_status' }),
+        body: jbody({ action: 'classify_status' }),
         credentials: 'include',
         cache: 'no-store'
       });
@@ -1751,7 +1791,7 @@
     var resp = await fetch('api/ai.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: jbody(body),
       credentials: 'include',
       cache: 'no-store'
     });
@@ -1777,7 +1817,7 @@
     var resp = await fetch('api/ai.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: jbody(body),
       credentials: 'include',
       cache: 'no-store',
       signal: handlers && handlers.signal ? handlers.signal : undefined
@@ -2504,7 +2544,7 @@
   function aiChangeSummary() {
     var plan = aiReviewPlan, sel = aiReviewSelected;
     if (!plan || !plan.hunks) return '无改动';
-    function cut(t) { t = String(t == null ? '' : t).trim(); return t.length > 18 ? t.slice(0, 18) + '…' : t; }
+    function cut(t) { t = String(t == null ? '' : t).trim(); return t.length > 18 ? safeSlice(t, 18) + '…' : t; }
     var parts = [], selected = 0;
     for (var i = 0; i < plan.hunks.length; i++) {
       if (!sel[i]) continue;
@@ -3424,7 +3464,7 @@
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           cache: 'no-store',
-          body: JSON.stringify({ action: 'changepass', oldpass: oldInp.value, newpass: newInp.value })
+          body: jbody({ action: 'changepass', oldpass: oldInp.value, newpass: newInp.value })
         });
         if (resp.status === 401) { await check401(); return; }
         var r = await resp.json();
@@ -3535,7 +3575,7 @@
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           cache: 'no-store',
-          body: JSON.stringify({ action: 'check' })
+          body: jbody({ action: 'check' })
         });
         var r = await resp.json();
         if (r.logged_in && r.user && r.user.email) {
@@ -3556,7 +3596,7 @@
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         cache: 'no-store',
-        body: JSON.stringify(data)
+        body: jbody(data)
       });
       if (resp.status === 401) { await check401(); throw new Error('请先登录'); }
       return resp.json();
