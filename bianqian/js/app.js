@@ -735,7 +735,7 @@
 
     // 从 share_token 构建 share_url（参考图床 view.php 的做法，不依赖 API 返回 share_url）
     var _shareUrl = note.share_url || (note.share_token && String(note.share_token).length === 36 ? location.origin + '/share.php?t=' + note.share_token : '');
-    var shareBtn = mkBtn(_shareUrl ? '🌐' : '<i class="ic ic-link"></i>', _shareUrl ? '管理公开分享' : '生成公开分享链接');
+    var shareBtn = mkBtn(_shareUrl ? '🌐' : '<i class="ic ic-link"></i>', _shareUrl ? '管理公开分享' : '生成公开分享链接');   // 已分享用 🌐（图标集暂无 globe，先用系统 emoji）；未分享用 link 图片图标
     if (_shareUrl) { shareBtn.classList.add('btn-shared'); card._shareUrl = _shareUrl; }
     shareBtn.addEventListener('click', function () { openShareDialog(note.id, card); });
 
