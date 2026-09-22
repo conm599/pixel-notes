@@ -1743,7 +1743,7 @@
       // 同步更新卡片上的分享按钮（仅便签模式；文件夹模式的 card 是纯数据对象）
       if (card && !isFolder) {
         var sb = card.querySelector('button[title="管理公开分享"], button[title="生成公开分享链接"]');
-        if (sb) { sb.textContent = '🌐 分享'; sb.title = '管理公开分享'; sb.classList.add('btn-shared'); }
+        if (sb) { sb.textContent = '🌐'; sb.title = '管理公开分享'; sb.classList.add('btn-shared'); }
       }
       statusLink.textContent = url;
       statusInfo.textContent = fmtRemain(until);
@@ -1766,7 +1766,7 @@
       // 同步更新卡片上的分享按钮（仅便签模式）
       if (card && !isFolder) {
         var sb = card.querySelector('button[title="管理公开分享"], button[title="生成公开分享链接"]');
-        if (sb) { sb.innerHTML = '<i class="ic ic-link"></i> 分享'; sb.title = '生成公开分享链接'; sb.classList.remove('btn-shared'); }
+        if (sb) { sb.innerHTML = '<i class="ic ic-link"></i>'; sb.title = '生成公开分享链接'; sb.classList.remove('btn-shared'); }
       }
     }
 
