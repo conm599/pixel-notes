@@ -434,11 +434,11 @@ html.vt-close::view-transition-new(root) { animation: none; }
 /* 操作按钮：加大加文字，看得清 */
 .note-actions button {
   font-family: var(--font-main);
-  font-size: 10px;
+  font-size: 15px;                     /* 纯图标（文字已删）：小方块按钮，排版更清爽 */
   background: rgba(0,0,0,0.35);
   border: 2px solid currentColor;
-  padding: 7px 11px;
-  display: inline-flex; align-items: center; gap: 5px;
+  width: 34px; height: 34px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; color: inherit;
   transition: all 0.15s;
 }

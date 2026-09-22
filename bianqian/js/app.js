@@ -730,16 +730,16 @@
     meta.appendChild(mkEl('span', null, '🕐 ' + (note.updated_at || '')));
     var actions = mkEl('div', 'note-actions');
 
-    var editBtn = mkBtn('<i class="ic ic-pencil"></i> 编辑', '编辑这篇便签');
+    var editBtn = mkBtn('<i class="ic ic-pencil"></i>', '编辑这篇便签');
     editBtn.addEventListener('click', function () { openEditorForNote(note.id, card); });
 
     // 从 share_token 构建 share_url（参考图床 view.php 的做法，不依赖 API 返回 share_url）
     var _shareUrl = note.share_url || (note.share_token && String(note.share_token).length === 36 ? location.origin + '/share.php?t=' + note.share_token : '');
-    var shareBtn = mkBtn(_shareUrl ? '🌐 分享' : '<i class="ic ic-link"></i> 分享', _shareUrl ? '管理公开分享' : '生成公开分享链接');
+    var shareBtn = mkBtn(_shareUrl ? '🌐' : '<i class="ic ic-link"></i>', _shareUrl ? '管理公开分享' : '生成公开分享链接');
     if (_shareUrl) { shareBtn.classList.add('btn-shared'); card._shareUrl = _shareUrl; }
     shareBtn.addEventListener('click', function () { openShareDialog(note.id, card); });
 
-    var pinBtn = mkBtn(note.pinned ? '<i class="ic ic-pin"></i> 已顶' : '<i class="ic ic-pin"></i> 置顶', '置顶/取消置顶');
+    var pinBtn = mkBtn('<i class="ic ic-pin"></i>', note.pinned ? '取消置顶' : '置顶');
     pinBtn.addEventListener('click', function () { togglePin(card); });
 
     var colorBtn = mkBtn('<i class="ic ic-palette"></i>', '切换颜色');
@@ -750,7 +750,7 @@
     // 合并时被错误带回：按设计此按钮不展示（仅隐藏、保留代码；需恢复时删掉下面这行即可）
     moveBtn.style.display = 'none';
 
-    var delBtn = mkBtn('<i class="ic ic-trash"></i> 删除', '删除便签');
+    var delBtn = mkBtn('<i class="ic ic-trash"></i>', '删除便签');
     delBtn.addEventListener('click', function () { deleteNote(card); });
 
     actions.appendChild(editBtn);
