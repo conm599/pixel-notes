@@ -747,6 +747,8 @@
 
     var moveBtn = mkBtn('<i class="ic ic-folder"></i>', '移动到文件夹');
     moveBtn.addEventListener('click', function (e) { e.stopPropagation(); promptMoveNote(note); });
+    // 合并时被错误带回：按设计此按钮不展示（仅隐藏、保留代码；需恢复时删掉下面这行即可）
+    moveBtn.style.display = 'none';
 
     var delBtn = mkBtn('<i class="ic ic-trash"></i> 删除', '删除便签');
     delBtn.addEventListener('click', function () { deleteNote(card); });

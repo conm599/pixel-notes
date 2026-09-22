@@ -344,6 +344,7 @@ html.vt-close::view-transition-new(root) { animation: none; }
   box-shadow: 4px 4px 0 #000;
   transition: transform 0.1s, box-shadow 0.1s;
   word-break: break-word;
+  min-width: 0;   /* grid 子项必须：否则 nowrap 表格的固有宽度把卡片撑破（手机端整页横向溢出元凶） */
 }
 .note-card:hover { transform: translate(-2px,-2px); box-shadow: 6px 6px 0 #000; }
 .note-card[data-editing="1"] { transform: none; }
@@ -528,9 +529,12 @@ html, body { overflow-x: clip; max-width: 100%; }
 .md-body li.md-task { list-style: none; margin-left: -18px; }
 .md-body .md-check { color: var(--md-check-color, var(--accent2)); margin-right: 8px; }
 
+/* 表格滚动容器：手机端 Chrome 对 table 元素自身的 overflow-x 不生效，
+   必须外包一层 div 做滚动（md.js 渲染时自动包裹） */
+.md-table-wrap { overflow-x: auto; max-width: 100%; margin: 12px 0; -webkit-overflow-scrolling: touch; }
 .md-body table.md-table {
-  border-collapse: collapse; margin: 12px 0;
-  display: block; overflow-x: auto; max-width: 100%;
+  border-collapse: collapse; margin: 0;
+  display: table;
 }
 .md-body table.md-table th,
 .md-body table.md-table td {
@@ -1195,6 +1199,7 @@ html, body { overflow-x: clip; max-width: 100%; }
   overflow-y: auto;
   font-family: var(--font-body);
   font-size: 14px; line-height: 2;
+  min-width: 0;   /* flex 子项收缩：防宽表格撑破弹窗 */
 }
 .md-modal-body .note-content { max-height: none; overflow: visible; cursor: default; }
 .md-modal-body .note-content.clamped::after { display: none; }

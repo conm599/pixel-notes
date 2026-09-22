@@ -280,7 +280,7 @@
       });
     }
 
-    var out = '<table class="md-table"><thead><tr>';
+    var out = '<div class="md-table-wrap"><table class="md-table"><thead><tr>';
     cells(header).forEach(function (c, i) {
       var a = aligns[i] || '';
       out += '<th' + (a ? ' style="text-align:' + a + '"' : '') + '>' + renderInline(c) + '</th>';
@@ -294,7 +294,7 @@
       });
       out += '</tr>';
     }
-    out += '</tbody></table>';
+    out += '</tbody></table></div>';
     return { html: out, next: end };
   }
 
