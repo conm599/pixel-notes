@@ -19,7 +19,7 @@
 
 ---
 
-## 一、现行版本号（V9 基准，以模板 `?v=` 引用为准）
+## 一、现行版本号（V10 基准，以模板 `?v=` 引用为准）
 
 > ⚠️ JS/CSS **文件头注释里的版本号普遍滞后**（如 app.js 头写 v5、tts.js 头写 v3），真正生效的版本号是 PHP 模板引用处的 `?v=` 缓存穿透参数。
 
@@ -27,13 +27,13 @@
 
 | 文件 | 版本 | 职责 |
 |---|---|---|
-| js/app.js | **v92** | 前端总交互：编辑面板、AI 设置/编辑流（SSE 解析）、图床联动初始化、保存防竞态、文件夹分享角标即时同步 |
+| js/app.js | **v107** | 前端总交互：编辑面板、AI 设置/编辑流（SSE 解析）、图床联动初始化、保存防竞态、文件夹分享角标即时同步 |
 | js/md.js | **v42** | PixelMD 渲染器（表格/任务列表/高亮/上下标/脚注/媒体白名单；AI 图片尺寸 `<img width>` 支持，px 后缀容错） |
-| css/pixel.css | **v72**（全站统一） | 粉色像素风设计系统（含像素图标三态、文件夹分享角标） |
+| css/pixel.css | **v88**（全站统一） | 粉色像素风设计系统（含像素图标三态、文件夹分享角标） |
 | css/icons.css | **v5** | 像素图标类名表（v1 实心 / v2 线稿双套 WebP，50+ 语义） |
 | js/iconset.js | **v1** | 图标三态切换（混合/经典实心/线稿，父域 Cookie `pn_iconset` 两站互通） |
 | js/selection.js | **v6** | Windows 式多选/剪贴板（鼠标长按 500ms、触屏 700ms） |
-| js/ai-direct.js | **v16** | 浏览器直连 AI（协议 v9：SKIP 锚匹配 + 空闲看门狗） |
+| js/ai-direct.js | **v24** | 浏览器直连 AI（协议 v9：SKIP 锚匹配 + 空闲看门狗） |
 | js/imgbridge.js | **v4** | 便签↔图床图片联动桥（唯一联动入口） |
 | js/tts.js | **v11** | 朗读工坊（语速/音色/卡拉OK字幕/SRT/Canvas 合成字幕视频） |
 | js/auth.js | **v9** | 登录/注册页脚本 |
@@ -41,7 +41,7 @@
 | js/tutorial-data.js | v1 | 教程数据（`tools/build-tutorial.js` 生成，勿手改） |
 | js/Sortable.min.js | 1.15.2 | 第三方拖拽排序 |
 | protocol.md | **v9** | AI 编辑协议（保留 v5→v9 全部历史章节） |
-| api/ai.php | 1942 行 | AI 核心（edit + classify 整理 Agent + 密钥池 + SSRF 防护 + 图片尺寸模板） |
+| api/ai.php | 2616 行 | AI 核心（edit + classify 整理 Agent + 密钥池 + SSRF 防护 + 图片尺寸模板） |
 | api/auth.php | 454 行 | 注册/登录/验证码/改密/注销账号，三层限流 |
 | api/notes.php | 404 行 | 便签 CRUD/分享/排序 + 图床引用同步 + 2000 字摘要传输 |
 | api/folders.php | 325 行 | 文件夹树（嵌套/环检测/删除内容上移 + 分享状态） |
@@ -52,7 +52,7 @@
 | 文件 | 版本 | 职责 |
 |---|---|---|
 | js/dashboard.js | **v30** | 控制台主逻辑（主备 API 降级、WebP 压缩、上传队列并发 2、批量操作、文件夹分享丢包对账） |
-| css/pixel-blue.css | **v20** | 像素蓝设计系统（Press Start 2P、硬边框、扫描线） |
+| css/pixel-blue.css | **v19** | 像素蓝设计系统（Press Start 2P、硬边框、扫描线） |
 | js/spa.js | **v12** | SPA 视图引擎 v2（list 一次拉全量、客户端过滤、切夹零请求、文件夹分享角标） |
 | js/selection.js | **v10** | Windows 桌面式多选（自便签移植，剪贴板 sessionStorage 持久化） |
 | js/view.js | **v3** | 图片详情页交互 |
@@ -64,6 +64,16 @@
 - ✏️ 勘误：根 README v8.2 写 dashboard.js v25 → 实际 **v26**；旧便签 README 声称「长按 400ms」→ 实际鼠标 **500ms / 触屏 700ms**；旧便签 README 写协议 v7 → 实际 **v9**
 - ➕ 补齐旧文档缺失的版本：tts.js v11 / auth.js v9 / admin.js v4
 - ➕ 补齐旧文档缺失的章节：便签↔图床图片联动、TTS 朗读工坊、备份系统、/admini 配置中心、动态域名体系
+
+### V10 新增（2026-09-23）
+
+- 🖥 **便签全屏编辑器**：新建/编辑共用编辑器从页面内联面板升级为全屏覆盖层（顶栏 + ✕ 关闭 + 淡入淡出），移动端一致体验
+- 🎞 **View Transitions 灵动岛动效**：便签卡片 ↔ 详情弹窗之间的 morph 过渡（原生 `document.startViewTransition`，不支持的浏览器自动降级）；修复两处深层 bug——共存型 morph 重复 `view-transition-name` 被浏览器 abort（`invalid state`）、新旧 CSS 规则同优先级静默覆盖（新组件样式统一置文件末尾 + 提权选择器，附文件内注释警示）
+- 💬 **AI 编辑弹窗对话式重构**：历史记录区 + 底部输入条（输入框自动增高、撤回/图片/发送三钮）；AI 设置入口迁入导航栏设置菜单
+- 🛠 **AI 工具链修复**：`read_note` 恒失败 `invalid_id`——提示词注入当前便签 id、前端补传 `noteId`、服务端 id 容错与回退当前便签；InputBar 图片按钮改「先弹文件选择器 → 图床上传链路」
+- 📊 **Markdown 表格横向滑动**：`white-space: nowrap`，窄卡片/访客分享页内不再逐字竖排挤压
+- 🎨 **图标系统 v1/v2 + 字体自托管**：Press Start 2P 本地托管（`assets/fonts/`），CSP 收紧移除 Google Fonts 依赖
+- 🔍 **AImcp 子项目**：仓库内置 MCP 检索服务（PHP；MySQL/JSON 双存储 + 嵌入/重排 + 管理页 + install.sql）
 
 ---
 

@@ -1,0 +1,4 @@
+config.php
+data/memory.json
+data/*.lock
+data/search_log.jsonl

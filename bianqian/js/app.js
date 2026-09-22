@@ -7,6 +7,47 @@
 (function () {
   'use strict';
 
+  // ============ View Transitions 工具：卡片 ↔ 详情弹窗 ↔ 全屏编辑器 连续 morph ============
+  // sourceEl 在旧视图命名 → mutate() 同步改 DOM → targetEl 在新视图接管同名 → 浏览器自动放大/缩小过渡
+  // 浏览器不支持（startViewTransition 不存在）时退化为直接切换（原行为），零风险降级
+  var PNVT = (function () {
+    var NAME = 'pn-note';
+    function supported() { return typeof document.startViewTransition === 'function'; }
+    function morph(sourceEl, mutate, targetEl) {
+      if (!supported()) { mutate(); return; }
+      if (sourceEl && sourceEl.style) sourceEl.style.viewTransitionName = NAME;
+      // 灵动岛模式：root 层立即切换（页面瞬时就位，无 cross-fade），pn-note 层独立拉伸/缩回
+      document.documentElement.classList.add('vt-close');
+      var cleaned = false;
+      function cleanup() {
+        if (cleaned) return; cleaned = true;
+        document.documentElement.classList.remove('vt-close');
+        if (sourceEl && sourceEl.style) sourceEl.style.viewTransitionName = '';
+        if (targetEl && targetEl.style) targetEl.style.viewTransitionName = '';
+      }
+      var vt;
+      try {
+        vt = document.startViewTransition(function () {
+          // 旧快照已在 startViewTransition 时捕获，mutate 后立刻清源命名——
+          // 否则共存型 morph（源卡片 + 新目标同名）会因重复 view-transition-name 被 abort
+          if (sourceEl && sourceEl.style) sourceEl.style.viewTransitionName = '';
+          mutate();
+          if (targetEl && targetEl.style) targetEl.style.viewTransitionName = NAME;
+        });
+      } catch (e) {
+        cleanup(); mutate(); return;
+      }
+      // 保险丝：transition 挂起/僵死时强制收尾，避免残留状态拖垮页面（曾出现浏览器无响应）
+      var guard = setTimeout(function () {
+        try { vt.skipTransition(); } catch (e) {}
+        cleanup();
+      }, 700);
+      vt.finished.finally(function () { clearTimeout(guard); cleanup(); });
+      return vt;
+    }
+    return { morph: morph, supported: supported, NAME: NAME };
+  })();
+
   var API_BASE = 'api/notes.php';
   var FOLDER_API = 'api/folders.php';
   var notesGrid = document.getElementById('notesGrid');
@@ -676,9 +717,9 @@
       if (window.PixelSelection && window.PixelSelection.isActive()) return;   // 选择模式：点击不打开
       if (e.target && e.target.closest && e.target.closest('a')) return;
       if (nd.classList.contains('clamped')) {
-        openModal(note.id, card);       // 长文 → 弹窗阅读
+        openModal(note.id, card);       // 长文 → 弹窗阅读（卡片 morph 放大）
       } else {
-        openEditorForNote(note.id);     // 短文 → 大编辑器
+        openEditorForNote(note.id, card); // 短文 → 全屏编辑器（卡片 morph 放大）
       }
     });
     return nd;
@@ -690,7 +731,7 @@
     var actions = mkEl('div', 'note-actions');
 
     var editBtn = mkBtn('<i class="ic ic-pencil"></i> 编辑', '编辑这篇便签');
-    editBtn.addEventListener('click', function () { openEditorForNote(note.id); });
+    editBtn.addEventListener('click', function () { openEditorForNote(note.id, card); });
 
     // 从 share_token 构建 share_url（参考图床 view.php 的做法，不依赖 API 返回 share_url）
     var _shareUrl = note.share_url || (note.share_token && String(note.share_token).length === 36 ? location.origin + '/share.php?t=' + note.share_token : '');
@@ -767,19 +808,31 @@
 
   function hideEditor() {
     editingId = null;
-    newNoteForm.classList.remove('edit-mode');
-    newNoteForm.style.display = 'none';
-    newTitle.value = '';
-    newContent.value = '';
-    newPreview.style.display = 'none';
-    newPreview.innerHTML = '';
-    if (btnPreviewNew) btnPreviewNew.innerHTML = '<i class="ic ic-eye"></i> 预览';
-    if (editorMode) editorMode.textContent = '';
-    btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存';
-    // 取消卡片高亮
-    document.querySelectorAll('.note-card.editing-source').forEach(function (c) {
-      c.classList.remove('editing-source');
-    });
+    var doHide = function (guardClose) {
+      // 淡出期间又被重新打开（closing 已被 openEditorForNote/btnNewNote 清掉）：放弃本次关闭
+      if (guardClose && !newNoteForm.classList.contains('closing')) return;
+      newNoteForm.classList.remove('edit-mode');
+      newNoteForm.classList.remove('closing');
+      newNoteForm.style.display = 'none';
+      newTitle.value = '';
+      newContent.value = '';
+      newPreview.style.display = 'none';
+      newPreview.innerHTML = '';
+      if (btnPreviewNew) btnPreviewNew.innerHTML = '<i class="ic ic-eye"></i> 预览';
+      if (editorMode) editorMode.textContent = '';
+      btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存';
+      // 取消卡片高亮
+      document.querySelectorAll('.note-card.editing-source').forEach(function (c) {
+        c.classList.remove('editing-source');
+      });
+    };
+    // 关闭 = 干净淡出（编辑器不再参与 View Transition：全屏 VT 快照曾导致浏览器无响应）
+    if (newNoteForm.style.display === 'block') {
+      newNoteForm.classList.add('closing');
+      setTimeout(function () { doHide(true); }, 150);
+    } else {
+      doHide(false);
+    }
   }
 
   // 新建模式
@@ -791,8 +844,7 @@
       if (editorMode) editorMode.innerHTML = '<i class="ic ic-plus"></i> 新建便签';
       btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存';
       setColorPicker('yellow');
-      newNoteForm.style.display = 'block';
-      newNoteForm.scrollIntoView({ behavior: 'smooth' });
+      newNoteForm.style.display = 'block';   // 全屏覆盖层，CSS 进入动画（淡入上浮）
       newTitle.focus();
     } else {
       hideEditor();
@@ -800,15 +852,23 @@
   });
 
   // 编辑模式：打开同一个大面板并填充原文（摘要便签先按需拉全文）
-  async function openEditorForNote(id) {
+  async function openEditorForNote(id, sourceCard) {
     var note = notesById[id];
     if (!note) return;
-    closeModal();
     editingId = id;
+
+    // 显示全屏编辑器（CSS 淡入上浮进入动画；不再参与 View Transition——
+    // 全屏 VT 快照曾导致浏览器无响应，稳定优先）
+    var showEditor = function () {
+      closeModal(true);   // 静默移除详情弹窗（若有）
+      newNoteForm.classList.remove('edit-mode');
+      newNoteForm.classList.remove('closing');
+      newNoteForm.style.display = 'block';
+    };
+    showEditor();
+
     if (note._more) {
       // 首屏只传了 2000 字摘要：先亮出面板给加载反馈，拉到全文后再填充
-      newNoteForm.classList.remove('edit-mode');
-      newNoteForm.style.display = 'block';
       newTitle.value = note.title;
       newContent.value = '';
       if (editorMode) editorMode.textContent = '⏳ 正在加载全文…';
@@ -840,12 +900,14 @@
     setIconText(editorMode, 'pencil', '正在编辑：' + (note.title || '无标题'));
     btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存修改';
     newNoteForm.classList.add('edit-mode');
-    newNoteForm.style.display = 'block';
-    newNoteForm.scrollIntoView({ behavior: 'smooth' });
     setTimeout(function () { newContent.focus(); }, 250);
   }
 
   btnCancelNew.addEventListener('click', hideEditor);
+
+  // 全屏编辑器右上角 ✕ 关闭
+  var editorCloseBtn = document.getElementById('editorClose');
+  if (editorCloseBtn) editorCloseBtn.addEventListener('click', hideEditor);
 
   newColorPicker.addEventListener('click', function (e) {
     var dot = e.target.closest('.color-dot');
@@ -1959,6 +2021,23 @@
 
   // 拉取服务器状态：分配的密钥 + 同步的偏好（登录后调用一次）
   var aiRemoteState = null;
+  var aiUsageCache = null;   // 最近一次用量查询结果（AI 弹窗与 AI 设置共用显示）
+  // 用量/模式说明文案（AI 设置弹窗内展示，不占 AI 对话界面）
+  function aiUsageText() {
+    var p = loadAiPrefs();
+    if (aiRemoteState && aiRemoteState.is_admin && p.mode !== 'own') return '👑 管理员模式：直接使用平台上游，无需密钥、不限量';
+    if (p.mode === 'own' && p.ownProxy) return '🛰️ 直连模式：请求由浏览器直接发往你的透明代理，不经过平台、不限量';
+    if (aiUsageCache) {
+      var src = (aiRemoteState && aiRemoteState.assigned_key) ? '分配密钥' : '平台密钥';
+      return '📊 ' + src + '今日已用 ' + aiUsageCache.used + ' / ' + (aiUsageCache.limit > 0 ? aiUsageCache.limit : '∞') + '（北京时间 8:00 重置）· 当前模式：' + (p.mode === 'own' ? '我自己的 Key' : '平台密钥');
+    }
+    if (aiRemoteState && aiRemoteState.assigned_key) {
+      var a = aiRemoteState.assigned_key;
+      return '📊 分配密钥今日已用 ' + a.used + ' / ' + (a.daily_limit > 0 ? a.daily_limit : '∞') + '（北京时间 8:00 重置）';
+    }
+    if (p.mode !== 'own' && p.platformKey) return '⏳ 正在查询密钥用量…';
+    return '📊 尚无用量记录 · 当前模式：' + (p.mode === 'own' ? '我自己的 Key' : '平台密钥');
+  }
   async function refreshAiRemote(force) {
     try {
       var r = await aiApi({ action: 'prefs', op: 'get' });
@@ -2089,6 +2168,11 @@
     head.appendChild(closeBtn);
 
     var body = mkEl('div', 'md-modal-body');
+
+    // 用量/模式状态（从 AI 对话界面迁来这里展示）
+    var usageRow = mkEl('div', 'ai-set-usage');
+    usageRow.textContent = aiUsageText();
+    body.appendChild(usageRow);
 
     // 模式选择
     var modeRow = mkEl('div', 'ai-set-row');
@@ -2886,24 +2970,16 @@
     var head = mkEl('div', 'md-modal-head');
     var headLeft = mkEl('div', 'md-modal-head-left');
     headLeft.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-robot"></i> AI 编辑便签'));
-    var setBtn = mkBtn('<i class="ic ic-gear"></i> AI 设置');
-    setBtn.className = 'btn btn-outline btn-xs ai-open-settings';
-    headLeft.appendChild(setBtn);
     head.appendChild(headLeft);
     var closeBtn = mkBtn('✖ 关闭');
     closeBtn.className = 'md-modal-close';
     closeBtn.addEventListener('click', closeAiDialog);
     head.appendChild(closeBtn);
-    setBtn.addEventListener('click', function () {
-      openAiSettings(function () { renderUsage(); });
-    });
 
-    var body = mkEl('div', 'md-modal-body');
+    var body = mkEl('div', 'md-modal-body ai-chat-body');
+    var chatLog = mkEl('div', 'ai-chat-log');   // 历史记录区（大区域，滚动）
 
-    // ---- 输入态 ----
-    var hint = mkEl('div', 'ai-hint');
-    hint.textContent = '描述你想让 AI 对编辑器里的便签做什么。AI 默认只做局部修改（链接、嵌入内容不会被动到），结果会先展示差异对比，确认采纳后才会覆盖编辑器。';
-
+    // ---- 输入态（界面保持简洁：引导语由输入框 placeholder 承担，用量信息在 AI 设置里） ----
     var usageBar = mkEl('div', 'ai-usage');
 
     // 多轮会话记录（可见上下文）
@@ -2911,32 +2987,12 @@
     convBox.style.display = 'none';
 
     function renderUsage(u) {
-      var p = loadAiPrefs();
-      if (u) lastUsage = u;
-      if (aiRemoteState && aiRemoteState.is_admin && p.mode !== 'own') {
-        usageBar.textContent = '👑 管理员模式：直接使用平台上游，无需密钥、不限量';
-        return;
-      }
-      if (p.mode === 'own' && p.ownProxy) {
-        usageBar.textContent = '🛰️ 直连模式：请求由浏览器直接发往你的透明代理，不经过平台、不限量';
-        return;
-      }
-      if (lastUsage) {
-        var src = (aiRemoteState && aiRemoteState.assigned_key) ? '分配密钥' : '平台密钥';
-        usageBar.textContent = '📊 ' + src + '今日已用 ' + lastUsage.used + ' / ' + (lastUsage.limit > 0 ? lastUsage.limit : '∞') + '（北京时间 8:00 重置）· 当前模式：' + (p.mode === 'own' ? '我自己的 Key' : '平台密钥');
-      } else if (aiRemoteState && aiRemoteState.assigned_key) {
-        var a = aiRemoteState.assigned_key;
-        usageBar.textContent = '📊 分配密钥今日已用 ' + a.used + ' / ' + (a.daily_limit > 0 ? a.daily_limit : '∞') + '（北京时间 8:00 重置）';
-      } else if (p.mode !== 'own' && p.platformKey) {
-        usageBar.textContent = '⏳ 正在查询密钥用量…';
-      } else {
-        usageBar.textContent = '📊 尚无用量记录 · 当前模式：' + (p.mode === 'own' ? '我自己的 Key' : '平台密钥');
-      }
+      if (u) aiUsageCache = u;
+      usageBar.textContent = aiUsageText();   // 用量文案统一为公共函数；此元素不再展示（用量移入 AI 设置）
     }
-    var lastUsage = null;
 
     var ta = mkEl('textarea', 'ai-instruction');
-    ta.placeholder = '例如：\n· 帮我润色这段文字并修正错别字\n· 把这篇笔记整理成待办清单\n· 翻译成英文\n· 内容是空的，帮我写一篇关于 XX 的便签';
+    ta.placeholder = '把需求告诉 AI';
     ta.setAttribute('maxlength', '2000');
 
     var status = mkEl('div', 'ai-status');
@@ -3053,29 +3109,27 @@
     function showResultMode() {
       hideStream();
       ta.value = '';   // 聊天式：这一轮已发出并进入审阅，清空输入框方便直接写下一句
-      hint.style.display = 'none';
       ta.style.display = 'none';
       status.style.display = 'none';
-      runBtn.style.display = 'none';
+      composer.style.display = 'none';
       openAiReview(aiResult, { onClose: showInputMode, onFinish: closeAiDialog });
     }
 
     function showInputMode() {
-      hint.style.display = '';
       ta.style.display = '';
       ta.disabled = false;
       status.style.display = 'none';
-      runBtn.style.display = '';
+      composer.style.display = '';
+      syncSend(false);
     }
 
     // 澄清提问态：AI 拿不准时逐题展示输入框，回答后带历史继续（轮数不限）
     function showClarifyMode(questions, existingRounds) {
       hideClarify();
-      hint.style.display = 'none';
       ta.style.display = 'none';
       ta.disabled = true;
       status.style.display = 'none';
-      runBtn.style.display = 'none';
+      composer.style.display = 'none';
       var roundNo = (existingRounds.length + 1);
       var tip = mkEl('div', 'ai-clarify-tip');
       tip.textContent = '🤔 AI 说它还拿不准，需要先向你确认 ' + questions.length + ' 个问题（第 ' + roundNo + ' 轮问询）。回答后继续生成；不想答了可点取消。';
@@ -3146,6 +3200,7 @@
         showToast('⚠️ 请先描述你想让 AI 做什么', 'error');
         ta.focus();
         runBtn.disabled = false;
+        syncSend(false);
         return;
       }
       if (needPolicy()) {
@@ -3154,14 +3209,13 @@
       }
       var prefs = loadAiPrefs();
       runBtn.disabled = true;
-      runBtn.style.display = '';
+      syncSend(true);
       ta.disabled = true;
       ta.style.display = '';
-      runBtn.innerHTML = '<i class="ic ic-robot-pink ic-spin"></i> AI 编辑中';
       var dots = 0;
       var dotTimer = setInterval(function () {
         dots = (dots + 1) % 4;
-        runBtn.innerHTML = '<i class="ic ic-robot-pink ic-spin"></i> AI 编辑中' + new Array(dots + 2).join('.');
+        syncSend(true);
       }, 400);
       status.style.display = 'none';
       var staleErr = body.querySelector('.ai-err-card');
@@ -3175,8 +3229,9 @@
         aiAbortCtrl = null;
         if (!ok && !document.querySelector('.policy-modal')) {
           runBtn.disabled = false;
+          syncSend(false);
           ta.disabled = false;
-          runBtn.innerHTML = '<i class="ic ic-robot-pink"></i> 开始编辑';
+          syncSend(false);
         }
       }
       // 错误统一成低调卡片（kind 归一），替代满屏红框
@@ -3195,8 +3250,9 @@
           clearInterval(dotTimer);
           aiAbortCtrl = null;
           runBtn.disabled = false;
+          syncSend(false);
           ta.disabled = false;
-          runBtn.innerHTML = '<i class="ic ic-robot-pink"></i> 开始编辑';
+          syncSend(false);
           setPhaseText(streamPhase, '⏹️ 已停止（保留已生成内容供参考）');
           showAiError('已停止生成', 0);
           return;
@@ -3271,6 +3327,7 @@
         showStream('🤖 正在生成…');
         var r = await aiApiStream({
           action: 'edit',
+          noteId: (typeof editingId === 'number' && editingId > 0) ? editingId : 0,
           title: newTitle.value,
           content: newContent.value,
           instruction: instruction,
@@ -3324,12 +3381,13 @@
       }
     }
 
-    // 底栏（旧内嵌结果态的 foot 声明随移除块一起被清掉，这里按 v13 重新声明：开始编辑 / 关闭）
-    var foot = mkEl('div', 'md-modal-foot');
+    // 对话式布局（用户草图）：以上全在历史记录区，底部只留输入条。
+    // runBtn 不在 DOM 中，仅作流程触发器与状态载体；发送键显示流程状态（思考中 spinner）。
     var runBtn = mkBtn('<i class="ic ic-robot-pink"></i> 开始编辑');
     runBtn.className = 'btn btn-primary btn-xs';
-    var undoBtn = mkBtn('<i class="ic ic-recycle"></i> 撤回上一步');
-    undoBtn.className = 'btn btn-outline btn-xs';
+    var undoBtn = mkBtn('<i class="ic ic-recycle"></i>', '撤回上一步 AI 改动');
+    undoBtn.className = 'ai-icon-btn';
+    undoBtn.type = 'button';
     undoBtn.addEventListener('click', function () {
       if (!aiUndoLast()) return;
       aiConvNote('↩️ 已撤回上一步 AI 写入');
@@ -3337,9 +3395,6 @@
       aiHistory.push({ role: 'assistant', content: '（用户撤回了上一步改动）' });
       showToast('↩️ 已撤回上一步 AI 改动', 'success');
     });
-    var cancelBtn = mkBtn('<i class="ic ic-checkall"></i> 完成');
-    cancelBtn.className = 'btn btn-outline btn-xs';
-    var footHint = mkEl('span', 'md-hint', 'AI 处理可能需要十几秒');
 
     runBtn.addEventListener('click', function () { runAiFlow([]); });
 
@@ -3350,32 +3405,61 @@
       }
     });
 
-    cancelBtn.addEventListener('click', closeAiDialog);
+    // 输入框自动增高：单行 46px 起步，随内容长高（封顶 160px 后内部滚动）
+    ta.addEventListener('input', function () {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight + 2, 160) + 'px';
+    });
 
-    foot.appendChild(runBtn);
-    foot.appendChild(undoBtn);
-    foot.appendChild(cancelBtn);
-    foot.appendChild(footHint);
+    // 发送键状态同步：流程忙碌 = spinner，空闲 = 发送图标
+    var sendBtn;
+    function syncSend(busy) {
+      if (!sendBtn) return;
+      if (busy) { sendBtn.disabled = true; sendBtn.innerHTML = '<i class="ic ic-robot-pink ic-spin"></i>'; }
+      else { sendBtn.disabled = false; sendBtn.innerHTML = '<i class="ic ic-send"></i>'; }
+    }
 
-    // 底部对话输入条（输入框 + 发送钮）
+    // 底部输入条：输入框 + 右下（撤回 / 图片 / 发送）——图片走图床联动插入直链
     var composer = mkEl('div', 'ai-composer');
+    var composerActions = mkEl('div', 'ai-composer-actions');
+    var imgBtn = mkBtn('<i class="ic ic-image"></i>', '插入图片（上传到图床）');
+    imgBtn.className = 'ai-icon-btn';
+    imgBtn.type = 'button';
+    imgBtn.addEventListener('click', function () {
+      if (typeof ImgBridge === 'undefined') { showToast('❌ 图床联动模块未加载', 'error'); return; }
+      // 先弹原生文件选择器，拿到 file 再走 ImgBridge 上传链路；
+      //（ImgBridge.insert(ta) 不含选文件逻辑，直接调用只会闪一下「上传中」占位符再被删掉）
+      var inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'image/*';
+      // 手机 Chrome：未挂载到 DOM 的 <input type=file> 偶发 click 不振起原生选择器 → 挂上再点
+      inp.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;';
+      document.body.appendChild(inp);
+      inp.addEventListener('change', function () {
+        var f = inp.files && inp.files[0];
+        inp.remove();
+        if (f) ImgBridge.insert(ta, f);
+      });
+      inp.click();
+    });
+    composerActions.appendChild(undoBtn);
+    composerActions.appendChild(imgBtn);
     composer.appendChild(ta);
-    var sendBtn = mkBtn('<i class="ic ic-send"></i>', '发送（Ctrl+Enter）');
+    sendBtn = mkBtn('<i class="ic ic-send"></i>', '发送（Ctrl+Enter）');
     sendBtn.className = 'ai-send';
     sendBtn.type = 'button';
     sendBtn.addEventListener('click', function () { runBtn.click(); });
-    composer.appendChild(sendBtn);
+    composerActions.appendChild(sendBtn);
+    composer.appendChild(composerActions);
 
+    chatLog.appendChild(convBox);
+    chatLog.appendChild(streamBox);
+    chatLog.appendChild(status);
+    chatLog.appendChild(clarifyWrap);
+    body.appendChild(chatLog);
+    body.appendChild(composer);
     modal.appendChild(head);
-    body.appendChild(hint);
-    body.appendChild(usageBar);
-    body.appendChild(convBox);
-    body.appendChild(status);
-    body.appendChild(streamBox);
-    body.appendChild(clarifyWrap);
     modal.appendChild(body);
-    modal.appendChild(composer);
-    modal.appendChild(foot);
     overlay.appendChild(modal);
     overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) closeAiDialog(); });
     document.body.appendChild(overlay);
@@ -3925,6 +4009,12 @@
     ImgBridge.manage();
   });
 
+  // AI 设置入口（导航栏设置菜单，替代原 AI 弹窗顶栏入口——弹窗保持简洁）
+  var btnAiSettings = document.getElementById('btnAiSettings');
+  if (btnAiSettings) btnAiSettings.addEventListener('click', function () {
+    openAiSettings(function () {});
+  });
+
   // ============== 渲染强调色自定义（设置菜单入口，存 localStorage） ==============
   var MD_COLORS_KEY = 'pixel_notes_md_colors';
 
@@ -4082,6 +4172,7 @@
   var modalEscHandler = null;
   // 媒体元素领养：弹窗复用卡片里已加载的 <audio>/<video>，避免重新加载
   var modalAdopt = null;
+  var modalSourceCard = null;   // 当前详情弹窗的源卡片（关闭时 morph 缩回原位）
 
   function restoreAdoptedPlayers() {
     if (!modalAdopt) return;
@@ -4091,20 +4182,33 @@
     modalAdopt = null;
   }
 
-  function closeModal() {
-    restoreAdoptedPlayers();
+  function closeModal(quiet) {
     var ov = document.querySelector('.md-modal-overlay');
-    if (ov) ov.remove();
-    if (modalEscHandler) {
-      document.removeEventListener('keydown', modalEscHandler, true);
-      modalEscHandler = null;
+    if (!ov) { restoreAdoptedPlayers(); return; }
+    var doClose = function () {
+      restoreAdoptedPlayers();
+      if (ov.parentNode) ov.remove();
+      if (modalEscHandler) {
+        document.removeEventListener('keydown', modalEscHandler, true);
+        modalEscHandler = null;
+      }
+    };
+    // 非静默关闭：弹窗 morph 缩回源卡片（灵动岛原路径返回；root 切换由 morph 内部处理）；源卡片已不在 DOM 时退化为淡出
+    if (!quiet && PNVT.supported()) {
+      var modalEl = ov.querySelector('.md-modal');
+      var srcCard = modalSourceCard;
+      PNVT.morph((modalEl && modalEl.isConnected) ? modalEl : null, doClose, srcCard);
+    } else {
+      doClose();
     }
+    modalSourceCard = null;
   }
 
   function openModal(id, card) {
     var note = notesById[id];
     if (!note) return;
-    closeModal();
+    closeModal(true);   // 静默清理旧弹窗（正向 morph 由本次 VT 接管）
+    modalSourceCard = card || null;
 
     var overlay = mkEl('div', 'md-modal-overlay');
     var modal = mkEl('div', 'md-modal');
@@ -4151,8 +4255,7 @@
     foot.appendChild(pinInfo);
 
     editBtn.addEventListener('click', function () {
-      closeModal();
-      openEditorForNote(id);
+      openEditorForNote(id, modalSourceCard);   // 弹窗 → 全屏编辑器：morph 接管（openEditorForNote 内静默移除弹窗）
     });
     delBtn.addEventListener('click', function () { deleteNote(card); });
 
@@ -4168,7 +4271,16 @@
     modalEscHandler = function (e) { if (e.key === 'Escape') closeModal(); };
     document.addEventListener('keydown', modalEscHandler, true);
 
-    document.body.appendChild(overlay);
+    // 卡片 → 详情弹窗：View Transition 原位放大（无源卡片时直接弹出）
+    // 注意：modal 作为 targetEl 传入，由 morph 的 cleanup 统一清命名——
+    // 否则弹窗上的 pn-note 残留会让后续 morph（如弹窗→编辑器）因重复命名被 abort
+    if (modalSourceCard && modalSourceCard.isConnected && PNVT.supported()) {
+      PNVT.morph(modalSourceCard, function () {
+        document.body.appendChild(overlay);
+      }, modal);
+    } else {
+      document.body.appendChild(overlay);
+    }
   }
 
   // ============== 置顶 / 换色 / 删除 ==============

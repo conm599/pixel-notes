@@ -583,7 +583,7 @@ function aiEditApplyReplace(&$work, $search, $replace, &$how) {
     return array('ok' => false, 'best' => aiEditBestMatch($work, $search));
 }
 
-function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid) {
+function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid, $curNoteId = 0) {
     $jp = defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0;
     $excerpt = function () use ($work) {
         $len = function_exists('mb_strlen') ? mb_strlen($work, 'UTF-8') : strlen($work);
@@ -636,11 +636,11 @@ function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid) {
             $alias = array('list_folders' => 'list_folder', 'list_folder' => 'list_folder', 'read_note' => 'read_note');
             $rn = isset($alias[$name]) ? $alias[$name] : (string)$name;
             if ($rn === 'list_folder' && !isset($args['path'])) $args['path'] = '主页';
-            return aiRunTool($rn, $args, $pdo, $uid);
+            return aiRunTool($rn, $args, $pdo, $uid, $curNoteId);
     }
 }
 
-function aiRunTool($name, $args, $pdo, $uid) {
+function aiRunTool($name, $args, $pdo, $uid, $curNoteId = 0) {
     switch ((string)$name) {
         case 'list_folder': {
             $path = isset($args['path']) ? trim((string)$args['path']) : '';
@@ -678,8 +678,11 @@ function aiRunTool($name, $args, $pdo, $uid) {
             ), JSON_UNESCAPED_UNICODE);
         }
         case 'read_note': {
-            $nid = isset($args['id']) ? (int)$args['id'] : 0;
-            if ($nid <= 0) return json_encode(array('error' => 'invalid_id'), JSON_UNESCAPED_UNICODE);
+            // id 容错：支持 "#5"/"5 " 等写法；AI 漏传或猜错时回退「当前正在编辑的便签」
+            $nid = 0;
+            if (isset($args['id'])) $nid = (int)preg_replace('/[^0-9]/', '', (string)$args['id']);
+            if ($nid <= 0 && $curNoteId > 0) $nid = (int)$curNoteId;
+            if ($nid <= 0) return json_encode(array('error' => 'invalid_id', 'hint' => '请先调用 list_folders 查询便签 id，再带 id 重试'), JSON_UNESCAPED_UNICODE);
             $st = $pdo->prepare("SELECT title, content FROM pn_notes WHERE id = ? AND user_id = ?");
             $st->execute(array($nid, $uid));
             $row = $st->fetch();
@@ -1918,6 +1921,8 @@ try {
         $title = isset($input['title']) ? trim((string)$input['title']) : '';
         $content = isset($input['content']) ? (string)$input['content'] : '';
         $instruction = isset($input['instruction']) ? trim((string)$input['instruction']) : '';
+        // 当前正在编辑的便签 id（前端传；read_note 漏 id 时回退用，也注入提示词）
+        $curNoteId = isset($input['noteId']) ? (int)$input['noteId'] : 0;
         // 澄清问答历史：[{q, a}, ...]，轮数不限（人工熔断），每轮 q/a 限长；最多保留 10 轮防滥用
         $clarifyRounds = array();
         $cr = (isset($input['clarifyRounds']) && is_array($input['clarifyRounds'])) ? $input['clarifyRounds'] : array();
@@ -2085,7 +2090,8 @@ try {
             . "replace_text {old_string, new_string} —— 局部替换（默认首选）：old_string 必须逐字复制便签当前内容且唯一，不唯一就带上前一行或后一行；new_string 留空 = 删除该片段。\n"
             . "append_text {text} —— 追加到便签末尾（用户常要求「往后加」，优先用它；不改动已有内容）。\n"
             . "write_note {content} —— 整篇重写（仅整篇翻译/整体重构；必须给完整内容，严禁省略占位）。\n"
-            . "read_note {id} / list_folders {path} —— 只读查看（当前便签内容已给你，一般无需读）。\n"
+            . "read_note {id} / list_folders {path} —— 只读查看（当前便签内容已给你，一般无需读" . ($curNoteId > 0 ? "；读取当前便签用 id=" . $curNoteId : "") . "）。
+"
             . "ask_user {questions:[...]} —— 指令有歧义或缺信息时提问（最多 3 个）。\n"
             . "finish {} —— 所有改动完成后必须调用，提交结果。\n"
             . "【编辑规则】只输出改动、不要复制大段未变内容；同一处的多次改动用多个工具调用按顺序做；工具返回错误（not_found/ambiguous）时，照抄返回的 did_you_mean 片段修正 old_string 重试，已成功的改动不要重发；严禁因为一次失败就改用整篇重写。\n"
@@ -2334,7 +2340,7 @@ try {
                                             'content' => json_encode(array('ok' => false, 'error' => 'empty_questions'), JSON_UNESCAPED_UNICODE));
                         continue;
                     }
-                    $tOut = aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid);
+                    $tOut = aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid, $curNoteId);
                     $tObj = json_decode($tOut, true);
                     $tOk = is_array($tObj) && (isset($tObj['ok']) ? (bool)$tObj['ok'] : !isset($tObj['error']));
                     sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($tOut), 'detail' => aiToolDetail($tOut)));
@@ -2385,7 +2391,7 @@ try {
                         $fedBack .= '【工具结果】ask_user' . "\n" . json_encode(array('ok' => false, 'error' => 'empty_questions'), JSON_UNESCAPED_UNICODE) . "\n\n";
                         continue;
                     }
-                    $tOut = aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid);
+                    $tOut = aiEditToolExec($tName, $tArgs, $work, $workTouched, $pdo, $uid, $curNoteId);
                     $tObj = json_decode($tOut, true);
                     $tOk = is_array($tObj) && (isset($tObj['ok']) ? (bool)$tObj['ok'] : !isset($tObj['error']));
                     sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($tOut), 'detail' => aiToolDetail($tOut)));
@@ -2434,7 +2440,7 @@ try {
                         $toolResult = json_encode(array('ok' => false, 'error' => 'empty_questions'), JSON_UNESCAPED_UNICODE);
                         sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => false, 'brief' => '问题为空'));
                     } else {
-                        $toolResult = aiEditToolExec($tName, $toolCall, $work, $workTouched, $pdo, $uid);
+                        $toolResult = aiEditToolExec($tName, $toolCall, $work, $workTouched, $pdo, $uid, $curNoteId);
                         $tObj = json_decode($toolResult, true);
                         $tOk = is_array($tObj) && (isset($tObj['ok']) ? (bool)$tObj['ok'] : !isset($tObj['error']));
                         sseSend('tool_result', array('id' => $tid, 'name' => $tName, 'ok' => $tOk, 'brief' => aiToolBrief($toolResult), 'detail' => aiToolDetail($toolResult)));
