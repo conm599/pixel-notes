@@ -13,17 +13,57 @@
   var PNVT = (function () {
     var NAME = 'pn-note';
     function supported() { return typeof document.startViewTransition === 'function'; }
+    function edgeSlideOn() { try { return localStorage.getItem('pn_edge_slide') === '1'; } catch (e) { return false; } }
+    // v130 彩蛋「边缘滑入」：源/目标任一端被视口裁剪（部分滚出屏幕）时，morph 注入两段式
+    // keyframes——原位 → 平移到完整可见位置 → 再放大/缩回，从机制上避免「缺块卡片硬飞」的穿模
     function morph(sourceEl, mutate, targetEl) {
       if (!supported()) { mutate(); return; }
       if (sourceEl && sourceEl.style) sourceEl.style.viewTransitionName = NAME;
       // 灵动岛模式：root 层立即切换（页面瞬时就位，无 cross-fade），pn-note 层独立拉伸/缩回
       document.documentElement.classList.add('vt-close');
+      var kfStyle = null;
+      var wrappedMutate = mutate;
+      if (edgeSlideOn() && sourceEl && sourceEl.isConnected && targetEl) {
+        var sr = sourceEl.getBoundingClientRect();   // mutate 前测源 rect
+        var M = 14;
+        function clipDelta(r) {
+          var dx = 0, dy = 0, vw = window.innerWidth, vh = window.innerHeight;
+          if (r.left < M) dx = M - r.left;
+          if (r.right > vw - M) dx = (vw - M) - r.right;
+          if (r.top < M) dy = M - r.top;
+          if (r.bottom > vh - M) dy = (vh - M) - r.bottom;
+          return { dx: dx, dy: dy };
+        }
+        var sClip = clipDelta(sr);
+        var sOut = Math.abs(sClip.dx) > 1 || Math.abs(sClip.dy) > 1;
+        if (sOut) {
+          // 仅打开方向：源卡片被视口裁剪 → 原位 → 先平移到完整可见 → 再放大成弹窗；
+          // 没被裁剪时完全不注入，走默认 morph。收回方向不做两段式（避免来回抽搐）。
+          wrappedMutate = function () {
+            mutate();
+            try {
+              if (!targetEl.isConnected) return;
+              var tr = targetEl.getBoundingClientRect();
+              if (!tr.width) return;
+              var kf = '@keyframes pnSlide{'
+                + '0%{transform:translate(' + (sr.left - tr.left) + 'px,' + (sr.top - tr.top) + 'px);width:' + sr.width + 'px;height:' + sr.height + 'px;animation-timing-function:cubic-bezier(.2,.7,.4,1)}'
+                + '45%{transform:translate(' + (sr.left + sClip.dx - tr.left) + 'px,' + (sr.top + sClip.dy - tr.top) + 'px);width:' + sr.width + 'px;height:' + sr.height + 'px;animation-timing-function:cubic-bezier(.4,0,.2,1)}'
+                + '100%{transform:translate(0,0);width:' + tr.width + 'px;height:' + tr.height + 'px}}'
+                + '::view-transition-group(pn-note){animation:pnSlide .38s both}';
+              kfStyle = document.createElement('style');
+              kfStyle.textContent = kf;
+              document.head.appendChild(kfStyle);
+            } catch (e) { /* 彩蛋失败静默降级为普通 morph */ }
+          };
+        }
+      }
       var cleaned = false;
       function cleanup() {
         if (cleaned) return; cleaned = true;
         document.documentElement.classList.remove('vt-close');
         if (sourceEl && sourceEl.style) sourceEl.style.viewTransitionName = '';
         if (targetEl && targetEl.style) targetEl.style.viewTransitionName = '';
+        if (kfStyle && kfStyle.parentNode) kfStyle.parentNode.removeChild(kfStyle);
       }
       var vt;
       try {
@@ -31,7 +71,7 @@
           // 旧快照已在 startViewTransition 时捕获，mutate 后立刻清源命名——
           // 否则共存型 morph（源卡片 + 新目标同名）会因重复 view-transition-name 被 abort
           if (sourceEl && sourceEl.style) sourceEl.style.viewTransitionName = '';
-          mutate();
+          wrappedMutate();
           if (targetEl && targetEl.style) targetEl.style.viewTransitionName = NAME;
         });
       } catch (e) {
@@ -4281,6 +4321,25 @@
 
   var btnTutorial = document.getElementById('btnTutorial');
   if (btnTutorial) btnTutorial.addEventListener('click', openTutorial);
+
+  // 边缘滑入彩蛋开关（v130）：morph 前先把被视口裁剪的卡片平移进视口再放大，绕开穿模
+  var mEdgeSlide = document.getElementById('mEdgeSlide');
+  function syncEdgeSlideText() {
+    if (!mEdgeSlide) return;
+    var on = false;
+    try { on = localStorage.getItem('pn_edge_slide') === '1'; } catch (e) {}
+    mEdgeSlide.textContent = '🥚 边缘滑入彩蛋：' + (on ? '开' : '关');
+  }
+  if (mEdgeSlide) {
+    mEdgeSlide.addEventListener('click', function () {
+      var on = false;
+      try { on = localStorage.getItem('pn_edge_slide') === '1'; } catch (e) {}
+      try { localStorage.setItem('pn_edge_slide', on ? '0' : '1'); } catch (e) {}
+      syncEdgeSlideText();
+      showToast(on ? '🥚 边缘滑入彩蛋已关闭' : '🥚 边缘滑入彩蛋已开启：把便签滚到屏幕边缘再打开试试', 'success');
+    });
+    syncEdgeSlideText();
+  }
   // 便签↔图床联动：设置入口（查看/修改同意状态）
   var btnImgBridge = document.getElementById('btnImgBridge');
   if (btnImgBridge) btnImgBridge.addEventListener('click', function () {
