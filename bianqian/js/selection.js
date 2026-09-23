@@ -35,16 +35,18 @@
     bar.className = 'sel-bar';
     bar.style.display = 'none';
     bar.innerHTML = '<span class="sel-count"></span>'
-      + '<button type="button" class="sel-btn sel-cut" title="Ctrl+X"><i class="ic ic-scissors"></i> 剪切</button>'
-      + '<button type="button" class="sel-btn sel-copy" title="Ctrl+C"><i class="ic ic-copy"></i> 复制</button>'
-      + '<button type="button" class="sel-btn sel-paste" title="Ctrl+V"><i class="ic ic-paste"></i> 粘贴</button>'
-      + '<button type="button" class="sel-btn sel-swap" title="恰好选中 2 张便签时可用">⇄ 对调</button>'
-      + '<button type="button" class="sel-btn sel-all" title="Ctrl+A"><i class="ic ic-checkall"></i> 全选</button>'
-      + '<button type="button" class="sel-btn sel-del"><i class="ic ic-trash"></i> 删除</button>'
-      + '<button type="button" class="sel-btn sel-exit" title="Esc"><i class="ic ic-close"></i> 取消选择</button>'
+      + '<button type="button" class="sel-btn sel-move" title="移动到…"><i class="ic ic-back"></i></button>'
+      + '<button type="button" class="sel-btn sel-cut" title="剪切 (Ctrl+X)"><i class="ic ic-scissors"></i></button>'
+      + '<button type="button" class="sel-btn sel-copy" title="复制 (Ctrl+C)"><i class="ic ic-copy"></i></button>'
+      + '<button type="button" class="sel-btn sel-paste" title="粘贴 (Ctrl+V)"><i class="ic ic-paste"></i></button>'
+      + '<button type="button" class="sel-btn sel-swap" title="对调（恰好选中 2 项时可用）">⇄</button>'
+      + '<button type="button" class="sel-btn sel-all" title="全选 (Ctrl+A)"><i class="ic ic-checkall"></i></button>'
+      + '<button type="button" class="sel-btn sel-del" title="删除"><i class="ic ic-trash"></i></button>'
+      + '<button type="button" class="sel-btn sel-exit" title="取消选择 (Esc)"><i class="ic ic-close"></i></button>'
       + '<span class="sel-clip-info"></span>'
-      + '<button type="button" class="sel-btn sel-clip-clear"><i class="ic ic-ban"></i> 清空剪贴板</button>';
+      + '<button type="button" class="sel-btn sel-clip-clear" title="清空剪贴板"><i class="ic ic-ban"></i></button>';
     document.body.appendChild(bar);
+    bar.querySelector('.sel-move').addEventListener('click', function () { selMove(); });
     bar.querySelector('.sel-cut').addEventListener('click', function () { selCut(); });
     bar.querySelector('.sel-copy').addEventListener('click', function () { selCopy(); });
     bar.querySelector('.sel-paste').addEventListener('click', function () { selPaste(); });
@@ -78,7 +80,7 @@
 
     bar.classList.toggle('mini', !full && hasClip);
     bar.querySelector('.sel-count').style.display = full ? '' : 'none';
-    ['sel-cut', 'sel-copy', 'sel-swap', 'sel-all', 'sel-del', 'sel-exit'].forEach(function (cls) {
+    ['sel-move', 'sel-cut', 'sel-copy', 'sel-swap', 'sel-all', 'sel-del', 'sel-exit'].forEach(function (cls) {
       bar.querySelector('.' + cls).style.display = full ? '' : 'none';
     });
     bar.querySelector('.sel-paste').style.display = hasClip ? '' : 'none';
@@ -114,7 +116,17 @@
     updateSelUI();
   }
 
-  // ===== 剪切 / 复制 / 粘贴 / 删除 / 全选 / 对调 =====
+  // ===== 剪切 / 复制 / 粘贴 / 删除 / 全选 / 对调 / 移动 =====
+  // 移动到…（v117）：选择条入口——手机也能用（长按选中后点此键，弹出网盘式目录选择弹窗）
+  function selMove() {
+    if (selCount() === 0) return;
+    if (!ctx.openMoveDialog) { ctx.showToast('⚠️ 移动功能未就绪', 'error'); return; }
+    ctx.openMoveDialog('batch', {
+      notes: Object.keys(selectedNotes).map(Number),
+      folders: Object.keys(selectedFolders).map(Number)
+    });
+  }
+
   function selCut() {
     if (selCount() === 0) return;
     clipboard = {

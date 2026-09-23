@@ -485,50 +485,9 @@
     } catch (e) { showToast('❌ 改名失败', 'error'); }
   }
 
-  // 目录选择器：把某文件夹/便签移到目标父级（含虚拟根）
+  // 目录选择器：把某文件夹/便签移到目标父级（含虚拟根）——v116 起走目录选择弹窗（自己及后代自动排除）
   function promptMoveFolder(folder) {
-    var options = [{ id: null, label: '🏠 主页（根层级）', depth: -1 }];
-    // 排除自己及后代
-    var descendantIds = {};
-    function mark(fid) {
-      Object.keys(foldersById).forEach(function (k) {
-        if (foldersById[k].parent_id === fid) { descendantIds[k] = true; mark(parseInt(k)); }
-      });
-    }
-    mark(folder.id);
-    descendantIds[folder.id] = true;
-
-    var lines = [];
-    function walk(parentId, depth) {
-      Object.keys(foldersById).map(function (k) { return foldersById[k]; })
-        .filter(function (f) { return (f.parent_id || null) === parentId; })
-        .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; })
-        .forEach(function (f) {
-          if (descendantIds[f.id]) return;
-          lines.push(new Array(depth + 1).join('  ') + '└ ' + f.name + '（按 ' + lines.length + '）');
-          walk(f.id, depth + 1);
-        });
-    }
-    walk(null, 0);
-    var sel = prompt('移动到：\n0) 主页（根层级）\n' + lines.join('\n'));
-    if (sel === null) return;
-    var targetId = null;
-    if (sel.trim() !== '0') {
-      var idx = parseInt(sel.trim()) - 1;
-      var allKeys = [];
-      function collect(parentId) {
-        Object.keys(foldersById).map(function (k) { return foldersById[k]; })
-          .filter(function (f) { return (f.parent_id || null) === parentId; })
-          .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; })
-          .forEach(function (f) {
-            if (!descendantIds[f.id]) { allKeys.push(f.id); collect(f.id); }
-          });
-      }
-      collect(null);
-      if (isNaN(idx) || idx < 0 || idx >= allKeys.length) { showToast('❌ 无效的选择', 'error'); return; }
-      targetId = allKeys[idx];
-    }
-    moveFolderTo(folder.id, targetId);
+    openMoveDialog('folder', folder);
   }
 
   async function moveFolderTo(folderId, parentId) {
@@ -554,44 +513,197 @@
     } catch (e) { showToast('❌ 删除失败', 'error'); }
   }
 
-  // 把便签移动到某文件夹（跨层移动走这个，不是拖拽）
+  // 把便签移动到某文件夹（跨层移动走这个，不是拖拽）——v116 起走目录选择弹窗
   function promptMoveNote(note) {
-    var chain = folderChain(note.folder_id);
-    var curLabel = chain.length ? chain.map(function (f) { return f.name; }).join(' / ') : '主页';
-    var lines = ['当前位置：' + curLabel, '0) 主页（根层级）'];
-    // 与自己所在无关，列出全部文件夹
-    function walk(parentId, depth) {
-      Object.keys(foldersById).map(function (k) { return foldersById[k]; })
-        .filter(function (f) { return (f.parent_id || null) === parentId; })
-        .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; })
-        .forEach(function (f) {
-          lines.push(new Array(depth + 1).join('  ') + '└ ' + f.name + '（按 ' + lines.length + '）');
-          walk(f.id, depth + 1);
+    openMoveDialog('note', note);
+  }
+
+  // ============== 移动到…目录选择弹窗（v116：替代远古 prompt 序号法） ==============
+  // 交互参考网盘式「选择目标文件夹」：单击选中（确认按钮跟随），双击进入子层级，
+  // 路径条点击跳级；确认目标 = 选中项（未选中时为当前浏览层级）。
+  function openMoveDialog(kind, obj) {
+    // kind: 'note' | 'folder' | 'batch'（选择条批量移动，obj={notes:[id],folders:[id]}）
+    // 文件夹移动排除自己及后代（绝不移进自己）
+    var overlay = mkEl('div', 'md-modal-overlay');
+    overlay.style.zIndex = '21000';
+    var modal = mkEl('div', 'md-modal move-dialog');
+    var browseId = null;    // 当前浏览层级（null = 主页根）
+    var selectedId = null;  // 单击选中的文件夹（null = 未选中，确认即当前浏览层级）
+    var selFolder = kind === 'folder' ? obj : null;
+
+    var head = mkEl('div', 'md-modal-head');
+    head.appendChild(mkEl('div', 'md-modal-title',
+      '<i class="ic ic-folder"></i> ' + (kind === 'note'
+        ? '移动「' + chartTrunc(obj.title || '无标题', 16) + '」到…'
+        : kind === 'folder'
+          ? '移动文件夹「' + chartTrunc(obj.name || '', 16) + '」到…'
+          : '移动 ' + (obj.notes.length + obj.folders.length) + ' 项到…')));
+    var closeBtn = mkBtn('<i class="ic ic-close"></i>', '取消');
+    closeBtn.className = 'md-modal-close';
+    closeBtn.addEventListener('click', close);
+    head.appendChild(closeBtn);
+    modal.appendChild(head);
+
+    var body = mkEl('div', 'md-modal-body move-dialog-body');
+    var crumb = mkEl('div', 'move-crumb');
+    var list = mkEl('div', 'move-list');
+    body.appendChild(crumb);
+    body.appendChild(list);
+    modal.appendChild(body);
+
+    var foot = mkEl('div', 'md-modal-foot move-dialog-foot');
+    var newBtn = mkBtn('<i class="ic ic-folder"></i> 新建文件夹', '在此层级新建子文件夹');
+    newBtn.className = 'btn btn-outline btn-sm';
+    var spacer = mkEl('span', 'move-foot-spacer');
+    // 底部不再放「取消」——右上角 ✕ 是唯一关闭入口（与编辑器同款约定，手机端可一行放下）
+    var okBtn = mkBtn('', '确认移动');
+    okBtn.className = 'btn btn-primary btn-sm';
+    foot.appendChild(newBtn);
+    foot.appendChild(spacer);
+    foot.appendChild(okBtn);
+    modal.appendChild(foot);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    function close() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+    overlay.addEventListener('pointerdown', function (e) { if (e.target === overlay) close(); });
+
+    // 排除集合（文件夹移动：自己 + 全部后代；批量：所有选中文件夹 + 后代）
+    var exclude = {};
+    if (kind === 'folder' && obj.id) {
+      (function mark(pid) {
+        Object.keys(foldersById).forEach(function (k) {
+          if (foldersById[k].parent_id === pid) { exclude[k] = true; mark(foldersById[k].id); }
         });
+      })(obj.id);
+      exclude[obj.id] = true;
     }
-    walk(null, 0);
-    var sel = prompt('移动「' + (note.title || '无标题') + '」到：\n' + lines.join('\n'));
-    if (sel === null) return;
-    var targetId = null;
-    if (sel.trim() !== '0') {
-      var idx = parseInt(sel.trim()) - 1;
-      var allIds = [];
-      function collect(parentId) {
-        Object.keys(foldersById).map(function (k) { return foldersById[k]; })
-          .filter(function (f) { return (f.parent_id || null) === parentId; })
-          .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; })
-          .forEach(function (f) { allIds.push(f.id); collect(f.id); });
-      }
-      collect(null);
-      if (isNaN(idx) || idx < 0 || idx >= allIds.length) { showToast('❌ 无效的选择', 'error'); return; }
-      targetId = allIds[idx];
-    }
-    try {
-      api('PUT', { id: note.id, folder_id: targetId }).then(function (r) {
-        if (r.success) { showToast('📁 已移动', 'success'); loadFolders(); refreshView(); }
-        else showToast('❌ ' + (r.message || '移动失败'), 'error');
+    if (kind === 'batch') {
+      (obj.folders || []).forEach(function (fid) {
+        (function mark(pid) {
+          Object.keys(foldersById).forEach(function (k) {
+            if (foldersById[k].parent_id === pid) { exclude[k] = true; mark(foldersById[k].id); }
+          });
+        })(fid);
+        exclude[fid] = true;
       });
-    } catch (e) { showToast('❌ 移动失败', 'error'); }
+    }
+
+    function chainOf(fid) {
+      var chain = [];
+      var cur = fid ? foldersById[fid] : null;
+      while (cur) { chain.unshift(cur); cur = cur.parent_id ? foldersById[cur.parent_id] : null; }
+      return chain;
+    }
+
+    function targetId() { return selectedId !== null ? selectedId : browseId; }
+
+    function render() {
+      // 路径条：🏠 主页 / A / B（点击跳级）
+      crumb.innerHTML = '';
+      var chain = chainOf(browseId);
+      var rootSeg = mkEl('span', 'move-crumb-seg' + (browseId === null ? ' active' : ''), '🏠 主页');
+      rootSeg.addEventListener('click', function () { browseId = null; selectedId = null; render(); });
+      crumb.appendChild(rootSeg);
+      chain.forEach(function (f) {
+        crumb.appendChild(mkEl('span', 'move-crumb-sep', '/'));
+        var seg = mkEl('span', 'move-crumb-seg' + (browseId === f.id ? ' active' : ''), f.name);
+        seg.addEventListener('click', function () { browseId = f.id; selectedId = null; render(); });
+        crumb.appendChild(seg);
+      });
+      // 列表：当前浏览层级的子文件夹
+      list.innerHTML = '';
+      var kids = Object.keys(foldersById).map(function (k) { return foldersById[k]; })
+        .filter(function (f) { return (f.parent_id || null) === browseId && !exclude[f.id]; })
+        .sort(function (a, b) { return a.sort_order - b.sort_order || a.id - b.id; });
+      if (!kids.length) list.appendChild(mkEl('div', 'move-empty', '（这层没有子文件夹）'));
+      var isTouch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;   // 手机：单击直接进层
+      kids.forEach(function (f) {
+        var row = mkEl('div', 'move-row' + (!isTouch && selectedId === f.id ? ' active' : ''));
+        row.appendChild(mkEl('span', 'move-row-icon', '<i class="ic ic-folder"></i>'));
+        row.appendChild(mkEl('span', 'move-row-name', f.name));
+        row.appendChild(mkEl('span', 'move-row-count', (f.note_count || 0) + ' 条'));
+        if (isTouch) {
+          row.addEventListener('click', function () {          // 触屏：单击直接进入（双击在手机不可靠）
+            browseId = f.id; selectedId = null; render();
+          });
+        } else {
+          row.addEventListener('click', function () {          // 桌面：单击选中，确认按钮跟随
+            selectedId = f.id; render();
+          });
+          row.addEventListener('dblclick', function () {       // 桌面：双击进入该层级
+            browseId = f.id; selectedId = null; render();
+          });
+        }
+        list.appendChild(row);
+      });
+      // 确认按钮：文案跟随目标层级；单对象原地移动时禁用（批量允许部分原地，PUT 同值无害）
+      var tName = targetId() === null ? '主页' : (foldersById[targetId()] ? chartTrunc(foldersById[targetId()].name, 12) : '主页');
+      okBtn.textContent = '移动到「' + tName + '」';   // 纯文字（ic-check 图标集里没有，别再放空占位）
+      var inPlace = kind === 'note'
+        ? obj.folder_id === targetId()
+        : kind === 'folder'
+          ? (obj.parent_id || null) === targetId()
+          : false;
+      okBtn.disabled = !!inPlace;
+    }
+
+    okBtn.addEventListener('click', function () {
+      var t = targetId();
+      if (kind === 'note') {
+        api('PUT', { id: obj.id, folder_id: t }).then(function (r) {
+          if (r.success) { showToast('📁 已移动', 'success'); close(); loadFolders(); refreshView(); }
+          else showToast('❌ ' + (r.message || '移动失败'), 'error');
+        });
+      } else if (kind === 'folder') {
+        close();
+        moveFolderTo(obj.id, t);
+      } else {
+        // 批量：便签 PUT folder_id + 文件夹 PUT parent_id，全部完成后统一刷新
+        var jobs = [];
+        (obj.notes || []).forEach(function (nid) { jobs.push(api('PUT', { id: nid, folder_id: t })); });
+        (obj.folders || []).forEach(function (fid) { jobs.push(folderApi('PUT', { id: fid, parent_id: t })); });
+        Promise.all(jobs).then(function (rs) {
+          var ok = rs.every(function (r) { return r && r.success; });
+          close();
+          if (ok) {
+            showToast('📁 已移动 ' + rs.length + ' 项', 'success');
+            if (window.PixelSelection) window.PixelSelection.reset();
+            loadFolders(); refreshView();
+          } else showToast('❌ 部分移动失败', 'error');
+        });
+      }
+    });
+
+    // 新建文件夹：inline 输入行（回车创建，Esc/失焦取消或提交）
+    newBtn.addEventListener('click', function () {
+      if (list.querySelector('.move-newrow')) return;
+      var row = mkEl('div', 'move-newrow');
+      var input = mkEl('input', 'move-newinput');
+      input.placeholder = '新文件夹名，回车创建（Esc 取消）';
+      row.appendChild(input);
+      list.insertBefore(row, list.firstChild);
+      input.focus();
+      var done = false;
+      function commit(save) {
+        if (done) return;
+        done = true;
+        var name = input.value.trim();
+        if (row.parentNode) row.parentNode.removeChild(row);
+        if (!save || !name) return;
+        folderApi('POST', { name: name, parent_id: browseId }).then(function (r) {
+          if (r.success) { showToast('✅ 文件夹已创建', 'success'); loadFolders().then(render); }
+          else showToast('❌ ' + (r.message || '创建失败'), 'error');
+        });
+      }
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') commit(true);
+        if (e.key === 'Escape') commit(false);
+      });
+      input.addEventListener('blur', function () { commit(true); });
+    });
+
+    render();
   }
 
   function surround(ta, before, after) {
@@ -601,6 +713,7 @@
     ta.focus();
     ta.selectionStart = s + before.length;
     ta.selectionEnd = s + before.length + sel.length;
+    try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (err) { /* 老浏览器忽略 */ }
   }
 
   function linePrefix(ta, prefix) {
@@ -615,6 +728,7 @@
     ta.focus();
     ta.selectionStart = ls;
     ta.selectionEnd = ls + out.length;
+    try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (err) { /* 老浏览器忽略 */ }
   }
 
   function insertBlock(ta) {
@@ -624,6 +738,7 @@
     ta.focus();
     var pos = s + before.length + 4;
     ta.selectionStart = ta.selectionEnd = pos;
+    try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (err) { /* 老浏览器忽略 */ }
   }
 
   function buildToolbar(bar, getTa) {
@@ -713,6 +828,15 @@
   function makeContentDiv(note, card) {
     var nd = mkEl('div', 'note-content md-body md-static');
     nd.innerHTML = window.PixelMD.render(note.content);
+    // 阅读全文判定稳定性修复（v126）：图片异步加载完成会让内容长高，若只在渲染时判定一次，
+    // 「有图长文」在首刷（图片未加载）时会被误判为短文、按钮消失，刷新（缓存秒加载）后又出现。
+    // 给每张未完成的图片挂 load/error → 重跑截断检测即可 100% 稳定。
+    nd.querySelectorAll('img').forEach(function (img) {
+      if (!img.complete) {
+        img.addEventListener('load', function () { checkClamp(card); }, { once: true });
+        img.addEventListener('error', function () { checkClamp(card); }, { once: true });
+      }
+    });
     nd.addEventListener('click', function (e) {
       if (window.PixelSelection && window.PixelSelection.isActive()) return;   // 选择模式：点击不打开
       if (e.target && e.target.closest && e.target.closest('a')) return;
@@ -724,6 +848,15 @@
     });
     return nd;
   }
+
+  // 窗口尺寸变化后网格列宽会变，截断状态需要重算（防抖 200ms）
+  var clampResizeTimer = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(clampResizeTimer);
+    clampResizeTimer = setTimeout(function () {
+      document.querySelectorAll('.note-card').forEach(checkClamp);
+    }, 200);
+  });
 
   function buildMeta(note, card) {
     var meta = mkEl('div', 'note-meta');
@@ -790,12 +923,10 @@
   var newNoteForm = document.getElementById('newNoteForm');
   var btnNewNote = document.getElementById('btnNewNote');
   var btnSaveNew = document.getElementById('btnSaveNew');
-  var btnCancelNew = document.getElementById('btnCancelNew');
   var newColorPicker = document.getElementById('newColorPicker');
   var newTitle = document.getElementById('newTitle');
   var newContent = document.getElementById('newContent');
   var newPreview = document.getElementById('newPreview');
-  var btnPreviewNew = document.getElementById('btnPreviewNew');
   var newToolbar = document.getElementById('newToolbar');
   var editorMode = document.getElementById('editorMode');
   var selectedColor = 'yellow';
@@ -820,7 +951,6 @@
       newContent.value = '';
       newPreview.style.display = 'none';
       newPreview.innerHTML = '';
-      if (btnPreviewNew) btnPreviewNew.innerHTML = '<i class="ic ic-eye"></i> 预览';
       if (editorMode) editorMode.textContent = '';
       btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存';
       // 取消卡片高亮
@@ -846,6 +976,7 @@
       if (editorMode) editorMode.innerHTML = '<i class="ic ic-plus"></i> 新建便签';
       btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存';
       setColorPicker('yellow');
+      renderLivePreview(newContent.value);   // 空内容 → 预览区保持隐藏
       newNoteForm.style.display = 'block';   // 全屏覆盖层，CSS 进入动画（淡入上浮）
       newTitle.focus();
     } else {
@@ -873,6 +1004,7 @@
       // 首屏只传了 2000 字摘要：先亮出面板给加载反馈，拉到全文后再填充
       newTitle.value = note.title;
       newContent.value = '';
+      renderLivePreview('');   // 清掉上一篇残留的预览
       if (editorMode) editorMode.textContent = '⏳ 正在加载全文…';
       try {
         var resp = await fetch(API_BASE + '?id=' + id, { credentials: 'include', cache: 'no-store' });
@@ -898,6 +1030,7 @@
 
     newTitle.value = note.title;
     newContent.value = note.content;
+    renderLivePreview(note.content);   // 打开即渲染实时预览
     setColorPicker(note.color);
     setIconText(editorMode, 'pencil', '正在编辑：' + (note.title || '无标题'));
     btnSaveNew.innerHTML = '<i class="ic ic-save-pink"></i> 保存修改';
@@ -905,9 +1038,7 @@
     setTimeout(function () { newContent.focus(); }, 250);
   }
 
-  btnCancelNew.addEventListener('click', hideEditor);
-
-  // 全屏编辑器右上角 ✕ 关闭
+  // 全屏编辑器右上角 ✕ 关闭（底部取消按钮已移除，✕ 是唯一关闭入口）
   var editorCloseBtn = document.getElementById('editorClose');
   if (editorCloseBtn) editorCloseBtn.addEventListener('click', hideEditor);
 
@@ -919,18 +1050,23 @@
 
   if (newToolbar) buildToolbar(newToolbar, function () { return newContent; });
 
-  if (btnPreviewNew) {
-    btnPreviewNew.addEventListener('click', function () {
-      if (newPreview.style.display === 'none') {
-        newPreview.innerHTML = window.PixelMD.render(newContent.value || '*(空)*');
-        newPreview.style.display = 'block';
-        btnPreviewNew.innerHTML = '<i class="ic ic-eye"></i> 隐藏预览';
-      } else {
-        newPreview.style.display = 'none';
-        btnPreviewNew.innerHTML = '<i class="ic ic-eye"></i> 预览';
-      }
-    });
+  // ---- 实时预览：编辑区内容一变，下方立刻渲染 Markdown ----
+  // 空内容时隐藏预览区（不摆一个空框）；程序改值（工具栏/AI/图片直链）走 dispatch 或显式调用
+  function renderLivePreview(text) {
+    if (!newPreview) return;
+    if (!text || !text.trim()) {
+      newPreview.style.display = 'none';
+      newPreview.innerHTML = '';
+      return;
+    }
+    newPreview.innerHTML = window.PixelMD.render(text);
+    newPreview.style.display = 'block';
   }
+  var previewTimer = null;
+  newContent.addEventListener('input', function () {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(function () { renderLivePreview(newContent.value); }, 200);
+  });
 
   // 保存（新建 POST / 编辑 PUT）
   var saveBusy = false; // 防重复提交锁：网络慢时连点/误点只发一次请求
@@ -1117,14 +1253,14 @@
           if (it.type === 'folder') {
             switchFolder(it.fid);
             searchInput.value = '';
-            hideSearchPanel();
+            closeSearchOverlay();
           } else {
             var n = notesById[it.nid];
             if (!n) return;
             var targetFolder = n.folder_id;
             if (targetFolder !== currentFolderId) switchFolder(targetFolder);
             searchInput.value = '';
-            hideSearchPanel();
+            closeSearchOverlay();
             setTimeout(function () {
               var card = notesGrid.querySelector('.note-card[data-id="' + it.nid + '"]');
               if (card) {
@@ -1153,7 +1289,7 @@
     else renderSearchPanel(buildSearchResults(searchInput.value.trim()), false);
   });
   searchInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') { searchInput.value = ''; hideSearchPanel(); searchInput.blur(); }
+    if (e.key === 'Escape') { searchInput.value = ''; closeSearchOverlay(); }
   });
   document.addEventListener('pointerdown', function (e) {
     if (searchBox && !searchBox.contains(e.target)) hideSearchPanel();
@@ -2611,18 +2747,14 @@
     aiSnapshots.push({ before: newContent.value, after: text, at: Date.now() });
     if (aiSnapshots.length > AI_SNAPSHOT_MAX) aiSnapshots.shift();
     newContent.value = text;
-    if (newPreview && newPreview.style.display !== 'none') {
-      newPreview.innerHTML = window.PixelMD.render(text);
-    }
+    renderLivePreview(text);
   }
 
   function aiUndoLast() {
     if (!aiSnapshots.length) { showToast('没有可撤回的 AI 改动', 'error'); return false; }
     var snap = aiSnapshots.pop();
     newContent.value = snap.before;
-    if (newPreview && newPreview.style.display !== 'none') {
-      newPreview.innerHTML = window.PixelMD.render(snap.before);
-    }
+    renderLivePreview(snap.before);
     return true;
   }
 
@@ -3781,38 +3913,37 @@
     settingsMenu.style.display = settingsMenu.style.display === 'none' ? 'block' : 'none';
   }
 
-  // ============== 工具栏自适应三段降级（v89，移动端） ==============
-  // 溢出检测：① 先去面包屑图标 → ② 再收搜索框（🍞 切换可随时调出）
+  // ============== 工具栏自适应（v114：搜索已移入弹层，只做面包屑降级） ==============
   function adaptiveToolbar() {
     var tl = document.querySelector('.toolbar-left');
     var crumb = document.getElementById('folderCrumb');
     if (!tl || !crumb) return;
-    if (window.innerWidth > 768) {
-      document.body.classList.remove('crumb-noicon', 'search-collapsed', 'search-open');
-      return;
-    }
-    if (document.body.classList.contains('search-open')) return; // 搜索展开态不降级
-    document.body.classList.remove('search-collapsed');
-    tl.classList.remove('crumb-noicon');
+    document.body.classList.remove('crumb-noicon');
+    if (window.innerWidth > 768) return;
     if (tl.scrollWidth > tl.clientWidth + 1) {
-      tl.classList.add('crumb-noicon');           // ① 去面包屑图标
-      if (tl.scrollWidth > tl.clientWidth + 1) {
-        document.body.classList.add('search-collapsed');  // ② 收搜索框，让位给路径
-      }
+      tl.classList.add('crumb-noicon');           // 面包屑过长先去图标
     }
   }
-  var searchToggle = document.getElementById('btnSearchToggle');
-  if (searchToggle) {
-    searchToggle.addEventListener('click', function () {
-      var open = document.body.classList.toggle('search-open');
-      if (open) {
-        var inp = document.getElementById('searchInput');
-        if (inp) { inp.focus(); inp.scrollIntoView({ block: 'center' }); }
-      } else {
-        adaptiveToolbar();
-      }
+  // ---- 搜索弹层（v114：搜索框移出工具栏；PC 按 T 或 / 呼出，手机走抽屉/搜索钮；Esc/点遮罩关闭） ----
+  var searchOverlay = document.getElementById('searchOverlay');
+  function openSearchOverlay() {
+    if (!searchOverlay) return;
+    searchOverlay.style.display = 'flex';
+    var inp = document.getElementById('searchInput');
+    if (inp) setTimeout(function () { inp.focus(); }, 60);
+  }
+  function closeSearchOverlay() {
+    if (!searchOverlay || searchOverlay.style.display === 'none') return;
+    searchOverlay.style.display = 'none';
+    hideSearchPanel();
+  }
+  if (searchOverlay) {
+    searchOverlay.addEventListener('pointerdown', function (e) {
+      if (e.target === searchOverlay) closeSearchOverlay();   // 点遮罩空白处关闭
     });
   }
+  var searchToggle = document.getElementById('btnSearchToggle');
+  if (searchToggle) searchToggle.addEventListener('click', openSearchOverlay);
   (function () {
     var crumbEl = document.getElementById('folderCrumb');
     if (crumbEl) new MutationObserver(adaptiveToolbar).observe(crumbEl, { childList: true });
@@ -3854,7 +3985,8 @@
     mmBind('mNew', function () { var b = document.getElementById('btnNewNote'); if (b) b.click(); });
     mmBind('mAi', function () { var b = document.getElementById('btnAiOrganize'); if (b) b.click(); });
     mmBind('mFolder', function () { var b = document.getElementById('btnNewFolder'); if (b) b.click(); });
-    mmBind('mSearch', function () { var b = document.getElementById('searchInput'); if (b) { b.focus(); b.scrollIntoView({ block: 'center' }); } });
+    mmBind('mSearch', function () { openSearchOverlay(); });
+    mmBind('mDelete', function () { var b = document.getElementById('btnDeleteAccount'); if (b) b.click(); });
     mmBind('mTutorial', function () { var b = document.getElementById('btnTutorial'); if (b) b.click(); });
     mmBind('mImgBridge', function () { var b = document.getElementById('btnImgBridge'); if (b) b.click(); });
     mmBind('mMdColors', function () { var b = document.getElementById('btnMdColors'); if (b) b.click(); });
@@ -3872,6 +4004,108 @@
       }).observe(newNoteForm, { attributes: true, attributeFilter: ['style'] });
     }
   }
+
+  // ============== PC 键盘快捷键（v114，MC 式：T 或 / 搜索、E 抽屉） ==============
+  // 手机不生效（无实体键盘）；任何输入框聚焦时、编辑器/弹窗开着时不抢占按键
+  document.addEventListener('keydown', function (e) {
+    if (window.innerWidth <= 768) return;
+    var tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+    if (newNoteForm && newNoteForm.style.display !== 'none') return;   // 全屏编辑器优先
+    var k = e.key.toLowerCase();
+    if (k === 't' || e.key === '/') {
+      e.preventDefault();
+      openSearchOverlay();
+    } else if (k === 'e') {
+      e.preventDefault();
+      if (mm && !mm.classList.contains('open')) mmOpen();
+    }
+  });
+
+  // ============== PC 右键菜单（v115：上下文感知，Windows 式） ==============
+  // 三类：空白（新建类） / 便签卡片（打开、编辑、置顶、换色、分享、移动、删除） / 文件夹卡片（打开、子文件夹、改名、移动、分享、删除）
+  // 手机不触发（无 contextmenu）；编辑器/弹窗/搜索弹层开着时不弹
+  var ctxMenuEl = null;
+  function closeCtxMenu() {
+    if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; }
+  }
+  function openCtxMenu(x, y, items) {
+    closeCtxMenu();
+    var menu = mkEl('div', 'ctx-menu');
+    items.forEach(function (it) {
+      var b = mkEl('button', 'ctx-item' + (it.danger ? ' ctx-danger' : ''));
+      b.type = 'button';
+      if (it.icon) b.innerHTML = it.icon;
+      b.appendChild(document.createTextNode(it.label));
+      b.addEventListener('click', function (e) { e.stopPropagation(); closeCtxMenu(); it.fn(); });
+      menu.appendChild(b);
+    });
+    document.body.appendChild(menu);
+    var mw = menu.offsetWidth, mh = menu.offsetHeight;
+    var left = Math.min(Math.max(8, x), window.innerWidth - mw - 8);
+    var top = Math.min(Math.max(8, y), window.innerHeight - mh - 8);
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+    ctxMenuEl = menu;
+  }
+  function blankCtxItems() {
+    return [
+      { label: '新建便签', icon: '<i class="ic ic-plus-pink"></i>', fn: function () { var b = document.getElementById('btnNewNote'); if (b) b.click(); } },
+      { label: '新建文件夹', icon: '<i class="ic ic-folder"></i>', fn: function () { var b = document.getElementById('btnNewFolder'); if (b) b.click(); } }
+    ];
+  }
+  function noteCtxItems(note, card) {
+    var shared = !!(note.share_url || (note.share_token && String(note.share_token).length === 36));
+    return [
+      { label: '打开', icon: '<i class="ic ic-note"></i>', fn: function () { var c = card.querySelector('.note-content'); if (c) c.click(); } },
+      { label: '编辑', icon: '<i class="ic ic-pencil"></i>', fn: function () { openEditorForNote(note.id, card); } },
+      { label: note.pinned ? '取消置顶' : '置顶', icon: '<i class="ic ic-pin"></i>', fn: function () { togglePin(card); } },
+      { label: '切换颜色', icon: '<i class="ic ic-palette"></i>', fn: function () { cycleColor(card); } },
+      { label: shared ? '管理公开分享' : '生成公开分享链接', icon: shared ? '🌐' : '<i class="ic ic-link"></i>', fn: function () { openShareDialog(note.id, card); } },
+      { label: '移动到…', icon: '<i class="ic ic-back"></i>', fn: function () { promptMoveNote(note); } },
+      { label: '删除', icon: '<i class="ic ic-trash"></i>', danger: true, fn: function () { deleteNote(card); } }
+    ];
+  }
+  function folderCtxItems(folder) {
+    var f = foldersById[folder.id] || folder;
+    return [
+      { label: '打开', icon: '<i class="ic ic-folder"></i>', fn: function () { switchFolder(folder.id); } },
+      { label: '在里面新建子文件夹', icon: '<i class="ic ic-plus"></i>', fn: function () { promptNewFolder(folder.id); } },
+      { label: '改名', icon: '<i class="ic ic-pencil"></i>', fn: function () { promptRenameFolder(f); } },
+      { label: '移动到…', icon: '<i class="ic ic-back"></i>', fn: function () { promptMoveFolder(f); } },
+      { label: '分享', icon: '<i class="ic ic-link"></i>', fn: function () { openShareDialog(folder.id, f, 'folder'); } },
+      { label: '删除（内容上移）', icon: '<i class="ic ic-trash"></i>', danger: true, fn: function () { promptDeleteFolder(f); } }
+    ];
+  }
+  document.addEventListener('contextmenu', function (e) {
+    if (window.innerWidth <= 768) return;
+    if (!e.target || !e.target.closest) return;   // 罕见宿主（如 document 本身）无 closest，防御
+    if (e.target.closest('.new-note-form, .md-modal-overlay, .search-overlay, .ai-modal, .ctx-menu')) return;
+    closeFolderMenu();   // 关掉可能开着的文件夹浮层，避免叠菜单
+    var nCard = e.target.closest('.note-card');
+    if (nCard) {
+      var nid = parseInt(nCard.getAttribute('data-id'));
+      var note = nCard._noteData || notesById[nid];
+      if (!note) return;
+      e.preventDefault();
+      openCtxMenu(e.clientX, e.clientY, noteCtxItems(note, nCard));
+      return;
+    }
+    var fCard = e.target.closest('.folder-card');
+    if (fCard) {
+      var fid = parseInt(fCard.getAttribute('data-folder-id'));
+      if (!foldersById[fid]) return;
+      e.preventDefault();
+      openCtxMenu(e.clientX, e.clientY, folderCtxItems(foldersById[fid]));
+      return;
+    }
+    if (e.target.closest('input, textarea, select, a, button, [contenteditable]')) return;
+    e.preventDefault();
+    openCtxMenu(e.clientX, e.clientY, blankCtxItems());
+  });
+  document.addEventListener('click', closeCtxMenu);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeCtxMenu(); });
+  window.addEventListener('blur', closeCtxMenu);
 
   if (btnSettings && settingsMenu) {
     btnSettings.addEventListener('click', function (e) {
@@ -4199,6 +4433,11 @@
     if (!quiet && PNVT.supported()) {
       var modalEl = ov.querySelector('.md-modal');
       var srcCard = modalSourceCard;
+      // 收回期间冻结卡片过渡（约 2px 的 hover 态切换被快照切换放大，影响极小，保留此冻结减小可见度）
+      if (srcCard && srcCard.isConnected) {
+        srcCard.classList.add('no-trans');
+        setTimeout(function () { srcCard.classList.remove('no-trans'); }, 300);
+      }
       PNVT.morph((modalEl && modalEl.isConnected) ? modalEl : null, doClose, srcCard);
     } else {
       doClose();
@@ -4489,7 +4728,8 @@
     getCurrentFolderId: function () { return currentFolderId; },
     getNoteById: function (id) { return notesById[id]; },
     refreshAll: async function () { await loadFolders(); refreshView(); },
-    isUiLocked: function () { return !!(document.querySelector('.md-modal-overlay')); }
+    isUiLocked: function () { return !!(document.querySelector('.md-modal-overlay')); },
+    openMoveDialog: openMoveDialog   // 选择条「移动到…」入口（手机长按选中后可用）
   });
   PixelSelection.syncUI();
 
