@@ -14,77 +14,21 @@
     var NAME = 'pn-note';
     function supported() { return typeof document.startViewTransition === 'function'; }
     function edgeSlideOn() { try { return localStorage.getItem('pn_edge_slide') === '1'; } catch (e) { return false; } }
-    // v130 彩蛋「边缘滑入」：源/目标任一端被视口裁剪（部分滚出屏幕）时，morph 注入两段式
-    // keyframes——原位 → 平移到完整可见位置 → 再放大/缩回，从机制上避免「缺块卡片硬飞」的穿模
+    // v133：彩蛋语义改为「编辑式过渡」——开关开启时弹窗完全退出 View Transition，
+    // 走和全屏编辑器一样的策略（overlay 自带 fadeIn 淡入、关闭直接移除），机制上不可能穿模；
+    // 默认（开关关）= 原样 morph。两套过渡动画并存，互不干扰。
     function morph(sourceEl, mutate, targetEl) {
+      if (edgeSlideOn()) { mutate(); return; }
       if (!supported()) { mutate(); return; }
       if (sourceEl && sourceEl.style) sourceEl.style.viewTransitionName = NAME;
       // 灵动岛模式：root 层立即切换（页面瞬时就位，无 cross-fade），pn-note 层独立拉伸/缩回
       document.documentElement.classList.add('vt-close');
-      var kfStyle = null;
-      var wrappedMutate = mutate;
-      if (edgeSlideOn() && sourceEl && sourceEl.isConnected && targetEl) {
-        var sr = sourceEl.getBoundingClientRect();   // mutate 前测源 rect
-        // v132：从「卡片中心」朝「屏幕中心」画一条直线，沿这条线平移，
-        // 找到最近的、卡片完整入视口（边距 14px）的位置作为中转点——
-        // 移动方向永远朝屏幕中心，一条直线，不再有贴边折返
-        var M = 14;
-        function slideTarget(r) {
-          var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-          var dx = window.innerWidth / 2 - cx, dy = window.innerHeight / 2 - cy;
-          var len = Math.sqrt(dx * dx + dy * dy);
-          if (len < 1) return null;                  // 已在屏幕中心
-          var ux = dx / len, uy = dy / len;
-          var tmin = 0, tmax = Infinity;
-          var edges = [
-            [r.left, ux, M, false],
-            [r.right, ux, window.innerWidth - M, true],
-            [r.top, uy, M, false],
-            [r.bottom, uy, window.innerHeight - M, true]
-          ];
-          for (var i = 0; i < 4; i++) {
-            var pos = edges[i][0], u = edges[i][1], bound = edges[i][2], isMax = edges[i][3];
-            if (u > 1e-6) {
-              var t1 = (bound - pos) / u;
-              if (isMax) { if (t1 < tmax) tmax = t1; } else { if (t1 > tmin) tmin = t1; }
-            } else if (u < -1e-6) {
-              var t2 = (bound - pos) / u;
-              if (isMax) { if (t2 > tmin) tmin = t2; } else { if (t2 < tmax) tmax = t2; }
-            } else if (isMax ? pos > bound + 1e-6 : pos < bound - 1e-6) {
-              return null;                           // 该轴无法被此方向修复
-            }
-          }
-          if (tmax < tmin || tmin <= 0.5) return null;   // 无解 / 已完整可见
-          return { dx: ux * tmin, dy: uy * tmin };
-        }
-        var slide = slideTarget(sr);
-        if (slide) {
-          // 仅打开方向：源卡片被视口裁剪 → 原位 → 沿直线平移到完整可见 → 再放大成弹窗
-          wrappedMutate = function () {
-            mutate();
-            try {
-              if (!targetEl.isConnected) return;
-              var tr = targetEl.getBoundingClientRect();
-              if (!tr.width) return;
-              var kf = '@keyframes pnSlide{'
-                + '0%{transform:translate(' + (sr.left - tr.left) + 'px,' + (sr.top - tr.top) + 'px);width:' + sr.width + 'px;height:' + sr.height + 'px;animation-timing-function:cubic-bezier(.2,.7,.4,1)}'
-                + '45%{transform:translate(' + (sr.left + slide.dx - tr.left) + 'px,' + (sr.top + slide.dy - tr.top) + 'px);width:' + sr.width + 'px;height:' + sr.height + 'px;animation-timing-function:cubic-bezier(.4,0,.2,1)}'
-                + '100%{transform:translate(0,0);width:' + tr.width + 'px;height:' + tr.height + 'px}}'
-                + '::view-transition-group(pn-note){animation:pnSlide .4s both}';
-              kfStyle = document.createElement('style');
-              kfStyle.textContent = kf;
-              document.head.appendChild(kfStyle);
-            } catch (e) { /* 彩蛋失败静默降级为普通 morph */ }
-          };
-        }
-      }
       var cleaned = false;
       function cleanup() {
         if (cleaned) return; cleaned = true;
         document.documentElement.classList.remove('vt-close');
         if (sourceEl && sourceEl.style) sourceEl.style.viewTransitionName = '';
         if (targetEl && targetEl.style) targetEl.style.viewTransitionName = '';
-        if (kfStyle && kfStyle.parentNode) kfStyle.parentNode.removeChild(kfStyle);
       }
       var vt;
       try {
@@ -92,7 +36,7 @@
           // 旧快照已在 startViewTransition 时捕获，mutate 后立刻清源命名——
           // 否则共存型 morph（源卡片 + 新目标同名）会因重复 view-transition-name 被 abort
           if (sourceEl && sourceEl.style) sourceEl.style.viewTransitionName = '';
-          wrappedMutate();
+          mutate();
           if (targetEl && targetEl.style) targetEl.style.viewTransitionName = NAME;
         });
       } catch (e) {
@@ -4349,7 +4293,7 @@
     if (!mEdgeSlide) return;
     var on = false;
     try { on = localStorage.getItem('pn_edge_slide') === '1'; } catch (e) {}
-    mEdgeSlide.textContent = '🥚 边缘滑入彩蛋：' + (on ? '开' : '关');
+    mEdgeSlide.textContent = '🥚 弹窗过渡：' + (on ? '编辑式' : '默认');
   }
   if (mEdgeSlide) {
     mEdgeSlide.addEventListener('click', function () {
@@ -4357,7 +4301,7 @@
       try { on = localStorage.getItem('pn_edge_slide') === '1'; } catch (e) {}
       try { localStorage.setItem('pn_edge_slide', on ? '0' : '1'); } catch (e) {}
       syncEdgeSlideText();
-      showToast(on ? '🥚 边缘滑入彩蛋已关闭' : '🥚 边缘滑入彩蛋已开启：把便签滚到屏幕边缘再打开试试', 'success');
+      showToast(on ? '🥚 弹窗过渡已切回默认' : '🥚 弹窗过渡已改为编辑式（淡入淡出，不穿模）', 'success');
     });
     syncEdgeSlideText();
   }

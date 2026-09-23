@@ -76,7 +76,7 @@ if (!isset($_SESSION['user_id'])) {
         <button type="button" id="mMdColors" class="mm-item"><i class="ic ic-palette"></i> 渲染颜色</button>
         <button type="button" id="mIconset" class="mm-item">图标风格</button>
         <a href="https://github.com/conm599/pixel-notes" target="_blank" rel="noopener" class="mm-item"><i class="ic ic-star"></i> GitHub</a>
-        <button type="button" id="mEdgeSlide" class="mm-item">🥚 边缘滑入彩蛋：关</button>
+        <button type="button" id="mEdgeSlide" class="mm-item">🥚 弹窗过渡：默认</button>
         <button type="button" id="mChangePass" class="mm-item"><i class="ic ic-key"></i> 更改密码</button>
         <?php if (isAdminUser()): ?><a href="admin.php" class="mm-item"><i class="ic ic-gear"></i> 管理面板</a><?php endif; ?>
         <button type="button" id="mDelete" class="mm-item mm-danger"><i class="ic ic-trash"></i> 注销账号</button>
@@ -169,6 +169,6 @@ if (!isset($_SESSION['user_id'])) {
         "policyHtml": <?php echo json_encode('<p>图片将上传到你的图床账户「便签」文件夹：</p><ul><li>上传后自动转为<b>可公开访问</b>的图片链接（拿到链接即可查看）</li><li>图片随便签存续；<b>从便签删除后，图床仍保留 30 天</b>供反悔，到期自动清理</li><li>需要长期保留的图片，请到图床把它改为「永久」或自定义时长</li><li>在图床删除图片后，便签中该处将显示占位图</li><li>单张 ≤10MB（自动压缩为 WebP），占用图床配额</li><li>禁止上传违法违规内容；可在图床随时管理或删除</li></ul>', JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE); ?>
     }</script>
     <script src="js/imgbridge.js?v=4"></script>
-    <script src="js/app.js?v=132"></script>
+    <script src="js/app.js?v=134"></script>
 </body>
 </html>
