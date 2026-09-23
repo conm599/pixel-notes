@@ -1,0 +1,7 @@
+# 运行时产物（VPS 拉取对齐用，不入库）
+.well-known/
+frpcdn/
+AImcp/config.php
+AImcp/data/
+config/*.bak-*
+assets/icons/*/ai_edit.*
