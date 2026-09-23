@@ -2089,18 +2089,3 @@ body.mm-open { overflow: hidden; }
 .prompt-input:focus { box-shadow: 3px 3px 0 #000; }
 .prompt-dialog-foot { display: flex; align-items: center; gap: 10px; }
 
-/* === v128/v129 穿模自然化 === */
-/* 收回时暗幕渐退（弹窗本体立即让位给 pn-note 快照，背景渐亮与缩回动画同步） */
-.md-modal-overlay.closing { animation: overlayOut 0.24s ease-out forwards; pointer-events: none; }
-@keyframes overlayOut { from { opacity: 1; } to { opacity: 0; } }
-/* v129「水滴边缘」：morph 飞行快照四边 12px 渐隐（速度/缓动保持浏览器默认不动）——
-   快照压过邻居时边缘是融入而非硬切；起终点与真实卡片同位叠加，羽化处露出的是相同内容，零损失 */
-::view-transition-old(pn-note),
-::view-transition-new(pn-note) {
-  mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%),
-              linear-gradient(0deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%),
-              linear-gradient(0deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
-  mask-composite: intersect;
-  -webkit-mask-composite: source-in;
-}

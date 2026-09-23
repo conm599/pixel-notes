@@ -4464,16 +4464,9 @@
   function closeModal(quiet) {
     var ov = document.querySelector('.md-modal-overlay');
     if (!ov) { restoreAdoptedPlayers(); return; }
-    // v128 穿模自然化：弹窗本体立即消失（pn-note 快照接管视觉），但暗幕保留 ~0.24s 渐退——
-    // 快照飞回卡片期间背景渐亮，不再出现「无暗幕的卡片硬压在邻居上」的生硬穿模感
     var doClose = function () {
       restoreAdoptedPlayers();
-      var modalEl = ov.querySelector('.md-modal');
-      if (modalEl && modalEl.parentNode) modalEl.remove();
-      if (ov.parentNode) {
-        ov.classList.add('closing');
-        setTimeout(function () { if (ov.parentNode) ov.remove(); }, 260);
-      }
+      if (ov.parentNode) ov.remove();
       if (modalEscHandler) {
         document.removeEventListener('keydown', modalEscHandler, true);
         modalEscHandler = null;
