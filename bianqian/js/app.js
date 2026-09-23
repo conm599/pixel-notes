@@ -25,20 +25,41 @@
       var wrappedMutate = mutate;
       if (edgeSlideOn() && sourceEl && sourceEl.isConnected && targetEl) {
         var sr = sourceEl.getBoundingClientRect();   // mutate 前测源 rect
+        // v132：从「卡片中心」朝「屏幕中心」画一条直线，沿这条线平移，
+        // 找到最近的、卡片完整入视口（边距 14px）的位置作为中转点——
+        // 移动方向永远朝屏幕中心，一条直线，不再有贴边折返
         var M = 14;
-        function clipDelta(r) {
-          var dx = 0, dy = 0, vw = window.innerWidth, vh = window.innerHeight;
-          if (r.left < M) dx = M - r.left;
-          if (r.right > vw - M) dx = (vw - M) - r.right;
-          if (r.top < M) dy = M - r.top;
-          if (r.bottom > vh - M) dy = (vh - M) - r.bottom;
-          return { dx: dx, dy: dy };
+        function slideTarget(r) {
+          var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+          var dx = window.innerWidth / 2 - cx, dy = window.innerHeight / 2 - cy;
+          var len = Math.sqrt(dx * dx + dy * dy);
+          if (len < 1) return null;                  // 已在屏幕中心
+          var ux = dx / len, uy = dy / len;
+          var tmin = 0, tmax = Infinity;
+          var edges = [
+            [r.left, ux, M, false],
+            [r.right, ux, window.innerWidth - M, true],
+            [r.top, uy, M, false],
+            [r.bottom, uy, window.innerHeight - M, true]
+          ];
+          for (var i = 0; i < 4; i++) {
+            var pos = edges[i][0], u = edges[i][1], bound = edges[i][2], isMax = edges[i][3];
+            if (u > 1e-6) {
+              var t1 = (bound - pos) / u;
+              if (isMax) { if (t1 < tmax) tmax = t1; } else { if (t1 > tmin) tmin = t1; }
+            } else if (u < -1e-6) {
+              var t2 = (bound - pos) / u;
+              if (isMax) { if (t2 > tmin) tmin = t2; } else { if (t2 < tmax) tmax = t2; }
+            } else if (isMax ? pos > bound + 1e-6 : pos < bound - 1e-6) {
+              return null;                           // 该轴无法被此方向修复
+            }
+          }
+          if (tmax < tmin || tmin <= 0.5) return null;   // 无解 / 已完整可见
+          return { dx: ux * tmin, dy: uy * tmin };
         }
-        var sClip = clipDelta(sr);
-        var sOut = Math.abs(sClip.dx) > 1 || Math.abs(sClip.dy) > 1;
-        if (sOut) {
-          // 仅打开方向：源卡片被视口裁剪 → 原位 → 先平移到完整可见 → 再放大成弹窗；
-          // 没被裁剪时完全不注入，走默认 morph。收回方向不做两段式（避免来回抽搐）。
+        var slide = slideTarget(sr);
+        if (slide) {
+          // 仅打开方向：源卡片被视口裁剪 → 原位 → 沿直线平移到完整可见 → 再放大成弹窗
           wrappedMutate = function () {
             mutate();
             try {
@@ -47,9 +68,9 @@
               if (!tr.width) return;
               var kf = '@keyframes pnSlide{'
                 + '0%{transform:translate(' + (sr.left - tr.left) + 'px,' + (sr.top - tr.top) + 'px);width:' + sr.width + 'px;height:' + sr.height + 'px;animation-timing-function:cubic-bezier(.2,.7,.4,1)}'
-                + '45%{transform:translate(' + (sr.left + sClip.dx - tr.left) + 'px,' + (sr.top + sClip.dy - tr.top) + 'px);width:' + sr.width + 'px;height:' + sr.height + 'px;animation-timing-function:cubic-bezier(.4,0,.2,1)}'
+                + '45%{transform:translate(' + (sr.left + slide.dx - tr.left) + 'px,' + (sr.top + slide.dy - tr.top) + 'px);width:' + sr.width + 'px;height:' + sr.height + 'px;animation-timing-function:cubic-bezier(.4,0,.2,1)}'
                 + '100%{transform:translate(0,0);width:' + tr.width + 'px;height:' + tr.height + 'px}}'
-                + '::view-transition-group(pn-note){animation:pnSlide .38s both}';
+                + '::view-transition-group(pn-note){animation:pnSlide .4s both}';
               kfStyle = document.createElement('style');
               kfStyle.textContent = kf;
               document.head.appendChild(kfStyle);
