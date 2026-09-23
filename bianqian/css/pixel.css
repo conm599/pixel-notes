@@ -2072,3 +2072,35 @@ body.mm-open { overflow: hidden; }
 
 /* v122：VT 收回瞬间冻结卡片过渡（减小 hover 态切换的可见度；抖动根源是 hover 位移参与快照，量级约 2px，暂不深究） */
 .note-card.no-trans, .folder-card.no-trans, .note-card.no-trans * { transition: none !important; animation: none !important; }
+
+/* === 像素风输入弹窗（v127：新建文件夹/改名，替代原生 prompt）=== */
+.prompt-dialog { max-width: 460px; width: 92vw; }
+.prompt-dialog-body { padding: 16px 18px; }
+.prompt-label {
+  font-family: var(--font-body); font-size: 13px; color: var(--text-dim);
+  margin-bottom: 8px; letter-spacing: 1px;
+}
+.prompt-input {
+  width: 100%; padding: 10px 12px;
+  font-family: var(--font-body); font-size: 14px;
+  background: #1a1a2e; color: #fff;
+  border: 3px solid var(--accent2); outline: none;
+}
+.prompt-input:focus { box-shadow: 3px 3px 0 #000; }
+.prompt-dialog-foot { display: flex; align-items: center; gap: 10px; }
+
+/* === v128/v129 穿模自然化 === */
+/* 收回时暗幕渐退（弹窗本体立即让位给 pn-note 快照，背景渐亮与缩回动画同步） */
+.md-modal-overlay.closing { animation: overlayOut 0.24s ease-out forwards; pointer-events: none; }
+@keyframes overlayOut { from { opacity: 1; } to { opacity: 0; } }
+/* v129「水滴边缘」：morph 飞行快照四边 12px 渐隐（速度/缓动保持浏览器默认不动）——
+   快照压过邻居时边缘是融入而非硬切；起终点与真实卡片同位叠加，羽化处露出的是相同内容，零损失 */
+::view-transition-old(pn-note),
+::view-transition-new(pn-note) {
+  mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%),
+              linear-gradient(0deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%),
+              linear-gradient(0deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
+}

@@ -461,28 +461,71 @@
     }, true);
   }
 
+  // 像素风输入弹窗（v127）：替代原生 prompt——新建文件夹 / 文件夹改名共用
+  // callback(name) 在点「确定」或回车时触发；✕ / Esc / 点遮罩 = 不动
+  function openPromptDialog(title, label, defaultValue, callback) {
+    var overlay = mkEl('div', 'md-modal-overlay');
+    overlay.style.zIndex = '21000';
+    var modal = mkEl('div', 'md-modal prompt-dialog');
+    var head = mkEl('div', 'md-modal-head');
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-pencil"></i> ' + title));
+    var closeBtn = mkBtn('<i class="ic ic-close"></i>', '取消');
+    closeBtn.className = 'md-modal-close';
+    head.appendChild(closeBtn);
+    modal.appendChild(head);
+    var body = mkEl('div', 'md-modal-body prompt-dialog-body');
+    body.appendChild(mkEl('div', 'prompt-label', label));
+    var input = mkEl('input', 'prompt-input');
+    input.type = 'text';
+    input.maxLength = 60;
+    input.value = defaultValue || '';
+    input.placeholder = '输入名称，回车确认';
+    body.appendChild(input);
+    modal.appendChild(body);
+    var foot = mkEl('div', 'md-modal-foot prompt-dialog-foot');
+    var okBtn = mkBtn('<i class="ic ic-checkall"></i> 确定', '确认');
+    okBtn.className = 'btn btn-primary btn-sm';
+    foot.appendChild(mkEl('span', 'move-foot-spacer'));
+    foot.appendChild(okBtn);
+    modal.appendChild(foot);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    function close() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+    function submit() {
+      var name = input.value.trim();
+      if (!name) { showToast('❌ 名称不能为空', 'error'); input.focus(); return; }
+      close();
+      callback(name);
+    }
+    closeBtn.addEventListener('click', close);
+    okBtn.addEventListener('click', submit);
+    overlay.addEventListener('pointerdown', function (e) { if (e.target === overlay) close(); });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') submit();
+      if (e.key === 'Escape') close();
+    });
+    setTimeout(function () { input.focus(); input.select(); }, 60);
+  }
+
   async function promptNewFolder(parentId) {
-    var name = prompt(parentId ? '新子文件夹名：' : '新根文件夹名：');
-    if (name === null) return;
-    name = name.trim();
-    if (!name) { showToast('❌ 文件夹名不能为空', 'error'); return; }
-    try {
-      var r = await folderApi('POST', { name: name, parent_id: parentId });
-      if (r.success) { showToast('✅ 文件夹已创建', 'success'); await loadFolders(); refreshView(); }
-      else showToast('❌ ' + (r.message || '创建失败'), 'error');
-    } catch (e) { showToast('❌ 创建失败', 'error'); }
+    openPromptDialog(parentId ? '新建子文件夹' : '新建文件夹', '文件夹名：', '', async function (name) {
+      try {
+        var r = await folderApi('POST', { name: name, parent_id: parentId });
+        if (r.success) { showToast('✅ 文件夹已创建', 'success'); await loadFolders(); refreshView(); }
+        else showToast('❌ ' + (r.message || '创建失败'), 'error');
+      } catch (e) { showToast('❌ 创建失败', 'error'); }
+    });
   }
 
   async function promptRenameFolder(folder) {
-    var name = prompt('新的文件夹名：', folder.name);
-    if (name === null) return;
-    name = name.trim();
-    if (!name) { showToast('❌ 名称不能为空', 'error'); return; }
-    try {
-      var r = await folderApi('PUT', { id: folder.id, name: name });
-      if (r.success) { showToast('✅ 已改名', 'success'); await loadFolders(); refreshView(); }
-      else showToast('❌ ' + (r.message || '改名失败'), 'error');
-    } catch (e) { showToast('❌ 改名失败', 'error'); }
+    openPromptDialog('文件夹改名', '新的名称：', folder.name, async function (name) {
+      try {
+        var r = await folderApi('PUT', { id: folder.id, name: name });
+        if (r.success) { showToast('✅ 已改名', 'success'); await loadFolders(); refreshView(); }
+        else showToast('❌ ' + (r.message || '改名失败'), 'error');
+      } catch (e) { showToast('❌ 改名失败', 'error'); }
+    });
   }
 
   // 目录选择器：把某文件夹/便签移到目标父级（含虚拟根）——v116 起走目录选择弹窗（自己及后代自动排除）
@@ -4421,9 +4464,16 @@
   function closeModal(quiet) {
     var ov = document.querySelector('.md-modal-overlay');
     if (!ov) { restoreAdoptedPlayers(); return; }
+    // v128 穿模自然化：弹窗本体立即消失（pn-note 快照接管视觉），但暗幕保留 ~0.24s 渐退——
+    // 快照飞回卡片期间背景渐亮，不再出现「无暗幕的卡片硬压在邻居上」的生硬穿模感
     var doClose = function () {
       restoreAdoptedPlayers();
-      if (ov.parentNode) ov.remove();
+      var modalEl = ov.querySelector('.md-modal');
+      if (modalEl && modalEl.parentNode) modalEl.remove();
+      if (ov.parentNode) {
+        ov.classList.add('closing');
+        setTimeout(function () { if (ov.parentNode) ov.remove(); }, 260);
+      }
       if (modalEscHandler) {
         document.removeEventListener('keydown', modalEscHandler, true);
         modalEscHandler = null;
@@ -4431,14 +4481,14 @@
     };
     // 非静默关闭：弹窗 morph 缩回源卡片（灵动岛原路径返回；root 切换由 morph 内部处理）；源卡片已不在 DOM 时退化为淡出
     if (!quiet && PNVT.supported()) {
-      var modalEl = ov.querySelector('.md-modal');
+      var modalEl2 = ov.querySelector('.md-modal');
       var srcCard = modalSourceCard;
       // 收回期间冻结卡片过渡（约 2px 的 hover 态切换被快照切换放大，影响极小，保留此冻结减小可见度）
       if (srcCard && srcCard.isConnected) {
         srcCard.classList.add('no-trans');
         setTimeout(function () { srcCard.classList.remove('no-trans'); }, 300);
       }
-      PNVT.morph((modalEl && modalEl.isConnected) ? modalEl : null, doClose, srcCard);
+      PNVT.morph((modalEl2 && modalEl2.isConnected) ? modalEl2 : null, doClose, srcCard);
     } else {
       doClose();
     }
