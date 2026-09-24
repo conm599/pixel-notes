@@ -2096,3 +2096,60 @@ body.mm-open { overflow: hidden; }
   animation: modalFadeOut 0.15s ease-in forwards;
 }
 @keyframes modalFadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+/* ============================================================
+ * v107：AI 编辑全屏对话（用户反馈「弹窗太不协调，页面既然是全屏它也可以全屏」）
+ * 同优先级后定义胜出——本块必须在旧 .md-modal.ai-modal 之后。
+ * ============================================================ */
+/* === 全屏容器：遮罩退化为纯背景，AI 面板铺满视口 === */
+.md-modal-overlay.ai-modal-overlay { padding: 0; display: block; }
+.md-modal.ai-modal-full {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%; height: 100dvh;
+  max-width: none; max-height: none;
+  border: none; box-shadow: none;
+  animation: editorEnter 0.18s ease-out;   /* 与全屏编辑器同款淡入上浮 */
+}
+.ai-modal-full .md-modal-head { flex-shrink: 0; }
+.ai-modal-full .md-modal-body { flex: 1; min-height: 0; padding: 0; }
+/* 聊天内容限宽居中：宽屏下不铺满整行（对话列观感），窄屏自然自适应 */
+.ai-modal-full .ai-chat-log > *,
+.ai-modal-full .ai-composer { width: 100%; max-width: 900px; margin-left: auto; margin-right: auto; }
+.ai-modal-full .ai-composer {
+  width: calc(100% - 32px);
+  margin-bottom: max(14px, env(safe-area-inset-bottom));
+}
+
+/* === 流式 AI 气泡：head 里的阶段文案 / 停止键 === */
+.ai-live-phase { color: var(--text-dim); font-size: 10px; margin-left: 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v110：生成中阶段文案呼吸闪烁——长思考期间界面有「活着」的反馈，不是卡死 */
+.ai-msg-live .ai-live-phase { animation: ai-stream-blink 1.2s steps(2) infinite; }
+/* v139：停止并入发送键——生成中同一个键变 spinner，再点一次即停止（不再有单独的停止按钮） */
+.ai-composer-actions .ai-send.busy { background: #b8456b; }
+.ai-msg-live .ai-msg-text { border-left-color: var(--accent2); }
+/* 收尾后的结论行 */
+.ai-live-note { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+/* 收尾后正文转 Markdown 渲染：解除流式期的纯文本排版约束 */
+.ai-live-final { white-space: normal; }
+
+/* === 深度思考折叠卡（参考产品样式：标题一行 + 展开正文） === */
+.ai-think-card { border: 2px solid var(--border-color); background: rgba(74, 240, 255, 0.04); margin: 0 0 6px; }
+.ai-think-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; min-height: 32px; }
+.ai-think-ic { flex-shrink: 0; }
+.ai-think-label { flex: 1; min-width: 0; font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-think-arrow { flex-shrink: 0; color: var(--text-dim); font-size: 13px; transition: transform 0.15s; }
+.ai-think-card.open .ai-think-arrow { transform: rotate(90deg); }
+.ai-think-body {
+  padding: 0 10px 8px; border-top: 2px dashed var(--border-color);
+  font-size: 11px; line-height: 1.75; color: var(--text-dim);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 220px; overflow-y: auto;
+}
+
+/* === v108：深度思考快捷开关（输入框旁的小地球，点击直接开关 enable_thinking） === */
+.ai-think-toggle.on {
+  color: var(--accent2);
+  border-color: var(--accent2);
+  background: rgba(74, 240, 255, 0.12);
+  box-shadow: 0 0 8px rgba(74, 240, 255, 0.35);
+}

@@ -351,7 +351,7 @@ function aiEditToolsSchema() {
     };
     return array(
         array('type' => 'function', 'function' => array('name' => 'replace_text',
-            'description' => '在便签中把 old_string 替换为 new_string（最常用）。old_string 必须与便签当前内容逐字一致（含空格/换行/Markdown 符号），且必须唯一；不唯一时加相邻行使其唯一。new_string 留空 = 删除该片段。',
+            'description' => '在便签中把 old_string 替换为 new_string（最常用）。old_string 必须与便签当前内容逐字一致（含空格/换行/Markdown 符号），且必须唯一；不唯一时加相邻行使其唯一。new_string 留空 = 删除该片段。成功返回 changed（改动处当前内容，用它确认生效）与 current_tail（仅文档末尾，改动不在末尾时不变属正常）。',
             'parameters' => $props(array('old_string' => array('type' => 'string', 'description' => '要被替换的原文片段（逐字复制，含前后各 1-2 行上下文以保证唯一）'), 'new_string' => array('type' => 'string', 'description' => '替换后的文字；留空则删除该片段'))))), 
         array('type' => 'function', 'function' => array('name' => 'append_text',
             'description' => '把内容追加到便签末尾（用户偏好追加式写作时优先用它；不改动已有内容）。',
@@ -389,6 +389,23 @@ function aiTailSnippet($tail, $n = 300) {
         return $len > $n ? '…' . mb_substr($tail, $len - $n, $n, 'UTF-8') : $tail;
     }
     return strlen($tail) > $n ? '…' . substr($tail, -$n) : $tail;
+}
+
+/** 多字节安全的首次定位（找不到返回 false） */
+function aiIndex($text, $needle) {
+    if ($needle === '' || $needle === null) return false;
+    return function_exists('mb_strpos') ? mb_strpos((string)$text, (string)$needle) : strpos((string)$text, (string)$needle);
+}
+
+/** 改动处上下文片段：替换成功后回给模型确认「确实改了」（±160 字，首尾以 … 标记截断） */
+function aiAroundChar($text, $pos, $before = 160, $after = 200) {
+    if ($pos === false || $pos === null) return '';
+    $text = (string)$text;
+    $len = function_exists('mb_strlen') ? mb_strlen($text, 'UTF-8') : strlen($text);
+    $start = max(0, (int)$pos - $before);
+    $n = max(1, ((int)$pos + $after) - $start);
+    $sub = function_exists('mb_substr') ? mb_substr($text, $start, $n, 'UTF-8') : substr($text, $start, $n);
+    return ($start > 0 ? '…' : '') . $sub . (($start + $n) < $len ? '…' : '');
 }
 
 /** 工具输出的人类可读详情（SSE tool_result.detail，前端工具卡片展开可见） */
@@ -598,7 +615,8 @@ function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid, $curNoteId 
             $touched = true;
             // appended = 本次追加的内容；current_tail = 追加之后的便签末尾（模型据此确认结果）
             $ap = function_exists('mb_substr') ? mb_substr($t, 0, 300, 'UTF-8') : substr($t, 0, 300);
-            return json_encode(array_merge(array('ok' => true, 'action' => 'append', 'appended' => $ap), $excerpt()), $jp);
+            return json_encode(array_merge(array('ok' => true, 'action' => 'append', 'appended' => $ap,
+                'note' => 'current_tail 是追加后的文档末尾，应能看到 appended 的内容'), $excerpt()), $jp);
         case 'replace_text':
             $se = (string)(isset($args['old_string']) ? $args['old_string'] : (isset($args['search']) ? $args['search'] : ''));
             $rp = (string)(isset($args['new_string']) ? $args['new_string'] : (isset($args['replace']) ? $args['replace'] : ''));
@@ -608,11 +626,21 @@ function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid, $curNoteId 
                 return json_encode(array_merge(array('ok' => false, 'error' => 'ambiguous', 'count' => $cntExact,
                     'hint' => 'old_string 在便签中出现 ' . $cntExact . ' 次；请把前后各 1-2 行一起放进 old_string 使其唯一'), $excerpt()), $jp);
             }
+            $posOld = aiIndex($work, $se);   // 替换前定位（删除型没有 new_string，用旧位置做上下文）
             $how = '';
             $r = aiEditApplyReplace($work, $se, $rp, $how);
             if ($r['ok']) {
                 $touched = true;
-                return json_encode(array_merge(array('ok' => true, 'action' => 'replace', 'matched' => $how), $excerpt()), $jp);
+                // changed = 改动处前后的当前内容：模型据此确认改动真的落地。
+                // 只回 current_tail（文档末尾）会让模型误判——改动不在末尾时它跟改前一样，
+                // 实测模型会反复怀疑「替换没生效」（曾出现整整一轮思考在纠结这件事）。
+                $changed = '';
+                $posNew = aiIndex($work, $rp);
+                $changed = ($posNew !== false) ? aiAroundChar($work, $posNew) : aiAroundChar($work, $posOld);
+                return json_encode(array_merge(array('ok' => true, 'action' => 'replace', 'matched' => $how,
+                    'changed' => $changed,
+                    'note' => 'changed 是改动处的当前内容（确认生效用）；current_tail 只截文档末尾，改动不在末尾时它与改前相同，属正常，勿据此怀疑替换失败'),
+                    $excerpt()), $jp);
             }
             // Aider 式失败回灌：给原文最相似片段 + 行号 + 重试指令
             $fb = array('ok' => false, 'error' => 'not_found',
@@ -805,7 +833,7 @@ function ownEndpoint($baseUrl) {
  * 调用 OpenAI 兼容 chat/completions（url/key/model 由调用方指定）
  * $onDelta 非空时走流式（stream:true），逐 token 回调转发；上游不支持流式则自动降级为整段返回（结果不变）
  */
-function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null, $onDelta = null, $tools = null, &$toolsRejected = null) {
+function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null, $onDelta = null, $tools = null, &$toolsRejected = null, $onThink = null) {
     global $AI_SSE;   // SSE 保活心跳需要感知是否已在事件流模式（sseStart 置位）
     $payloadArr = array(
         'model' => $model,
@@ -844,7 +872,7 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
         );
         if ($onDelta !== null) {
             // 流式：WRITEFUNCTION 逐块解析上游 SSE 的 data 行，提取 delta.content 即时回调
-            $sseBuf = ''; $raw = ''; $tcBuf = array();            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $data) use (&$sseBuf, &$text, &$raw, $onDelta, &$tcBuf) {
+            $sseBuf = ''; $raw = ''; $tcBuf = array();            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $data) use (&$sseBuf, &$text, &$raw, $onDelta, &$tcBuf, $onThink) {
                 if ($data === '') return 0;
                 $raw .= $data;
                 $sseBuf .= $data;
@@ -861,6 +889,11 @@ function aiChat($url, $key, $model, $messages, $maxTokens = 8000, $extra = null,
                     if (isset($j['choices'][0]['delta']['content']) && is_string($j['choices'][0]['delta']['content'])) $delta = $j['choices'][0]['delta']['content'];
                     elseif (isset($j['choices'][0]['text']) && is_string($j['choices'][0]['text'])) $delta = $j['choices'][0]['text'];
                     if ($delta !== '') { $text .= $delta; $onDelta($delta); }
+                    // 推理模型的思考增量：单独回调给前端「深度思考」折叠卡（不算正文）
+                    $rDelta = '';
+                    if (isset($j['choices'][0]['delta']['reasoning_content']) && is_string($j['choices'][0]['delta']['reasoning_content'])) $rDelta = $j['choices'][0]['delta']['reasoning_content'];
+                    elseif (isset($j['choices'][0]['delta']['reasoning']) && is_string($j['choices'][0]['delta']['reasoning'])) $rDelta = $j['choices'][0]['delta']['reasoning'];
+                    if ($rDelta !== '' && $onThink !== null) $onThink($rDelta);
                     // 原生 tool_calls 分片累积（index → id/name/arguments）
                     if (isset($j['choices'][0]['delta']['tool_calls']) && is_array($j['choices'][0]['delta']['tool_calls'])) {
                         foreach ($j['choices'][0]['delta']['tool_calls'] as $tc) {
@@ -2119,13 +2152,17 @@ try {
         // sseStart 内会 session_write_close() 释放锁，节流标记必须在此之前落盘
         $_SESSION['ai_last'] = $now;
         sseStart();
-        // 思考标签过滤：在 <think>...</think> 内的 delta 不转发给前端预览
+        // 思考转发：文本协议模型的 <think> 文本块（下方 $onDelta 内剥离）与推理模型的
+        // reasoning_content 增量（aiChat 的 $onThink 回调）统一走 think 事件，前端渲染为折叠卡
+        $onThink = function ($t) { $t = (string)$t; if ($t !== '') sseSend('think', array('t' => $t)); };
+        // 思考标签过滤：<think>...</think> 内的 delta 不混进正文，改转发 think 事件
         $_thinkIn = false;
-        $onDelta = function ($t) use (&$_thinkIn) {
+        $onDelta = function ($t) use (&$_thinkIn, $onThink) {
             while ($t !== '') {
                 if ($_thinkIn) {
                     $end = stripos($t, '</think>');
-                    if ($end === false) return;   // 整段都在 think 里
+                    if ($end === false) { $onThink($t); return; }   // 整段都在 think 里
+                    $onThink(substr($t, 0, $end));
                     $t = substr($t, $end + 8);
                     $_thinkIn = false;
                 } else {
@@ -2168,7 +2205,7 @@ try {
                     foreach (aiClarifyContext($clarifyRounds) as $m) $segMsgs[] = $m;
                 }
                 for ($att = 1; $att <= 2; $att++) {
-                    $r = aiChat($url, $key, $model, $segMsgs, 16000, $extra, $onDelta);
+                    $r = aiChat($url, $key, $model, $segMsgs, 16000, $extra, $onDelta, null, $toolsRejected, $onThink);
                     if (!$r['ok']) {
                         aiOut(array('success' => false, 'message' => '第 ' . ($ci + 1) . ' 段处理失败：' . $r['err'], 'usage' => $usage));
                     }
@@ -2275,7 +2312,7 @@ try {
             if ($loopGuard > 14) break;
             sseSend('phase', array('t' => $attempt > 1 ? '🔁 自动纠错第 ' . ($attempt - 1) . ' 次…' : '🤖 正在生成…'));
             $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta,
-                        $nativeTools ? $editTools : null, $toolsRejected);
+                        $nativeTools ? $editTools : null, $toolsRejected, $onThink);
             // 上游不支持 tools（400/422 或明确报 tools 错误）→ 去掉 tools 重试一次，转文本协议
             // 只有错误明确指向 tools 参数能力（tool_choice / tools / tool use / function call / 工具调用）才降级；
             // 旧的 /tool/i 过宽——任何带 "tool" 字样的瞬时错误都会把支持工具的模型误判为不支持
@@ -2283,7 +2320,7 @@ try {
                 $nativeTools = false;
                 sseSend('phase', array('t' => 'ℹ️ 该模型不支持原生工具调用，切换文本协议'));
                 $messages[] = array('role' => 'user', 'content' => '【系统】当前上游不支持原生工具调用，请改用文本协议输出（<<<TOOL>>>{json}<<<END>>>）。');
-                $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta, null, $toolsRejected);
+                $r = aiChat($url, $key, $model, $messages, 16000, $extra, $onDelta, null, $toolsRejected, $onThink);
             }
 
             if (!$r['ok']) {

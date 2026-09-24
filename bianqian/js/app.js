@@ -2057,6 +2057,7 @@
   function closeAiDialog() {
     var ov = document.querySelector('.ai-modal');
     if (ov) ov.closest('.md-modal-overlay').remove();
+    aiLiveH = null;   // 会话结束：流式句柄随对话框一起丢弃（上下文不持久化，重开即新会话）
   }
 
   // AI 编辑流式请求（protocol v5）：解析服务端 SSE（delta/phase/done），done 返回最终结果对象
@@ -2100,6 +2101,7 @@
         blocks.push({ ev: ev, d: d });
         if (handlers) {
           if (ev === 'delta' && typeof handlers.onDelta === 'function') handlers.onDelta(d.t || '');
+          if (ev === 'think' && typeof handlers.onThink === 'function') handlers.onThink(d.t || '');
           if (ev === 'phase' && typeof handlers.onPhase === 'function') handlers.onPhase(d.t || '');
           if (ev === 'tool' && typeof handlers.onTool === 'function') handlers.onTool(d);
           if (ev === 'tool_result' && typeof handlers.onToolResult === 'function') handlers.onToolResult(d);
@@ -2836,78 +2838,240 @@
     return p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
-  // 可折叠工具卡片（对应参考产品的工具调用块）
-  function aiToolCard(label, brief, ok, detail) {
-    var card = mkEl('div', 'ai-tool-card');
-    card.setAttribute('data-status', ok === false ? 'error' : 'success');
-    var head = mkEl('div', 'ai-tool-head');
-    head.appendChild(mkEl('span', 'ai-tool-ic', ok === false ? '⚠️' : '🔧'));
-    head.appendChild(mkEl('span', 'ai-tool-name', label || '工具'));
-    head.appendChild(mkEl('span', 'ai-tool-brief', brief || ''));
-    if (detail) head.appendChild(mkEl('span', 'ai-tool-arrow', '\u203a'));
-    card.appendChild(head);
-    if (detail) {
-      var body = mkEl('div', 'ai-tool-body', detail);
-      body.style.display = 'none';
-      card.appendChild(body);
-      head.addEventListener('click', function () {
-        var open = body.style.display !== 'none';
-        body.style.display = open ? 'none' : '';
-        card.classList.toggle('open', !open);
-      });
-    }
-    return card;
+  // ============== 流式 AI 气泡（v137：SSE 输出直接长进聊天气泡） ==============
+  // 一次生成的完整过程（阶段 / 思考 / 工具 / 正文）都挂在同一个 AI 气泡上；
+  // 结束后气泡留在会话记录里（仅本次对话框内存，关闭或刷新即重置）。
+  var aiLiveH = null;   // 当前生成的气泡句柄
+
+  // 协议原文隐藏：思考标签、工具调用块整体不展示（工具调用另有折叠卡呈现）
+  function aiHideProtocol(t) {
+    return String(t || '')
+      .replace(/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/gi, '')
+      .replace(/<<<TOOL>>>[\s\S]*?(?:<<<END>>>|$)/gi, '')
+      .replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '');
   }
 
-  // 追加一轮对话：用户气泡 + AI 气泡（含工具卡片/说明/动作行）
-  function aiConvAppend(userText, aiText, tools) {
-    var box = document.querySelector('.ai-conv');
-    if (!box) return;
-    box.style.display = '';
+  function aiLiveScroll(force) {
+    var lg = document.querySelector('.ai-chat-log');
+    if (!lg) return;
+    if (force || (lg.scrollHeight - lg.scrollTop - lg.clientHeight) < 64) lg.scrollTop = lg.scrollHeight;
+  }
 
+  // 用户气泡（发送即上屏；澄清轮由调用方决定不重复记）
+  function aiChatPushUser(text) {
+    var box = document.querySelector('.ai-conv');
+    if (!box || !text) return;
+    box.style.display = '';
     var u = mkEl('div', 'ai-msg ai-msg-user');
     var uh = mkEl('div', 'ai-msg-head');
     uh.appendChild(mkEl('span', 'ai-msg-time', aiMsgTime()));
     uh.appendChild(mkEl('span', 'ai-msg-name', '你'));
     u.appendChild(uh);
-    u.appendChild(mkEl('div', 'ai-msg-bubble', userText));
+    u.appendChild(mkEl('div', 'ai-msg-bubble', text));
     box.appendChild(u);
-
-    var a = mkEl('div', 'ai-msg ai-msg-ai');
-    var ah = mkEl('div', 'ai-msg-head');
-    ah.appendChild(mkEl('span', 'ai-avatar', 'AI'));
-    ah.appendChild(mkEl('span', 'ai-msg-name', '便签 AI'));
-    ah.appendChild(mkEl('span', 'ai-msg-time', aiMsgTime()));
-    a.appendChild(ah);
-    (tools || []).forEach(function (t) {
-      a.appendChild(aiToolCard(t.label, t.brief, t.ok, t.detail));
-    });
-    if (aiText) a.appendChild(mkEl('div', 'ai-msg-text', aiText));
-
-    var acts = mkEl('div', 'ai-msg-actions');
-    var cp = mkBtn('<i class="ic ic-copy"></i>', '复制这段说明');
-    cp.className = 'ai-act';
-    cp.addEventListener('click', function () {
-      try {
-        navigator.clipboard.writeText(aiText || '');
-        showToast('📋 已复制', 'success');
-      } catch (e) { showToast('复制失败', 'error'); }
-    });
-    var rf = mkBtn('<i class="ic ic-recycle"></i>', '用同一句指令重试');
-    rf.className = 'ai-act';
-    rf.addEventListener('click', function () {
-      var inp = document.querySelector('.ai-modal .ai-instruction');
-      if (inp) { inp.value = userText; inp.focus(); }
-      var run = document.querySelector('.ai-modal .md-modal-foot .btn-primary');
-      if (run) run.click();
-    });
-    acts.appendChild(cp);
-    acts.appendChild(rf);
-    a.appendChild(acts);
-
-    box.appendChild(a);
-    box.scrollTop = box.scrollHeight;
+    aiLiveScroll(true);
   }
+
+  // 创建本轮 AI 气泡（流式载体）：head（头像/名字/时间/阶段/停止）+ 思考卡/工具卡 + 正文
+  function aiLiveBegin(phaseText) {
+    var box = document.querySelector('.ai-conv');
+    if (!box) return null;
+    box.style.display = '';
+    var a = mkEl('div', 'ai-msg ai-msg-ai ai-msg-live');
+    var head = mkEl('div', 'ai-msg-head');
+    head.appendChild(mkEl('span', 'ai-avatar', 'AI'));
+    head.appendChild(mkEl('span', 'ai-msg-name', '便签 AI'));
+    head.appendChild(mkEl('span', 'ai-msg-time', aiMsgTime()));
+    var phase = mkEl('span', 'ai-live-phase', '');
+    head.appendChild(phase);
+    a.appendChild(head);
+    var parts = mkEl('div', 'ai-live-parts');   // 思考卡 / 工具卡按发生顺序插入
+    var textEl = mkEl('div', 'ai-msg-text ai-live-text');
+    a.appendChild(parts);
+    a.appendChild(textEl);
+    box.appendChild(a);
+
+    aiToolTrace = [];
+    aiToolDetails = [];
+
+    var h = {
+      el: a, phaseEl: phase, parts: parts, textEl: textEl,
+      raw: '', raf: 0, done: false,
+      full: '', rawDirty: false, shown: 0,   // typewriter: full=stripped text, shown=revealed chars
+      thinkCard: null, thinkBody: null, thinkLabel: null, thinkText: '', thinkT0: 0, thinkT1: 0, thinkTimer: 0,
+      tools: {}, toolKeys: []
+    };
+
+    // 思考计时：首个思考增量开始，正文出现（或收尾）时冻结为「深度思考（X.Xs）」并自动收起
+    function freezeThink() {
+      if (!h.thinkT0 || h.thinkT1) return;
+      h.thinkT1 = Date.now();
+      if (h.thinkTimer) { clearInterval(h.thinkTimer); h.thinkTimer = 0; }
+      if (h.thinkLabel) h.thinkLabel.textContent = '深度思考（' + Math.max(0.1, (h.thinkT1 - h.thinkT0) / 1000).toFixed(1) + 's）';
+      if (h.thinkCard) {
+        if (h.thinkBody) h.thinkBody.style.display = 'none';
+        h.thinkCard.classList.remove('open');
+      }
+    }
+    function ensureThink() {
+      if (h.thinkCard) return;
+      h.thinkCard = mkEl('div', 'ai-think-card open');
+      var th = mkEl('div', 'ai-think-head');
+      th.appendChild(mkEl('span', 'ai-think-ic', '💭'));
+      h.thinkLabel = mkEl('span', 'ai-think-label', '深度思考');
+      th.appendChild(h.thinkLabel);
+      th.appendChild(mkEl('span', 'ai-think-arrow', '\u203a'));
+      h.thinkBody = mkEl('div', 'ai-think-body');
+      h.thinkCard.appendChild(th);
+      h.thinkCard.appendChild(h.thinkBody);
+      th.addEventListener('click', function () {
+        var open = h.thinkBody.style.display !== 'none';
+        h.thinkBody.style.display = open ? 'none' : '';
+        h.thinkCard.classList.toggle('open', !open);
+      });
+      h.parts.appendChild(h.thinkCard);
+    }
+    // 打字机追赶：上游/透明代理可能一次给一大块（观感像「整段闪现」），这里按帧逐字吐出；
+    // 积压越多吐得越快（最少 2 字/帧约 120 字/秒，跟得上常规模型输出），观感始终逐字蹦出
+    function renderText() {
+      h.raf = 0;
+      if (h.rawDirty) { h.full = aiHideProtocol(h.raw); h.rawDirty = false; }
+      var full = h.full || '';
+      if (h.shown < full.length) {
+        var backlog = full.length - h.shown;
+        h.shown = Math.min(full.length, h.shown + Math.max(2, Math.ceil(backlog / 4)));
+      }
+      var shown = full.slice(0, h.shown);
+      if (shown.length > 12000) shown = '…（前面已省略）' + String.fromCharCode(10) + shown.slice(-12000);
+      if (h.textEl.textContent !== shown) h.textEl.textContent = shown;
+      aiLiveScroll();
+      if (!h.done) h.raf = requestAnimationFrame(renderText);   // 生成期间常驻循环，每帧成本极低
+    }
+
+    h.setPhase = function (t) { if (t) h.phaseEl.textContent = t; };
+    h.pushThink = function (t) {
+      if (h.done || !t) return;
+      // 多轮思考：编辑 Agent 会在工具轮之间再次思考（思考→调工具→再思考…）。
+      // 上一张卡已冻结说明那是上一轮的思考，必须另起一张新卡——
+      // 否则续写进已收起的旧卡，用户看到的要么是内容乱窜要么像被静默丢弃。
+      if (h.thinkT1) {
+        h.thinkCard = null; h.thinkBody = null; h.thinkLabel = null;
+        h.thinkText = ''; h.thinkT0 = 0; h.thinkT1 = 0;
+      }
+      var freshCard = !h.thinkCard;
+      ensureThink();
+      if (freshCard) h.setPhase('💭 深度思考中…');   // 每轮思考开头都明示「正在思考」，界面看着不是卡死
+      if (!h.thinkT0) {
+        h.thinkT0 = Date.now();
+        h.thinkTimer = setInterval(function () {
+          if (!h.thinkLabel) return;
+          var end = h.thinkT1 || Date.now();
+          h.thinkLabel.textContent = '深度思考（' + Math.max(0.1, (end - h.thinkT0) / 1000).toFixed(1) + 's）';
+        }, 500);
+      }
+      h.thinkText += t;
+      var shown = h.thinkText;
+      if (shown.length > 6000) shown = '…（前面已省略）\n' + shown.slice(-6000);
+      h.thinkBody.textContent = shown;
+      aiLiveScroll();
+    };
+    h.pushText = function (t) {
+      if (h.done || !t) return;
+      freezeThink();
+      h.raw += t;
+      h.rawDirty = true;
+      if (!h.raf) h.raf = requestAnimationFrame(renderText);
+    };
+    // 工具折叠卡：运行时 data-status=running，结果回填后 success/error（点击展开明细）
+    h.addTool = function (d) {
+      if (h.done || !d) return;
+      freezeThink();   // 开始调工具 = 本轮思考结束：冻结时长并收起该轮思考卡
+      var key = String(d.id != null ? d.id : (d.round != null ? d.round : 'k' + (h.toolKeys.length + 1)));
+      if (h.tools[key]) return;
+      var label = d.label || AI_TOOL_LABEL[d.name] || d.name || '工具';
+      var card = mkEl('div', 'ai-tool-card');
+      card.setAttribute('data-status', 'running');
+      var chead = mkEl('div', 'ai-tool-head');
+      chead.appendChild(mkEl('span', 'ai-tool-ic', '🔧'));
+      chead.appendChild(mkEl('span', 'ai-tool-name', label));
+      var brief = mkEl('span', 'ai-tool-brief', '进行中…');
+      chead.appendChild(brief);
+      chead.appendChild(mkEl('span', 'ai-tool-arrow', '\u203a'));
+      var cbody = mkEl('div', 'ai-tool-body');
+      cbody.style.display = 'none';
+      card.appendChild(chead);
+      card.appendChild(cbody);
+      chead.addEventListener('click', function () {
+        var open = cbody.style.display !== 'none';
+        cbody.style.display = open ? 'none' : '';
+        card.classList.toggle('open', !open);
+      });
+      h.parts.appendChild(card);
+      h.tools[key] = { card: card, brief: brief, body: cbody, label: label };
+      h.toolKeys.push(key);
+      if (aiToolTrace[aiToolTrace.length - 1] !== label) aiToolTrace.push(label);
+      aiLiveScroll();
+    };
+    h.setToolResult = function (d) {
+      if (!d) return;
+      var key = String(d.id != null ? d.id : '');
+      var rec = h.tools[key] || h.tools[h.toolKeys[h.toolKeys.length - 1]];   // 无 id 时落到最后一个
+      if (!rec) return;
+      var ok = d.ok !== false;
+      var briefText = String(d.brief || (ok ? '完成' : '失败'));
+      rec.card.setAttribute('data-status', ok ? 'success' : 'error');
+      rec.brief.textContent = briefText;
+      if (!ok) rec.brief.style.color = 'var(--danger)';
+      if (d.detail) rec.body.textContent = String(d.detail);
+      aiToolDetails.push({ label: rec.label, brief: briefText, ok: ok, detail: String(d.detail || '') });
+      aiLiveScroll();
+    };
+    // 收尾：冻结思考、去掉停止键与进行中样式，正文转 Markdown 渲染；note 为一句结论
+    h.end = function (note) {
+      if (h.done) return;
+      h.done = true;
+      freezeThink();
+      if (h.thinkTimer) { clearInterval(h.thinkTimer); h.thinkTimer = 0; }
+      if (h.raf) { cancelAnimationFrame(h.raf); h.raf = 0; }
+      h.el.classList.remove('ai-msg-live');
+      if (h.phaseEl) h.phaseEl.textContent = '';   // 阶段文案只属于生成中，收尾即清
+      var finalText = aiHideProtocol(h.raw).trim();
+      if (finalText) {
+        try {
+          h.textEl.className = 'ai-msg-text note-content md-body ai-live-final';
+          h.textEl.innerHTML = window.PixelMD.render(finalText);
+        } catch (e) { h.textEl.textContent = finalText; }
+        var acts = mkEl('div', 'ai-msg-actions');
+        var cp = mkBtn('<i class="ic ic-copy"></i>', '复制这段内容');
+        cp.className = 'ai-act';
+        cp.addEventListener('click', function () {
+          try { navigator.clipboard.writeText(finalText); showToast('📋 已复制', 'success'); }
+          catch (e) { showToast('复制失败', 'error'); }
+        });
+        acts.appendChild(cp);
+        h.el.appendChild(acts);
+      } else {
+        h.textEl.textContent = '';
+      }
+      if (note) h.el.appendChild(mkEl('div', 'ai-live-note', note));
+      aiLiveScroll(true);
+    };
+    aiLiveH = h;
+    h.setPhase(phaseText || '');
+    aiLiveScroll(true);
+    return h;
+  }
+
+  function aiLiveEnsure() {
+    if (!aiLiveH) aiLiveBegin('🤖 正在生成…');
+    return aiLiveH;
+  }
+  function aiLivePhase(t) { if (aiLiveH) aiLiveH.setPhase(t); }
+  function aiLiveText(t) { var h = aiLiveEnsure(); if (h) h.pushText(t); }
+  function aiLiveThink(t) { var h = aiLiveEnsure(); if (h) h.pushThink(t); }
+  function aiLiveTool(d) { var h = aiLiveEnsure(); if (h) h.addTool(d); }
+  function aiLiveToolResult(d) { if (aiLiveH) aiLiveH.setToolResult(d); }
+  function aiLiveEnd(note) { if (aiLiveH) aiLiveH.end(note); }
 
   function aiConvNote(text) {
     var box = document.querySelector('.ai-conv');
@@ -3035,7 +3199,7 @@
       aiHistory.push({ role: 'assistant', content: '（已写入便签：' + summary + '）' });
       if (aiHistory.length > 12) aiHistory = aiHistory.slice(-12);
     }
-    aiConvAppend(instr || '（编辑指令）', '已写入编辑器 · ' + summary, aiToolDetails.slice());
+    aiConvNote('✅ 已写入编辑器 · ' + summary);
     showToast('✅ 已写入 ' + k + ' 处改动（记得保存便签），可直接继续下一条指令', 'success');
     aiCloseReviewAnd('done');   // 直接回到对话输入，不需要「继续对话」按钮
   }
@@ -3146,8 +3310,8 @@
     }
     if (!aiRemoteState) refreshAiRemote().then(function () { renderUsage(); queryManualUsage(); });
     else queryManualUsage();
-    var overlay = mkEl('div', 'md-modal-overlay');
-    var modal = mkEl('div', 'md-modal ai-modal');
+    var overlay = mkEl('div', 'md-modal-overlay ai-modal-overlay');
+    var modal = mkEl('div', 'md-modal ai-modal ai-modal-full');
 
     var head = mkEl('div', 'md-modal-head');
     var headLeft = mkEl('div', 'md-modal-head-left');
@@ -3180,106 +3344,24 @@
     var status = mkEl('div', 'ai-status');
     status.style.display = 'none';
 
-    // ---- 流式生成预览（protocol v5）：实时显示 AI 输出（剥协议标记）+ 工具调用行 + 可中断 ----
-    var streamBox = mkEl('div', 'ai-stream');
-    streamBox.style.display = 'none';
-    var streamHead = mkEl('div', 'ai-stream-head');
-    var streamPhase = mkEl('div', 'ai-stream-phase');
-    var streamStop = mkBtn('<i class="ic ic-close"></i> 停止');
-    streamStop.className = 'btn btn-outline btn-xs ai-stream-stop';
-    streamStop.addEventListener('click', function () { aiAbortRun(); });
-    streamHead.appendChild(streamPhase);
-    streamHead.appendChild(streamStop);
-    var streamText = mkEl('div', 'ai-stream-text');
-    var toolLog = mkEl('div', 'ai-tool-log');
-    toolLog.style.display = 'none';
-    streamBox.appendChild(streamHead);
-    streamBox.appendChild(streamText);
-    streamBox.appendChild(toolLog);
-    var streamRaw = '';
-    var streamRaf = 0;
-    var streamFollow = true;   // 滚动跟随：用户上滑离底超过 48px 就暂停自动跟随
-    streamBox.addEventListener('scroll', function () {
-      streamFollow = (streamBox.scrollHeight - streamBox.scrollTop - streamBox.clientHeight) < 48;
-    });
-    function stripAiMarkers(t) {
-      return String(t || '').replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '');
-    }
-    function renderStream() {
-      streamRaf = 0;
-      var shown = streamRaw;
-      if (shown.length > 12000) shown = '…（前面已省略）\n' + shown.slice(-12000);
-      streamText.textContent = stripAiMarkers(shown);
-      if (streamFollow) streamBox.scrollTop = streamBox.scrollHeight;
-    }
-    function showStream(phaseText) {
-      streamRaw = '';
-      streamText.textContent = '';
-      clearToolLog();
-      aiToolTrace = [];
-      aiToolDetails = [];
-      setPhaseText(streamPhase, phaseText || '');
-      streamBox.style.display = '';
-      streamFollow = true;
-      streamBox.scrollTop = 0;
-    }
-    function onStreamPhase(t) {
-      if (t) setPhaseText(streamPhase, t);
-    }
+    // ---- 流式 AI 气泡适配层（v137：SSE 输出直接长进聊天气泡，实现在 aiLiveBegin） ----
+    // 这些回调由 runAiFlow 传给 aiApiStream / AIDirect.edit，统一转发到当前气泡句柄。
+    function onStreamPhase(t) { aiLivePhase(t); }
     function onStreamDelta(t) {
       aiSetState('streaming');
-      streamRaw += t;
-      if (!streamRaf) streamRaf = requestAnimationFrame(renderStream);
+      aiLiveText(t);
     }
-    function clearToolLog() {
-      toolLog.innerHTML = '';
-      toolLog.style.display = 'none';
-    }
-    // 工具行 status：running → success|error（data-status 着色）
     function onStreamTool(d) {
       if (!d) return;
       aiSetState('tool_call');
-      toolLog.style.display = '';
-      var row = mkEl('div', 'ai-tool-row');
-      var key = String(d.id != null ? d.id : (d.round != null ? d.round : toolLog.children.length + 1));
-      row.setAttribute('data-key', key);
-      row.setAttribute('data-status', 'running');
-      row.appendChild(mkEl('span', 'ai-tool-ic', '🔧'));
-      var tLabel = d.label || AI_TOOL_LABEL[d.name] || d.name || '工具';
-      row.appendChild(mkEl('span', 'ai-tool-name', tLabel));
-      if (aiToolTrace[aiToolTrace.length - 1] !== tLabel) aiToolTrace.push(tLabel);
-      var brief = mkEl('span', 'ai-tool-brief', '进行中…');
-      row.appendChild(brief);
-      row.appendChild(mkEl('span', 'ai-tool-st', '进行中'));
-      toolLog.appendChild(row);
-      if (streamFollow) toolLog.scrollTop = toolLog.scrollHeight;
+      aiLiveTool(d);
     }
     function onStreamToolResult(d) {
       if (!d) return;
-      var key = String(d.id != null ? d.id : '');
-      var row = null, rows = toolLog.querySelectorAll('.ai-tool-row');
-      for (var i = rows.length - 1; i >= 0; i--) {
-        if (rows[i].getAttribute('data-key') === key) { row = rows[i]; break; }
-      }
-      if (!row && rows.length) row = rows[rows.length - 1];
-      if (!row) return;
-      var ok = d.ok !== false;
-      row.setAttribute('data-status', ok ? 'success' : 'error');
-      var brief = row.querySelector('.ai-tool-brief');
-      if (brief) {
-        brief.textContent = String(d.brief || (ok ? '完成' : '失败'));
-        if (!ok) brief.style.color = 'var(--danger)';
-      }
-      var st = row.querySelector('.ai-tool-st');
-      if (st) st.textContent = ok ? '完成' : '失败';
-      aiToolDetails.push({ label: (row.querySelector('.ai-tool-name') || {}).textContent || '工具',
-                           brief: String(d.brief || (ok ? '完成' : '失败')), ok: ok,
-                           detail: String(d.detail || '') });
+      aiLiveToolResult(d);
     }
-    function hideStream() {
-      streamBox.style.display = 'none';
-      streamRaw = '';
-    }
+    // 思考增量（服务端 SSE think 事件 / 直连推理模型的 reasoning_content）
+    function onStreamThink(t) { aiLiveThink(t); }
 
     // ---- 澄清提问态：AI 拿不准时逐题回答，可多轮 ----
     var clarifyWrap = mkEl('div', 'ai-clarify');
@@ -3289,7 +3371,7 @@
     var aiResult = null;
 
     function showResultMode() {
-      hideStream();
+      aiLiveEnd('🗂 已生成改动，请在审阅页确认');
       ta.value = '';   // 聊天式：这一轮已发出并进入审阅，清空输入框方便直接写下一句
       ta.style.display = 'none';
       status.style.display = 'none';
@@ -3389,6 +3471,9 @@
         openPolicyDialog(function () { runBtn.click(); });
         return;
       }
+      // 首轮发送：用户气泡即时上屏；澄清续跑不重复记（另给一条提示行）
+      if (!clarifyRounds || !clarifyRounds.length) aiChatPushUser(instruction);
+      else aiConvNote('📝 已提交澄清回答，继续生成…');
       var prefs = loadAiPrefs();
       runBtn.disabled = true;
       syncSend(true);
@@ -3405,9 +3490,17 @@
       aiSetState('thinking');
       aiAbortCtrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       var ok = false;
+      // 断线自动重试（v138）：网络层失败（连接中断 / SSE 未收完 / 无法连接接口）最多尝试 3 次；
+      // 用户主动停止、未登录、业务错误（配额/政策等）不重试——那些重试也没意义
+      var AI_MAX_TRY = 3;
+      function isRetryableNetErr(e) {
+        var m = String((e && e.message) || '');
+        if (e && e.name === 'AbortError') return false;
+        if (/abort|已停止|未登录|政策/.test(m)) return false;
+        return true;
+      }
       function clearUp() {
         clearInterval(dotTimer);
-        hideStream();
         aiAbortCtrl = null;
         if (!ok && !document.querySelector('.policy-modal')) {
           runBtn.disabled = false;
@@ -3416,14 +3509,16 @@
           syncSend(false);
         }
       }
-      // 错误统一成低调卡片（kind 归一），替代满屏红框
+      // 错误统一成低调卡片（kind 归一），替代满屏红框；气泡先收尾再挂卡片
       function showAiError(msg, httpStatus) {
+        aiLiveEnd('⚠️ 本次生成未完成');
         status.innerHTML = '';
         status.style.display = 'none';
         var old = body.querySelector('.ai-err-card');
         if (old && old.parentNode) old.parentNode.removeChild(old);
         var card = aiErrCard(msg, httpStatus, function () { runAiFlow(clarifyRounds); });
-        body.appendChild(card);
+        chatLog.appendChild(card);
+        aiLiveScroll(true);
       }
       // 失败收尾：主动停止保留已收内容；其余走错误卡片
       function handleRunError(e) {
@@ -3435,7 +3530,7 @@
           syncSend(false);
           ta.disabled = false;
           syncSend(false);
-          setPhaseText(streamPhase, '⏹️ 已停止（保留已生成内容供参考）');
+          aiLiveEnd('⏹️ 已停止（保留已生成内容供参考）');
           showAiError('已停止生成', 0);
           return;
         }
@@ -3446,7 +3541,7 @@
       // 澄清响应：需要用户回答时转入澄清态（本次请求不计配额）
       function handleClarify(r) {
         if (r && r.need_clarify && Array.isArray(r.questions) && r.questions.length) {
-          hideStream();
+          aiLiveEnd('❓ AI 想先和你确认几个问题（见下方）');
           showClarifyMode(r.questions, r.clarifyRounds || clarifyRounds);
           return true;
         }
@@ -3454,8 +3549,9 @@
       }
       // 自有代理直连模式：请求完全不经过平台服务器（独立模块 ai-direct.js 处理）
       if (prefs.mode === 'own' && prefs.ownProxy && window.AIDirect) {
+        for (var dTry = 1; dTry <= AI_MAX_TRY; dTry++) {
         try {
-          showStream('🤖 正在生成…');
+          aiLiveBegin(dTry > 1 ? '🔁 连接中断，自动重试 ' + (dTry - 1) + '/' + (AI_MAX_TRY - 1) + '…' : '🤖 正在生成…');
           var r = await window.AIDirect.edit({
             title: newTitle.value,
             content: newContent.value,
@@ -3474,12 +3570,12 @@
             history: aiHistory.slice(-12),
             onPhase: onStreamPhase,
             onDelta: onStreamDelta,
+            onThink: onStreamThink,
             onTool: onStreamTool,
             onToolResult: onStreamToolResult,
             signal: aiAbortCtrl ? aiAbortCtrl.signal : undefined
           });
           clearUp();
-          hideStream();
           if (handleClarify(r)) return;
           if (r.success && typeof r.content === 'string') {
             aiResult = {
@@ -3501,12 +3597,19 @@
             showAiError(r.message || 'AI 编辑失败', 0);
           }
         } catch (e) {
+          if (isRetryableNetErr(e) && dTry < AI_MAX_TRY) {
+            aiLiveEnd('🔌 连接中断，自动重试 ' + dTry + '/' + (AI_MAX_TRY - 1) + '…');
+            continue;
+          }
           handleRunError(e);
+        }
+        break;
         }
         return;
       }
+      for (var aiTry = 1; aiTry <= AI_MAX_TRY; aiTry++) {
       try {
-        showStream('🤖 正在生成…');
+        aiLiveBegin(aiTry > 1 ? '🔁 连接中断，自动重试 ' + (aiTry - 1) + '/' + (AI_MAX_TRY - 1) + '…' : '🤖 正在生成…');
         var r = await aiApiStream({
           action: 'edit',
           noteId: (typeof editingId === 'number' && editingId > 0) ? editingId : 0,
@@ -3529,11 +3632,11 @@
             bodyKey: prefs.ownBodyKey,
             bodyJson: prefs.ownBodyJson
           }
-        }, { onDelta: onStreamDelta, onPhase: onStreamPhase, onTool: onStreamTool, onToolResult: onStreamToolResult,
+        }, { onDelta: onStreamDelta, onPhase: onStreamPhase, onThink: onStreamThink, onTool: onStreamTool, onToolResult: onStreamToolResult,
              signal: aiAbortCtrl ? aiAbortCtrl.signal : undefined });
         clearUp();
-        hideStream();
         if (r.need_policy) {
+          aiLiveEnd('📋 需要先同意使用政策');
           openPolicyDialog(function () { runBtn.click(); });
         } else if (handleClarify(r)) {
           return;
@@ -3559,7 +3662,13 @@
           showAiError(r.message || 'AI 编辑失败', 0);
         }
       } catch (e) {
+        if (isRetryableNetErr(e) && aiTry < AI_MAX_TRY) {
+          aiLiveEnd('🔌 连接中断，自动重试 ' + aiTry + '/' + (AI_MAX_TRY - 1) + '…');
+          continue;
+        }
         handleRunError(e);
+      }
+      break;
       }
     }
 
@@ -3593,12 +3702,16 @@
       ta.style.height = Math.min(ta.scrollHeight + 2, 160) + 'px';
     });
 
-    // 发送键状态同步：流程忙碌 = spinner，空闲 = 发送图标
+    // 发送键状态同步（v139：与「停止」合并为一个键——生成中显示 spinner，再点一次即停止）
     var sendBtn;
+    var sendBusy = false;
     function syncSend(busy) {
       if (!sendBtn) return;
-      if (busy) { sendBtn.disabled = true; sendBtn.innerHTML = '<i class="ic ic-robot-pink ic-spin"></i>'; }
-      else { sendBtn.disabled = false; sendBtn.innerHTML = '<i class="ic ic-send"></i>'; }
+      sendBusy = !!busy;
+      sendBtn.disabled = false;   // 忙碌时不禁用：同一个键第二击 = 停止
+      sendBtn.innerHTML = busy ? '<i class="ic ic-robot-pink ic-spin"></i>' : '<i class="ic ic-send"></i>';
+      sendBtn.title = busy ? '停止生成（保留已生成内容）' : '发送（Ctrl+Enter）';
+      sendBtn.classList.toggle('busy', !!busy);
     }
 
     // 底部输入条：输入框 + 右下（撤回 / 图片 / 发送）——图片走图床联动插入直链
@@ -3624,18 +3737,41 @@
       });
       inp.click();
     });
+    // 深度思考快捷开关（v138）：不走设置页，输入框旁一键切换。
+    // 平台密钥 / 管理员 / 自有 Key 三种模式统一生效——服务端与直连模块都会注入 enable_thinking
+    var thinkBtn = mkBtn('🌐', '深度思考');
+    thinkBtn.type = 'button';
+    thinkBtn.className = 'ai-icon-btn ai-think-toggle';
+    function syncThinkBtn() {
+      var on = !!loadAiPrefs().ownDeepThink;
+      thinkBtn.classList.toggle('on', on);
+      thinkBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      thinkBtn.title = '深度思考：' + (on ? '已开启（点击关闭）' : '已关闭（点击开启，模型支持时输出思考过程）');
+    }
+    thinkBtn.addEventListener('click', function () {
+      var p = loadAiPrefs();
+      p.ownDeepThink = !p.ownDeepThink;
+      saveAiPrefsLocal(p);
+      if (p.sync) saveAiPrefsRemote(p, false);   // 开了跨端同步就顺手同步，失败不影响本地
+      syncThinkBtn();
+      showToast(p.ownDeepThink ? '🌐 深度思考已开启（下一条指令生效）' : '🌐 深度思考已关闭', 'success');
+    });
+    syncThinkBtn();
     composerActions.appendChild(undoBtn);
+    composerActions.appendChild(thinkBtn);
     composerActions.appendChild(imgBtn);
     composer.appendChild(ta);
     sendBtn = mkBtn('<i class="ic ic-send"></i>', '发送（Ctrl+Enter）');
     sendBtn.className = 'ai-send';
     sendBtn.type = 'button';
-    sendBtn.addEventListener('click', function () { runBtn.click(); });
+    sendBtn.addEventListener('click', function () {
+      if (sendBusy) { aiAbortRun(); return; }   // 生成中再点一次 = 停止
+      runBtn.click();
+    });
     composerActions.appendChild(sendBtn);
     composer.appendChild(composerActions);
 
     chatLog.appendChild(convBox);
-    chatLog.appendChild(streamBox);
     chatLog.appendChild(status);
     chatLog.appendChild(clarifyWrap);
     body.appendChild(chatLog);
@@ -4038,6 +4174,7 @@
     mmBind('mTutorial', function () { var b = document.getElementById('btnTutorial'); if (b) b.click(); });
     mmBind('mImgBridge', function () { var b = document.getElementById('btnImgBridge'); if (b) b.click(); });
     mmBind('mMdColors', function () { var b = document.getElementById('btnMdColors'); if (b) b.click(); });
+    mmBind('mAiSettings', function () { var b = document.getElementById('btnAiSettings'); if (b) b.click(); else openAiSettings(function () {}); });
     mmBind('mIconset', function () { var b = document.getElementById('btnIconset'); if (b) b.click(); else if (window.PixelIconset) window.PixelIconset.set(window.PixelIconset.get() === 'mix' ? 'v1' : (window.PixelIconset.get() === 'v1' ? 'v2' : 'mix')); });
     mmBind('mChangePass', function () { var b = document.getElementById('btnChangePass'); if (b) b.click(); });
     mmBind('mLogout', function () { var f = document.querySelector('form[action="logout.php"]'); if (f) f.submit(); });
