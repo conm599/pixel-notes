@@ -2153,3 +2153,18 @@ body.mm-open { overflow: hidden; }
   background: rgba(74, 240, 255, 0.12);
   box-shadow: 0 0 8px rgba(74, 240, 255, 0.35);
 }
+
+/* === v111：AI 整理对话全屏化（直接复用编辑对话的全屏与气泡架构） === */
+.md-modal.ai-modal-full.classify-modal { width: 100%; max-width: none; }   /* 覆盖旧 .classify-modal 的 560px 限宽 */
+/* 底部动作行：一键整理 / 撤销 / 清对话 靠左，发送靠右；窄屏自动换行 */
+.classify-modal .ai-composer-actions { flex-wrap: wrap; row-gap: 8px; }
+.classify-modal .ai-composer-actions > .ai-send { margin-left: auto; }
+.classify-modal .ai-composer-actions .btn { min-height: 34px; display: inline-flex; align-items: center; gap: 4px; }
+
+/* === v112：AI 对话共用动作按钮（↩ 撤销 / 🌐 深思 / ⚡ 一键整理 / 🗑 清对话 / ➤ 发送） === */
+.ai-icon-btn.busy,
+.ai-icon-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.ai-oneclick.busy { border-color: var(--accent2); }
+.ai-composer-actions .ai-undo-btn:disabled { opacity: 0.45; }
+.classify-modal .ai-composer-actions { flex-wrap: nowrap; overflow-x: auto; }
+.classify-modal .ai-composer-actions > .ai-send { margin-left: auto; }

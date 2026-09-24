@@ -1362,145 +1362,109 @@
     try { sessionStorage.removeItem(AI_CHATS_KEY); } catch (e) {}
   }
 
+  // AI 整理对话（v144：与编辑对话共用同一套全屏外壳 + 气泡/思考卡/工具卡/打字机流式；v143 起全屏化）
   function openClassifyDialog() {
     if (classifyOverlay) return;
-    var overlay = mkEl('div', 'md-modal-overlay');
-    overlay.style.zIndex = '20000';
+    var shell = aiChatShell({
+      title: '<i class="ic ic-robot"></i> AI 整理助手',
+      placeholder: '告诉 AI 您的整理偏好（如：只整理和 Python 相关的便签）',
+      maxlength: 500,
+      zIndex: 20000,
+      modalClass: 'classify-modal',
+      onClose: closeClassifyDialog,
+      onEnter: function () { submitChat(); }
+    });
+    var overlay = shell.overlay, modal = shell.modal, chatLog = shell.chatLog;
+    var ta = shell.ta, actions = shell.actions;
+    classifyOverlay = overlay;
 
-    var modal = mkEl('div', 'md-modal classify-modal');
-
-    var head = mkEl('div', 'md-modal-head');
-    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-robot"></i> AI 整理助手'));
-    var closeBtn = mkBtn('<i class="ic ic-close"></i> 关闭', '关闭');
-    closeBtn.className = 'md-modal-close';
-    closeBtn.addEventListener('click', closeClassifyDialog);
-    head.appendChild(closeBtn);
-    modal.appendChild(head);
-
-    // 对话区
-    var chatLog = mkEl('div', 'classify-chat-log', '');
-    chatLog.id = 'aiChatLog';
-
+    // 对话历史（sessionStorage 持久，与旧版一致）
     var chats = loadAiChats();
-    chats.forEach(function (c) { renderChatBubble(chatLog, c.role, c.content); });
+    chats.forEach(function (c) { classifyBubble(c.role, c.content); });
 
-    modal.appendChild(chatLog);
-
-    // 一键整理区（撤销按钮也收进这里——它只对 AI 整理生效，放工具栏占地方）
-    var oneClickWrap = mkEl('div', 'classify-oneclick');
-    var oneClickBtn = mkBtn('⚡ 一键自动整理', '让 AI 处理所有未整理的便签');
-    oneClickBtn.className = 'btn btn-primary btn-sm';
-    oneClickBtn.addEventListener('click', function () {
-      appendUserChat('[一键自动整理]（没写指令）');
-      runAiClassifyInternal(null);
-    });
-    oneClickWrap.appendChild(oneClickBtn);
-
-    var undoBtn = mkBtn('<i class="ic ic-back"></i> 撤销上次整理', '撤销本会话最近一次 AI 整理（仅限本次浏览器会话）');
+    // 动作行（与编辑对话同一套公共按钮）：↩ 撤销上次整理 / 🌐 深度思考 / ⚡ 一键整理 / 🗑 清对话 / ➤ 发送
+    var undoBtn = aiMakeUndoBtn('ic-recycle', '撤销本会话最近一次 AI 整理（仅限本次浏览器会话）', function () { undoLastClassify(); });
     undoBtn.id = 'btnUndoAiOff';
-    undoBtn.className = 'btn btn-outline btn-sm';
-    undoBtn.disabled = true;   // 常驻但禁用态起步：无日志时灰显"无可撤销"，有日志时点亮
-    undoBtn.addEventListener('click', function () { if (!undoBtn.disabled) undoLastClassify(); });
-    oneClickWrap.appendChild(undoBtn);
-
-    // 输入行
-    var inputWrap = mkEl('div', 'classify-input-wrap');
-    var input = mkEl('input', 'classify-input');
-    input.type = 'text';
-    input.placeholder = '告诉 AI 您的整理偏好（如：只整理和 Python 相关的便签）';
-    input.maxLength = 500;
-    input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submitChat(); }
+    undoBtn.disabled = true;   // 常驻但禁用态起步：无日志时灰显，有日志时点亮
+    var oneClickBtn = aiMakeOneClickBtn(function () {
+      appendUserChat('[一键自动整理]');
+      // 注入内部指令（与手动输入同路径）：不带指令时模型倾向跳过工具直接给结论，导致工具卡不出现
+      runAiClassifyInternal('请全面检查所有便签与文件夹的归类是否合理；需要核对内容时先调用工具查看（如读取便签、查看文件夹），再给出最终方案；确实无需调整才允许空方案。');
     });
-
-    var sendBtn = mkBtn('发送', '发送整理指示');
-    sendBtn.className = 'btn btn-outline btn-sm';
+    oneClickBtn.id = 'btnOneClickRun';
+    var clearHistBtn = mkBtn('<i class="ic ic-trash"></i>', '清空对话记录');
+    clearHistBtn.type = 'button';
+    clearHistBtn.className = 'ai-icon-btn';
+    clearHistBtn.addEventListener('click', function () {
+      clearAiChats();
+      var c = modal.querySelector('.ai-conv');
+      if (c) c.innerHTML = '';
+      classifyBubble('assistant', '对话已清空。');
+    });
+    var sendBtn = mkBtn('<i class="ic ic-send"></i>', '发送（Enter）');
+    sendBtn.className = 'ai-send';
+    sendBtn.type = 'button';
     sendBtn.addEventListener('click', submitChat);
 
-    var clearHistBtn = mkBtn('<i class="ic ic-trash"></i> 清对话', '清空对话记录（本页重启后保留）');
-    clearHistBtn.className = 'btn btn-outline btn-sm';
-    clearHistBtn.addEventListener('click', function () { clearAiChats(); chatLog.innerHTML = ''; renderChatBubble(chatLog, 'assistant', '对话已清空。'); });
+    actions.appendChild(undoBtn);
+    actions.appendChild(aiMakeThinkBtn());
+    actions.appendChild(oneClickBtn);
+    actions.appendChild(clearHistBtn);
+    actions.appendChild(sendBtn);
 
     function submitChat() {
-      var text = input.value.trim();
+      var text = ta.value.trim();
       if (!text) { showToast('⚠️ 先输入指令', 'error'); return; }
-      input.value = '';
+      ta.value = '';
       appendUserChat(text);
       runAiClassifyInternal(text);
     }
 
     function appendUserChat(text) {
-      renderChatBubble(chatLog, 'user', text);
+      classifyBubble('user', text);
       var chatsNow = loadAiChats();
       chatsNow.push({ role: 'user', content: text });
       saveAiChats(chatsNow);
     }
 
-    inputWrap.appendChild(input); inputWrap.appendChild(sendBtn); inputWrap.appendChild(clearHistBtn);
-    modal.appendChild(oneClickWrap); modal.appendChild(inputWrap);
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-    classifyOverlay = overlay;
-
-    input.focus();
-    checkPendingClassify();   // 打开拟态框即刷新撤销按钮（按钮已收进本框）
+    aiLiveScroll(true);
+    setTimeout(function () { ta.focus(); }, 50);
+    checkPendingClassify();   // 打开即刷新撤销按钮
   }
 
   function closeClassifyDialog() {
     if (classifyOverlay) { classifyOverlay.remove(); classifyOverlay = null; }
-    currentFolderId = currentFolderId;   // keep current view
+    aiLiveH = null;       // 关窗即弃句柄：流若仍在跑，后续事件无处可落（安全）
+    aiLiveScope = null;
   }
 
-  function renderChatBubble(chatLog, role, text) {
-    if (!chatLog) return;
-    var b = mkEl('div', 'chat-bubble ' + role, '');
-    b.innerHTML = '';
-    var textEl = mkEl('div', 'chat-text');
-    textEl.textContent = text;
-    b.appendChild(textEl);
-    chatLog.appendChild(b);
-    chatLog.scrollTop = chatLog.scrollHeight;
+  // 整理对话气泡：与编辑对话同款（用户右气泡 / AI 左气泡 + Markdown 渲染）
+  function classifyBubble(role, text) {
+    if (role === 'user') { aiChatPushUser(text); return; }
+    var box = aiLiveRoot().querySelector('.ai-conv');
+    if (!box) return;
+    box.style.display = '';
+    var a = mkEl('div', 'ai-msg ai-msg-ai');
+    var head = mkEl('div', 'ai-msg-head');
+    head.appendChild(mkEl('span', 'ai-avatar', 'AI'));
+    head.appendChild(mkEl('span', 'ai-msg-name', '整理助手'));
+    head.appendChild(mkEl('span', 'ai-msg-time', aiMsgTime()));
+    a.appendChild(head);
+    var t = mkEl('div', 'ai-msg-text note-content md-body');
+    try { t.innerHTML = window.PixelMD.render(String(text || '')); }
+    catch (e) { t.textContent = String(text || ''); }
+    a.appendChild(t);
+    box.appendChild(a);
+    aiLiveScroll(true);
   }
 
   function runAiClassifyInternal(extraInstruction) {
     var manifest = buildClassifyManifest();
     if (manifest.length === 0) { showToast('⚠️ 没有便签可整理', 'error'); return; }
 
-    var chatLog = document.getElementById('aiChatLog');
-    // Agent 式气泡：实时显示思考流 / 工具调用卡片 / 最终结果
-    var agentBubble = null, thinkEl = null, toolsEl = null;
-    if (chatLog) {
-      agentBubble = mkEl('div', 'chat-bubble assistant agent');
-      var phaseEl = mkEl('div', 'agent-phase');
-      setPhaseText(phaseEl, '🤖 开始分析…');
-      thinkEl = mkEl('div', 'chat-text agent-think');
-      toolsEl = mkEl('div', 'agent-tools');
-      agentBubble.appendChild(phaseEl);
-      agentBubble.appendChild(thinkEl);
-      agentBubble.appendChild(toolsEl);
-      chatLog.appendChild(agentBubble);
-      chatLog.scrollTop = chatLog.scrollHeight;
-    }
-    function setPhase(t) { if (agentBubble) { agentBubble.querySelector('.agent-phase').textContent = t; chatLog.scrollTop = chatLog.scrollHeight; } }
-    function appendThink(t) { if (thinkEl) { thinkEl.textContent += t; chatLog.scrollTop = chatLog.scrollHeight; } }
-    function appendTool(name, args, brief) {
-      if (!toolsEl) return;
-      var card = mkEl('div', 'tool-card');
-      var head = mkEl('div', 'tool-card-head', '🔧 ' + name + (args ? '（' + args + '）' : ''));
-      card.appendChild(head);
-      if (brief) { var body = mkEl('div', 'tool-card-body'); body.textContent = brief; card.appendChild(body); }
-      toolsEl.appendChild(card);
-      chatLog.scrollTop = chatLog.scrollHeight;
-    }
-    // 最终把 Agent 气泡收尾成一句总结（存进对话记忆）
-    function finalizeAgent(text) {
-      if (chatLog && agentBubble) {
-        // 移除思考过程，只留一句总结，便于回看历史
-        agentBubble.querySelector('.agent-phase').textContent = text;
-        thinkEl.remove(); toolsEl.remove();
-        chatLog.scrollTop = chatLog.scrollHeight;
-      }
-    }
+    // 流式气泡走编辑对话同款机制（打字机正文 / 思考折叠卡 / 工具折叠卡）
+    aiLiveBegin('🤖 开始分析…');
+    classifyRunning = true; aiSyncOneClickBtns();   // ⚡ 按钮进入运行态
 
     var folderTree = buildFolderTreeManifest();
     var promptText = '请整理以下便签与文件夹。现有文件夹结构如下：\n' + (folderTree.length ? folderTree.join('\n') : '(无)\n');
@@ -1521,34 +1485,27 @@
         platformKey: classPrefs.platformKey,
         ownBaseUrl: classPrefs.ownBaseUrl,
         ownApiKey: classPrefs.ownApiKey,
-        ownModel: classPrefs.ownModel
+        ownModel: classPrefs.ownModel,
+        deepThink: classPrefs.ownDeepThink   // v144：整理流程同样吃「深度思考」开关
       }
     }, {
-      onPhase: function (t) { setPhase(t); },
-      onDelta: function (t) { appendThink(t); },
-      onTool: function (d) { appendTool(d.name, d.args, null); },
-      onToolResult: function (d) {
-        // 工具结果追加到最近一张工具卡片里
-        if (!toolsEl) return;
-        var last = toolsEl.lastElementChild;
-        if (last) {
-          var body = mkEl('div', 'tool-card-body');
-          body.textContent = d.brief || '';
-          last.appendChild(body);
-          chatLog.scrollTop = chatLog.scrollHeight;
-        }
-      }
+      onPhase: function (t) { aiLivePhase(t); },
+      onDelta: function (t) { aiLiveText(t); },
+      onThink: function (t) { aiLiveThink(t); },
+      onTool: function (d) { aiLiveTool(d); },
+      onToolResult: function (d) { aiLiveToolResult(d); }
     })
       .then(function (result) {
+        classifyRunning = false; aiSyncOneClickBtns();
         if (!result.success) {
-          finalizeAgent('❌ ' + (result.message || 'AI 返回失败'));
+          aiLiveEnd('❌ ' + (result.message || 'AI 返回失败'));
           showToast('❌ ' + (result.message || 'AI 返回失败'), 'error');
           return;
         }
         var plan = result.plan;
         var ops = plan && plan.ops ? plan.ops : [];
         if (ops.length === 0) {
-          finalizeAgent('✅ 分析完成：无需任何操作。');
+          aiLiveEnd('✅ 分析完成：无需任何操作。');
           var chats = loadAiChats(); chats.push({ role: 'assistant', content: '无需操作' }); saveAiChats(chats); return;
         }
         var moveCount = ops.filter(function (o) { return o.op === 'move'; }).length;
@@ -1569,14 +1526,15 @@
         if (colorCount) parts.push('改色 ' + colorCount + ' 条');
         if (pinCount) parts.push('置顶 ' + pinCount + ' 条');
         var msg = '📦 建议：' + parts.join('，') + '。请在预览面板确认具体方案。';
-        finalizeAgent(msg);
+        aiLiveEnd(msg);
         var chats = loadAiChats();
         chats.push({ role: 'assistant', content: msg }); saveAiChats(chats);
         aiClassifyPending = ops;
         renderClassifyPreview(ops, manifest);
       })
       .catch(function (err) {
-        finalizeAgent('❌ 网络错误：' + err);
+        aiLiveEnd('❌ 网络错误：' + err);
+        classifyRunning = false; aiSyncOneClickBtns();
       });
   }
 
@@ -1797,8 +1755,7 @@
         showToast('❌ ' + (result.message || '无可撤销操作'), 'error');
         return;
       }
-      var chatLog = document.getElementById('aiChatLog');
-      if (chatLog) renderChatBubble(chatLog, 'assistant', '↩️ 已撤销上次整理，' + result.restored + ' 项操作已还原。');
+      classifyBubble('assistant', '↩️ 已撤销上次整理，' + result.restored + ' 项操作已还原。');
       showToast('↩️ 已撤销，' + result.restored + ' 项操作已还原', 'success');
       await loadFolders(); refreshView();
       if (!result.still_more) document.getElementById('btnUndoAiOff').disabled = true;
@@ -2058,6 +2015,7 @@
     var ov = document.querySelector('.ai-modal');
     if (ov) ov.closest('.md-modal-overlay').remove();
     aiLiveH = null;   // 会话结束：流式句柄随对话框一起丢弃（上下文不持久化，重开即新会话）
+    aiLiveScope = null;   // scope released
   }
 
   // AI 编辑流式请求（protocol v5）：解析服务端 SSE（delta/phase/done），done 返回最终结果对象
@@ -2842,24 +2800,32 @@
   // 一次生成的完整过程（阶段 / 思考 / 工具 / 正文）都挂在同一个 AI 气泡上；
   // 结束后气泡留在会话记录里（仅本次对话框内存，关闭或刷新即重置）。
   var aiLiveH = null;   // 当前生成的气泡句柄
+  var aiLiveScope = null;   // 当前流式气泡所属弹窗根（编辑对话 / 整理对话各用各的，防串台）
 
   // 协议原文隐藏：思考标签、工具调用块整体不展示（工具调用另有折叠卡呈现）
   function aiHideProtocol(t) {
     return String(t || '')
       .replace(/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/gi, '')
+      // <tool_call> 系列（Qwen/GLM 的 {"name":...}、MiniMax 的 <invoke>、<function=x> 三种写法）：
+      // 工具调用有独立折叠卡呈现，协议原文绝不能漏进正文（实测会整段刷屏，用户一眼看出是 bug）
+      .replace(/<(?:minimax:)?tool_calls?[^>]*>[\s\S]*?(?:<\/(?:minimax:)?tool_calls?>|$)/gi, '')
+      .replace(/<\/?(?:minimax:)?tool_calls?[^>]*>/gi, '')
       .replace(/<<<TOOL>>>[\s\S]*?(?:<<<END>>>|$)/gi, '')
-      .replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '');
+      .replace(/<<<(?:SEARCH|REPLACE|END|CLARIFY)>>>/gi, '')
+      .replace(/<[^>]{0,60}$/, '');   // 流式期尾部可能挂着半个未闭合标签（<thi/<tool_cal），先剥掉防闪现
   }
 
+  function aiLiveRoot() { return aiLiveScope || document; }   // 流式气泡的查询根（弹窗级隔离）
+
   function aiLiveScroll(force) {
-    var lg = document.querySelector('.ai-chat-log');
+    var lg = aiLiveRoot().querySelector('.ai-chat-log');
     if (!lg) return;
     if (force || (lg.scrollHeight - lg.scrollTop - lg.clientHeight) < 64) lg.scrollTop = lg.scrollHeight;
   }
 
   // 用户气泡（发送即上屏；澄清轮由调用方决定不重复记）
   function aiChatPushUser(text) {
-    var box = document.querySelector('.ai-conv');
+    var box = aiLiveRoot().querySelector('.ai-conv');
     if (!box || !text) return;
     box.style.display = '';
     var u = mkEl('div', 'ai-msg ai-msg-user');
@@ -2873,8 +2839,12 @@
   }
 
   // 创建本轮 AI 气泡（流式载体）：head（头像/名字/时间/阶段/停止）+ 思考卡/工具卡 + 正文
+  // 创建本轮 AI 气泡（流式载体）：head（头像/名字/时间/阶段）+ 按时间顺序交错的内容块
+  // 块序列 = 思考卡 / 工具卡 / 正文块，三种块都追加进同一个 parts 容器：
+  // 「第 N 轮：思考 → 调工具 → 正文」严格按发生顺序排布（此前正文是气泡底部固定元素，
+  // 多轮的工具卡会全部堆在正文上方，出现「三次调用的正文都在三个工具下面」的错乱）
   function aiLiveBegin(phaseText) {
-    var box = document.querySelector('.ai-conv');
+    var box = aiLiveRoot().querySelector('.ai-conv');
     if (!box) return null;
     box.style.display = '';
     var a = mkEl('div', 'ai-msg ai-msg-ai ai-msg-live');
@@ -2885,24 +2855,25 @@
     var phase = mkEl('span', 'ai-live-phase', '');
     head.appendChild(phase);
     a.appendChild(head);
-    var parts = mkEl('div', 'ai-live-parts');   // 思考卡 / 工具卡按发生顺序插入
-    var textEl = mkEl('div', 'ai-msg-text ai-live-text');
+    var parts = mkEl('div', 'ai-live-parts');   // 内容块容器
     a.appendChild(parts);
-    a.appendChild(textEl);
     box.appendChild(a);
 
     aiToolTrace = [];
     aiToolDetails = [];
 
     var h = {
-      el: a, phaseEl: phase, parts: parts, textEl: textEl,
-      raw: '', raf: 0, done: false,
-      full: '', rawDirty: false, shown: 0,   // typewriter: full=stripped text, shown=revealed chars
+      el: a, phaseEl: phase, parts: parts,
+      allText: '', raf: 0, done: false,
+      blocks: [], cur: null,   // 正文块数组 + 当前流式块
       thinkCard: null, thinkBody: null, thinkLabel: null, thinkText: '', thinkT0: 0, thinkT1: 0, thinkTimer: 0,
       tools: {}, toolKeys: []
     };
 
-    // 思考计时：首个思考增量开始，正文出现（或收尾）时冻结为「深度思考（X.Xs）」并自动收起
+    var OMIT = '…（前面已省略）' + String.fromCharCode(10);
+    var MAXC = 12000;
+
+    // 思考计时：首个思考增量开始，正文出现/开始调工具/收尾时冻结为「深度思考（X.Xs）」并自动收起
     function freezeThink() {
       if (!h.thinkT0 || h.thinkT1) return;
       h.thinkT1 = Date.now();
@@ -2917,7 +2888,7 @@
       if (h.thinkCard) return;
       h.thinkCard = mkEl('div', 'ai-think-card open');
       var th = mkEl('div', 'ai-think-head');
-      th.appendChild(mkEl('span', 'ai-think-ic', '💭'));
+      th.appendChild(mkEl('span', 'ai-think-ic', '\u{1F4AD}'));
       h.thinkLabel = mkEl('span', 'ai-think-label', '深度思考');
       th.appendChild(h.thinkLabel);
       th.appendChild(mkEl('span', 'ai-think-arrow', '\u203a'));
@@ -2931,36 +2902,60 @@
       });
       h.parts.appendChild(h.thinkCard);
     }
+
+    // 正文按「块」组织：工具卡 / 新一轮思考之后，正文另起一块，保持时间顺序
+    function newTextBlock() {
+      var b = { el: mkEl('div', 'ai-msg-text ai-live-text'), raw: '', full: '', rawDirty: false, shown: 0 };
+      b.el.style.display = 'none';   // 有内容才显示（首帧前不闪空盒）
+      h.parts.appendChild(b.el);
+      h.blocks.push(b);
+      h.cur = b;
+      return b;
+    }
+    function flushBlock(b) {
+      if (!b) return;
+      if (b.rawDirty) { b.full = aiHideProtocol(b.raw); b.rawDirty = false; }
+      var full = b.full || '';
+      b.shown = full.length;
+      var shown = full.length > MAXC ? OMIT + full.slice(-MAXC) : full;
+      if (b.el.textContent !== shown) b.el.textContent = shown;
+      b.el.style.display = shown.trim() ? '' : 'none';
+    }
+    function closeTextBlock() { flushBlock(h.cur); h.cur = null; }
+
     // 打字机追赶：上游/透明代理可能一次给一大块（观感像「整段闪现」），这里按帧逐字吐出；
     // 积压越多吐得越快（最少 2 字/帧约 120 字/秒，跟得上常规模型输出），观感始终逐字蹦出
-    function renderText() {
+    function renderTick() {
       h.raf = 0;
-      if (h.rawDirty) { h.full = aiHideProtocol(h.raw); h.rawDirty = false; }
-      var full = h.full || '';
-      if (h.shown < full.length) {
-        var backlog = full.length - h.shown;
-        h.shown = Math.min(full.length, h.shown + Math.max(2, Math.ceil(backlog / 4)));
+      var b = h.cur;
+      if (b) {
+        if (b.rawDirty) { b.full = aiHideProtocol(b.raw); b.rawDirty = false; }
+        var full = b.full || '';
+        if (b.shown < full.length) {
+          var backlog = full.length - b.shown;
+          b.shown = Math.min(full.length, b.shown + Math.max(2, Math.ceil(backlog / 4)));
+        }
+        var shown = full.slice(0, b.shown);
+        if (shown.length > MAXC) shown = OMIT + shown.slice(-MAXC);
+        if (b.el.textContent !== shown) b.el.textContent = shown;
+        b.el.style.display = shown.trim() ? '' : 'none';   // 空块/纯空白块不渲染（避免任务中途出现空盒子）
       }
-      var shown = full.slice(0, h.shown);
-      if (shown.length > 12000) shown = '…（前面已省略）' + String.fromCharCode(10) + shown.slice(-12000);
-      if (h.textEl.textContent !== shown) h.textEl.textContent = shown;
       aiLiveScroll();
-      if (!h.done) h.raf = requestAnimationFrame(renderText);   // 生成期间常驻循环，每帧成本极低
+      if (!h.done) h.raf = requestAnimationFrame(renderTick);   // 生成期间常驻循环，每帧成本极低
     }
 
     h.setPhase = function (t) { if (t) h.phaseEl.textContent = t; };
     h.pushThink = function (t) {
       if (h.done || !t) return;
-      // 多轮思考：编辑 Agent 会在工具轮之间再次思考（思考→调工具→再思考…）。
-      // 上一张卡已冻结说明那是上一轮的思考，必须另起一张新卡——
-      // 否则续写进已收起的旧卡，用户看到的要么是内容乱窜要么像被静默丢弃。
+      // 多轮思考：上一张卡已冻结说明那是上一轮的思考，必须另起一张新卡（正文块同步断开）
       if (h.thinkT1) {
+        closeTextBlock();
         h.thinkCard = null; h.thinkBody = null; h.thinkLabel = null;
         h.thinkText = ''; h.thinkT0 = 0; h.thinkT1 = 0;
       }
       var freshCard = !h.thinkCard;
       ensureThink();
-      if (freshCard) h.setPhase('💭 深度思考中…');   // 每轮思考开头都明示「正在思考」，界面看着不是卡死
+      if (freshCard) h.setPhase('\u{1F4AD} 深度思考中…');
       if (!h.thinkT0) {
         h.thinkT0 = Date.now();
         h.thinkTimer = setInterval(function () {
@@ -2970,29 +2965,31 @@
         }, 500);
       }
       h.thinkText += t;
-      var shown = h.thinkText;
-      if (shown.length > 6000) shown = '…（前面已省略）\n' + shown.slice(-6000);
+      var shown = h.thinkText.length > 6000 ? OMIT + h.thinkText.slice(-6000) : h.thinkText;
       h.thinkBody.textContent = shown;
       aiLiveScroll();
     };
     h.pushText = function (t) {
       if (h.done || !t) return;
       freezeThink();
-      h.raw += t;
-      h.rawDirty = true;
-      if (!h.raf) h.raf = requestAnimationFrame(renderText);
+      if (!h.cur) newTextBlock();
+      h.cur.raw += t;
+      h.cur.rawDirty = true;
+      h.allText += t;
+      if (!h.raf) h.raf = requestAnimationFrame(renderTick);
     };
     // 工具折叠卡：运行时 data-status=running，结果回填后 success/error（点击展开明细）
     h.addTool = function (d) {
       if (h.done || !d) return;
-      freezeThink();   // 开始调工具 = 本轮思考结束：冻结时长并收起该轮思考卡
+      freezeThink();       // 开始调工具 = 本轮思考结束
+      closeTextBlock();    // 本轮正文到此为止；工具卡之后的新正文另起一块
       var key = String(d.id != null ? d.id : (d.round != null ? d.round : 'k' + (h.toolKeys.length + 1)));
       if (h.tools[key]) return;
       var label = d.label || AI_TOOL_LABEL[d.name] || d.name || '工具';
       var card = mkEl('div', 'ai-tool-card');
       card.setAttribute('data-status', 'running');
       var chead = mkEl('div', 'ai-tool-head');
-      chead.appendChild(mkEl('span', 'ai-tool-ic', '🔧'));
+      chead.appendChild(mkEl('span', 'ai-tool-ic', '\u{1F527}'));
       chead.appendChild(mkEl('span', 'ai-tool-name', label));
       var brief = mkEl('span', 'ai-tool-brief', '进行中…');
       chead.appendChild(brief);
@@ -3026,7 +3023,7 @@
       aiToolDetails.push({ label: rec.label, brief: briefText, ok: ok, detail: String(d.detail || '') });
       aiLiveScroll();
     };
-    // 收尾：冻结思考、去掉停止键与进行中样式，正文转 Markdown 渲染；note 为一句结论
+    // 收尾：冻结思考、去掉进行中样式、每个正文块各自转 Markdown；note 为一句结论
     h.end = function (note) {
       if (h.done) return;
       h.done = true;
@@ -3034,24 +3031,32 @@
       if (h.thinkTimer) { clearInterval(h.thinkTimer); h.thinkTimer = 0; }
       if (h.raf) { cancelAnimationFrame(h.raf); h.raf = 0; }
       h.el.classList.remove('ai-msg-live');
-      if (h.phaseEl) h.phaseEl.textContent = '';   // 阶段文案只属于生成中，收尾即清
-      var finalText = aiHideProtocol(h.raw).trim();
-      if (finalText) {
+      if (h.phaseEl) h.phaseEl.textContent = '';
+      closeTextBlock();
+      var hasText = false;
+      h.blocks.forEach(function (b) {
+        var finalText = aiHideProtocol(b.raw).trim();
+        if (!finalText) {   // 空块直接移除（此前留下空盒子，用户一眼看出是 bug）
+          if (b.el.parentNode) b.el.parentNode.removeChild(b.el);
+          return;
+        }
+        hasText = true;
         try {
-          h.textEl.className = 'ai-msg-text note-content md-body ai-live-final';
-          h.textEl.innerHTML = window.PixelMD.render(finalText);
-        } catch (e) { h.textEl.textContent = finalText; }
+          b.el.className = 'ai-msg-text note-content md-body ai-live-final';
+          b.el.innerHTML = window.PixelMD.render(finalText);
+        } catch (e) { b.el.textContent = finalText; }
+      });
+      if (hasText) {
+        var copyAll = aiHideProtocol(h.allText);
         var acts = mkEl('div', 'ai-msg-actions');
         var cp = mkBtn('<i class="ic ic-copy"></i>', '复制这段内容');
         cp.className = 'ai-act';
         cp.addEventListener('click', function () {
-          try { navigator.clipboard.writeText(finalText); showToast('📋 已复制', 'success'); }
+          try { navigator.clipboard.writeText(copyAll); showToast('📋 已复制', 'success'); }
           catch (e) { showToast('复制失败', 'error'); }
         });
         acts.appendChild(cp);
         h.el.appendChild(acts);
-      } else {
-        h.textEl.textContent = '';
       }
       if (note) h.el.appendChild(mkEl('div', 'ai-live-note', note));
       aiLiveScroll(true);
@@ -3285,6 +3290,128 @@
     aiSetState('awaiting_confirm');
   }
 
+  // ============== AI 对话公共外壳（全屏）——编辑对话 / 整理对话共用同一套架构 ==============
+  // 结构：overlay > modal(全屏) > head + body(ai-chat-body) > [chatLog(ai-chat-log > ai-conv), composer]
+  // 说明：aiLiveScope 在此统一设置——流式气泡与所有气泡查询都限定在本弹窗内，两个对话互不串台。
+  function aiChatShell(opts) {
+    opts = opts || {};
+    var overlay = mkEl('div', 'md-modal-overlay ai-modal-overlay');
+    if (opts.zIndex) overlay.style.zIndex = String(opts.zIndex);
+
+    var modal = mkEl('div', 'md-modal ai-modal ai-modal-full' + (opts.modalClass ? ' ' + opts.modalClass : ''));
+    aiLiveScope = modal;
+
+    var head = mkEl('div', 'md-modal-head');
+    head.appendChild(mkEl('div', 'md-modal-title', opts.title || '<i class="ic ic-robot"></i> AI'));
+    var closeBtn = mkBtn('<i class="ic ic-close"></i> 关闭', '关闭');
+    closeBtn.className = 'md-modal-close';
+    closeBtn.addEventListener('click', function () { if (typeof opts.onClose === 'function') opts.onClose(); });
+    head.appendChild(closeBtn);
+    modal.appendChild(head);
+
+    var body = mkEl('div', 'md-modal-body ai-chat-body');
+    var chatLog = mkEl('div', 'ai-chat-log');
+    var conv = mkEl('div', 'ai-conv');
+    chatLog.appendChild(conv);
+    body.appendChild(chatLog);
+
+    var composer = mkEl('div', 'ai-composer');
+    var ta = mkEl('textarea', 'ai-instruction');
+    ta.placeholder = opts.placeholder || '把需求告诉 AI';
+    if (opts.maxlength) ta.setAttribute('maxlength', String(opts.maxlength));
+    // 输入框自动增高：单行起步，随内容长高（封顶 160px 后内部滚动）
+    ta.addEventListener('input', function () {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight + 2, 160) + 'px';
+    });
+    if (typeof opts.onEnter === 'function') {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); opts.onEnter(); }
+      });
+    }
+    composer.appendChild(ta);
+    var actions = mkEl('div', 'ai-composer-actions');
+    composer.appendChild(actions);
+    body.appendChild(composer);
+
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    overlay.addEventListener('mousedown', function (e) {
+      if (e.target === overlay && typeof opts.onClose === 'function') opts.onClose();
+    });
+    document.body.appendChild(overlay);
+
+    return {
+      overlay: overlay, modal: modal, body: body, chatLog: chatLog, conv: conv,
+      composer: composer, actions: actions, ta: ta,
+      destroy: function () { if (overlay.parentNode) overlay.remove(); }
+    };
+  }
+
+  // ---- 公共动作按钮（两个对话共用同一实现）----
+  // 🌐 深度思考：一键开关 enable_thinking（平台/管理员/自有 Key 三模式统一生效）
+  function aiSyncThinkToggles() {
+    var on = !!loadAiPrefs().ownDeepThink;
+    var list = document.querySelectorAll('.ai-think-toggle');
+    for (var i = 0; i < list.length; i++) {
+      list[i].classList.toggle('on', on);
+      list[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+      list[i].title = '深度思考：' + (on ? '已开启（点击关闭）' : '已关闭（点击开启，模型支持时输出思考过程）');
+    }
+  }
+  function aiToggleThink() {
+    var p = loadAiPrefs();
+    p.ownDeepThink = !p.ownDeepThink;
+    saveAiPrefsLocal(p);
+    if (p.sync) saveAiPrefsRemote(p, false);   // 开了跨端同步就顺手同步，失败不影响本地
+    aiSyncThinkToggles();                      // 两个弹窗的按钮状态一起同步
+    showToast(p.ownDeepThink ? '🌐 深度思考已开启（下一条指令生效）' : '🌐 深度思考已关闭', 'success');
+  }
+  function aiMakeThinkBtn() {
+    var b = mkBtn('🌐', '深度思考');
+    b.type = 'button';
+    b.className = 'ai-icon-btn ai-think-toggle';
+    b.addEventListener('click', aiToggleThink);
+    aiSyncThinkToggles();
+    return b;
+  }
+
+  // ⚡ 一键自动整理：运行中显示 spinner；在编辑对话里点击会打开整理对话并直接开跑
+  var classifyRunning = false;
+  function aiSyncOneClickBtns() {
+    var list = document.querySelectorAll('.ai-oneclick');
+    for (var i = 0; i < list.length; i++) {
+      list[i].disabled = classifyRunning;
+      list[i].innerHTML = classifyRunning ? '<i class="ic ic-robot-pink ic-spin"></i>' : '<i class="ic ic-sparkle"></i>';
+      list[i].title = classifyRunning ? 'AI 正在整理中…' : '一键自动整理（让 AI 整理便签与文件夹）';
+      list[i].classList.toggle('busy', classifyRunning);
+    }
+  }
+  // onRun 缺省（编辑对话里用）：打开整理对话并直接开跑；注入 onRun（整理对话内部）则直接执行
+  function aiMakeOneClickBtn(onRun) {
+    var b = mkBtn('<i class="ic ic-sparkle"></i>', '一键自动整理（让 AI 整理便签与文件夹）');
+    b.type = 'button';
+    b.className = 'ai-icon-btn ai-oneclick';
+    b.addEventListener('click', function () {
+      if (classifyRunning) return;
+      if (typeof onRun === 'function') { onRun(); return; }
+      if (!classifyOverlay) openClassifyDialog();
+      var run = document.getElementById('btnOneClickRun');
+      if (run && run !== b) run.click();
+    });
+    aiSyncOneClickBtns();
+    return b;
+  }
+
+  // ↩ 撤回/撤销：两个对话同款（图标 + tooltip）
+  function aiMakeUndoBtn(icon, title, onClick) {
+    var b = mkBtn('<i class="ic ' + icon + '"></i>', title);
+    b.type = 'button';
+    b.className = 'ai-icon-btn ai-undo-btn';
+    b.addEventListener('click', function () { if (!b.disabled) onClick(); });
+    return b;
+  }
+
   function openAiDialog() {
     closeAiDialog();
     aiHistory = [];      // 每次打开对话框 = 新会话（会话内多轮，关闭即结束）
@@ -3310,36 +3437,25 @@
     }
     if (!aiRemoteState) refreshAiRemote().then(function () { renderUsage(); queryManualUsage(); });
     else queryManualUsage();
-    var overlay = mkEl('div', 'md-modal-overlay ai-modal-overlay');
-    var modal = mkEl('div', 'md-modal ai-modal ai-modal-full');
-
-    var head = mkEl('div', 'md-modal-head');
-    var headLeft = mkEl('div', 'md-modal-head-left');
-    headLeft.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-robot"></i> AI 编辑便签'));
-    head.appendChild(headLeft);
-    var closeBtn = mkBtn('✖ 关闭');
-    closeBtn.className = 'md-modal-close';
-    closeBtn.addEventListener('click', closeAiDialog);
-    head.appendChild(closeBtn);
-
-    var body = mkEl('div', 'md-modal-body ai-chat-body');
-    var chatLog = mkEl('div', 'ai-chat-log');   // 历史记录区（大区域，滚动）
+    // 全屏外壳复用公共组件（与整理对话同一套结构/样式/流式机制）
+    var shell = aiChatShell({
+      title: '<i class="ic ic-robot"></i> AI 编辑便签',
+      placeholder: '把需求告诉 AI',
+      maxlength: 2000,
+      onClose: closeAiDialog
+    });
+    var overlay = shell.overlay, modal = shell.modal, body = shell.body, chatLog = shell.chatLog;
+    var convBox = shell.conv;                 // 多轮会话记录（可见上下文）
+    var ta = shell.ta;
+    var composer = shell.composer, composerActions = shell.actions;
 
     // ---- 输入态（界面保持简洁：引导语由输入框 placeholder 承担，用量信息在 AI 设置里） ----
     var usageBar = mkEl('div', 'ai-usage');
-
-    // 多轮会话记录（可见上下文）
-    var convBox = mkEl('div', 'ai-conv');
-    convBox.style.display = 'none';
 
     function renderUsage(u) {
       if (u) aiUsageCache = u;
       usageBar.textContent = aiUsageText();   // 用量文案统一为公共函数；此元素不再展示（用量移入 AI 设置）
     }
-
-    var ta = mkEl('textarea', 'ai-instruction');
-    ta.placeholder = '把需求告诉 AI';
-    ta.setAttribute('maxlength', '2000');
 
     var status = mkEl('div', 'ai-status');
     status.style.display = 'none';
@@ -3715,52 +3831,10 @@
     }
 
     // 底部输入条：输入框 + 右下（撤回 / 图片 / 发送）——图片走图床联动插入直链
-    var composer = mkEl('div', 'ai-composer');
-    var composerActions = mkEl('div', 'ai-composer-actions');
-    var imgBtn = mkBtn('<i class="ic ic-image"></i>', '插入图片（上传到图床）');
-    imgBtn.className = 'ai-icon-btn';
-    imgBtn.type = 'button';
-    imgBtn.addEventListener('click', function () {
-      if (typeof ImgBridge === 'undefined') { showToast('❌ 图床联动模块未加载', 'error'); return; }
-      // 先弹原生文件选择器，拿到 file 再走 ImgBridge 上传链路；
-      //（ImgBridge.insert(ta) 不含选文件逻辑，直接调用只会闪一下「上传中」占位符再被删掉）
-      var inp = document.createElement('input');
-      inp.type = 'file';
-      inp.accept = 'image/*';
-      // 手机 Chrome：未挂载到 DOM 的 <input type=file> 偶发 click 不振起原生选择器 → 挂上再点
-      inp.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;';
-      document.body.appendChild(inp);
-      inp.addEventListener('change', function () {
-        var f = inp.files && inp.files[0];
-        inp.remove();
-        if (f) ImgBridge.insert(ta, f);
-      });
-      inp.click();
-    });
-    // 深度思考快捷开关（v138）：不走设置页，输入框旁一键切换。
-    // 平台密钥 / 管理员 / 自有 Key 三种模式统一生效——服务端与直连模块都会注入 enable_thinking
-    var thinkBtn = mkBtn('🌐', '深度思考');
-    thinkBtn.type = 'button';
-    thinkBtn.className = 'ai-icon-btn ai-think-toggle';
-    function syncThinkBtn() {
-      var on = !!loadAiPrefs().ownDeepThink;
-      thinkBtn.classList.toggle('on', on);
-      thinkBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
-      thinkBtn.title = '深度思考：' + (on ? '已开启（点击关闭）' : '已关闭（点击开启，模型支持时输出思考过程）');
-    }
-    thinkBtn.addEventListener('click', function () {
-      var p = loadAiPrefs();
-      p.ownDeepThink = !p.ownDeepThink;
-      saveAiPrefsLocal(p);
-      if (p.sync) saveAiPrefsRemote(p, false);   // 开了跨端同步就顺手同步，失败不影响本地
-      syncThinkBtn();
-      showToast(p.ownDeepThink ? '🌐 深度思考已开启（下一条指令生效）' : '🌐 深度思考已关闭', 'success');
-    });
-    syncThinkBtn();
+    // 动作行（与整理对话同一套公共按钮）：↩ 撤回 / 🌐 深度思考 / ⚡ 一键整理 / ➤ 发送
     composerActions.appendChild(undoBtn);
-    composerActions.appendChild(thinkBtn);
-    composerActions.appendChild(imgBtn);
-    composer.appendChild(ta);
+    composerActions.appendChild(aiMakeThinkBtn());
+    composerActions.appendChild(aiMakeOneClickBtn());
     sendBtn = mkBtn('<i class="ic ic-send"></i>', '发送（Ctrl+Enter）');
     sendBtn.className = 'ai-send';
     sendBtn.type = 'button';
@@ -3769,18 +3843,10 @@
       runBtn.click();
     });
     composerActions.appendChild(sendBtn);
-    composer.appendChild(composerActions);
 
     chatLog.appendChild(convBox);
     chatLog.appendChild(status);
-    chatLog.appendChild(clarifyWrap);
-    body.appendChild(chatLog);
-    body.appendChild(composer);
-    modal.appendChild(head);
-    modal.appendChild(body);
-    overlay.appendChild(modal);
-    overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) closeAiDialog(); });
-    document.body.appendChild(overlay);
+    chatLog.appendChild(clarifyWrap);   // 外壳已装配 chatLog/composer/模态与遮罩监听
     renderUsage();
     setTimeout(function () { ta.focus(); }, 50);
   }

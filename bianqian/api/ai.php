@@ -104,6 +104,32 @@ function sseSend($event, $data) {
     flush();
 }
 /**
+ * 思考感知的 delta 转发器（工厂）：把文本流里的 <think>...</think> 块剥出并转发 think 事件，
+ * 其余照常走 delta。编辑与整理两条 Agent 流共用（此前整理流没剥，思考会被当普通回答刷出来）。
+ * $onThink：思考增量回调（通常 internally sseSend('think', ...)）
+ */
+function aiThinkAwareDeltaFactory($onThink) {
+    $state = array('in' => false);
+    return function ($t) use ($onThink, &$state) {
+        while ($t !== '') {
+            if ($state['in']) {
+                $end = stripos($t, '</think>');
+                if ($end === false) { $onThink($t); return; }   // 整段都在 think 里
+                $onThink(substr($t, 0, $end));
+                $t = substr($t, $end + 8);
+                $state['in'] = false;
+            } else {
+                $start = stripos($t, '<think>');
+                if ($start === false) { sseSend('delta', array('t' => $t)); return; }
+                if ($start > 0) sseSend('delta', array('t' => substr($t, 0, $start)));
+                $state['in'] = true;
+                $t = substr($t, $start + 7);
+            }
+        }
+    };
+}
+
+/**
  * 统一出口：SSE 模式发 done 事件后退出，非 SSE 模式退回普通 JSON（预检失败路径仍走 JSON）
  */
 function aiOut($payload) {
@@ -1229,40 +1255,59 @@ try {
         $round = 0;
         $toolRounds = 0;
         $jsonAttempts = 0;
+        $emptyNudged = 0;
         $plan = null;
         while (true) {
             $round++;
             sseSend('phase', array('t' => $round === 1 ? '🤖 开始分析…' : '🤔 第 ' . $round . ' 轮思考…'));
 
-            // 思考文本流式转发：一旦出现 '{' 或 '<<<'（最终 JSON / 工具块开头）就停止转发，避免把协议原文刷进聊天框
+            // 思考文本流式转发：一旦出现 '{' 或 '<<<'（最终 JSON / 工具块开头）就停止转发，避免把协议原文刷进聊天框；
+            // <think> 块剥出转发 think 事件（深度思考开启时思考不再被当普通回答刷出来，与编辑流同款）
             $accum = '';
-            $onDelta = function ($t) use (&$accum) {
+            $clsThink = function ($t) { $t = (string)$t; if ($t !== '') sseSend('think', array('t' => $t)); };
+            $clsRaw = aiThinkAwareDeltaFactory($clsThink);
+            $onDelta = function ($t) use (&$accum, $clsRaw) {
                 $accum .= $t;
                 if (strpos($accum, '{') !== false || strpos($accum, '<<<') !== false) return;
-                sseSend('delta', array('t' => $t));
+                $clsRaw($t);
             };
 
-            $r = aiChat($url, $key, $model, $messages, 4000, null, $onDelta);
+            // max_tokens 与编辑流对齐（16000）：深度思考的 reasoning 也计入输出预算，
+            // 4000 时思考稍长就会把本轮截断，随后「禁止工具调用」的重试只能逼出空方案
+            $r = aiChat($url, $key, $model, $messages, 16000, null, $onDelta);
             if (!$r['ok']) aiOut(array('success' => false, 'message' => (string)$r['err']));
 
             $text = trim($r['text']);
             // 工具调用块：先于 JSON 解析处理（上限 20 次，防失控循环）
-            if ($toolRounds < 20 && preg_match('/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i', $text, $tm)) {
-                $toolCall = json_decode(trim($tm[1]), true);
-                if (is_array($toolCall) && isset($toolCall['name'])) {
-                    $toolRounds++;
-                    $argsBrief = isset($toolCall['path']) ? (string)$toolCall['path'] : (isset($toolCall['id']) ? '#' . $toolCall['id'] : '');
-                    sseSend('tool', array('name' => (string)$toolCall['name'], 'args' => $argsBrief, 'round' => $toolRounds));
-                    $toolResult = aiRunTool((string)$toolCall['name'], $toolCall, $pdo, $uid);
-                    // 结果摘要（全文可能很长，聊天框只显示前 300 字）
-                    $brief = $toolResult;
-                    if (function_exists('mb_substr')) $brief = mb_substr($toolResult, 0, 300, 'UTF-8') . (mb_strlen($toolResult, 'UTF-8') > 300 ? '…' : '');
-                    else $brief = substr($toolResult, 0, 600);
-                    sseSend('tool_result', array('name' => (string)$toolCall['name'], 'brief' => $brief));
-                    $messages[] = array('role' => 'assistant', 'content' => $text);
-                    $messages[] = array('role' => 'user', 'content' => '【工具结果】' . (string)$toolCall['name'] . "\n" . $toolResult . "\n\n请继续判断：还需要查就再调工具，信息足够就输出最终 JSON 方案。");
-                    continue;
+            $toolCall = null;
+            if ($toolRounds < 20) {
+                if (preg_match('/<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/i', $text, $tm)) {
+                    $tcTmp = json_decode(trim($tm[1]), true);
+                    if (is_array($tcTmp) && isset($tcTmp['name'])) $toolCall = $tcTmp;
                 }
+                if ($toolCall === null) {
+                    // 兼容模型写在正文里的自有格式（<tool_call>{...}</tool_call> / <function=x> / <invoke>）：
+                    // 端点没把 tools 映射成原生 tool_calls 时模型会这么写；与编辑流程共用同一解析器（v13.3 起）
+                    $parsedTc = aiParseTextToolCalls($text);
+                    if (!empty($parsedTc) && isset($parsedTc[0]['name'])) {
+                        $argsTc = is_array($parsedTc[0]['arguments']) ? $parsedTc[0]['arguments'] : array();
+                        $toolCall = array_merge($argsTc, array('name' => (string)$parsedTc[0]['name']));
+                    }
+                }
+            }
+            if (is_array($toolCall) && isset($toolCall['name'])) {
+                $toolRounds++;
+                $argsBrief = isset($toolCall['path']) ? (string)$toolCall['path'] : (isset($toolCall['id']) ? '#' . $toolCall['id'] : '');
+                sseSend('tool', array('name' => (string)$toolCall['name'], 'args' => $argsBrief, 'round' => $toolRounds));
+                $toolResult = aiRunTool((string)$toolCall['name'], $toolCall, $pdo, $uid);
+                // 结果摘要（全文可能很长，聊天框只显示前 300 字）
+                $brief = $toolResult;
+                if (function_exists('mb_substr')) $brief = mb_substr($toolResult, 0, 300, 'UTF-8') . (mb_strlen($toolResult, 'UTF-8') > 300 ? '…' : '');
+                else $brief = substr($toolResult, 0, 600);
+                sseSend('tool_result', array('name' => (string)$toolCall['name'], 'brief' => $brief));
+                $messages[] = array('role' => 'assistant', 'content' => $text);
+                $messages[] = array('role' => 'user', 'content' => '【工具结果】' . (string)$toolCall['name'] . "\n" . $toolResult . "\n\n请继续判断：还需要查就再调工具，信息足够就输出最终 JSON 方案。");
+                continue;
             }
 
             // 提取平衡花括号的 JSON 对象（strpos 首个 { 会误抓工具参数/解释文字里的片段）
@@ -1296,7 +1341,20 @@ try {
                     }
                 }
             }
-            if (is_array($plan)) break;
+            if (is_array($plan)) {
+                // 空方案且一次工具都没调过：推一把再放弃（一键整理时模型偶尔偷懒直接给空 ops）
+                $planOps = array();
+                if (isset($plan['ops']) && is_array($plan['ops'])) $planOps = $plan['ops'];
+                elseif (isset($plan['moves']) && is_array($plan['moves'])) $planOps = $plan['moves'];
+                if (empty($planOps) && $toolRounds === 0 && $round < 6 && empty($emptyNudged)) {
+                    $emptyNudged = 1;
+                    sseSend('phase', array('t' => '🔁 未见到任何核实动作，要求 AI 先调用工具核实…'));
+                    $messages[] = array('role' => 'assistant', 'content' => $r['text']);
+                    $messages[] = array('role' => 'user', 'content' => '你一次工具都没有调用就给出了空方案。请先调用工具（查看文件夹 / 读取便签）核实当前结构，再输出最终 JSON 方案 {"ops":[...]}；核实后确实无需调整，才允许输出空 ops。');
+                    continue;
+                }
+                break;
+            }
 
             // 没解析出方案：错误回喂重试（最多 3 轮，AI 多轮思考时偶尔某轮只输出文字不输出 JSON）
             $jsonAttempts++;
@@ -2152,28 +2210,10 @@ try {
         // sseStart 内会 session_write_close() 释放锁，节流标记必须在此之前落盘
         $_SESSION['ai_last'] = $now;
         sseStart();
-        // 思考转发：文本协议模型的 <think> 文本块（下方 $onDelta 内剥离）与推理模型的
-        // reasoning_content 增量（aiChat 的 $onThink 回调）统一走 think 事件，前端渲染为折叠卡
+        // 思考转发：文本协议模型的 <think> 文本块与推理模型的 reasoning_content 增量
+        // （aiChat 的 $onThink 回调）统一走 think 事件，前端渲染为折叠卡（工厂与整理流共用）
         $onThink = function ($t) { $t = (string)$t; if ($t !== '') sseSend('think', array('t' => $t)); };
-        // 思考标签过滤：<think>...</think> 内的 delta 不混进正文，改转发 think 事件
-        $_thinkIn = false;
-        $onDelta = function ($t) use (&$_thinkIn, $onThink) {
-            while ($t !== '') {
-                if ($_thinkIn) {
-                    $end = stripos($t, '</think>');
-                    if ($end === false) { $onThink($t); return; }   // 整段都在 think 里
-                    $onThink(substr($t, 0, $end));
-                    $t = substr($t, $end + 8);
-                    $_thinkIn = false;
-                } else {
-                    $start = stripos($t, '<think>');
-                    if ($start === false) { sseSend('delta', array('t' => $t)); return; }
-                    if ($start > 0) sseSend('delta', array('t' => substr($t, 0, $start)));
-                    $_thinkIn = true;
-                    $t = substr($t, $start + 7);
-                }
-            }
-        };
+        $onDelta = aiThinkAwareDeltaFactory($onThink);
 
         // ===== 长文分段 agent 模式：切块逐段下达指令（附全文结构大纲），逐段收集替换块后在全文统一应用 =====
         if ($clenN > AI_CHUNK_THRESHOLD) {

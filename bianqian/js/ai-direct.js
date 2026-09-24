@@ -599,8 +599,9 @@
   // 单轮请求：返回 { ok, text, message }（ok=false 时 message 为错误说明）
   // onDelta 提供时走流式（stream:true），逐 token 回调；上游不支持流式时自动降级为整段返回（结果不变）
   // 单轮请求：返回 { ok, text, tool_calls, aborted, toolsRejected, message }
-  // 传 tools 走原生 function calling；onDelta 存在时走流式；signal 供上层「停止」。
-  async function callOnce(proxy, target, apiKey, model, messages, extra, onDelta, tools, signal) {
+  // 传 tools 走原生 function calling；onDelta 存在时走流式；signal 供上层「停止」；
+  // onThink 接收推理模型（reasoning_content / reasoning）的思考增量，仅展示、不影响正文与判定。
+  async function callOnce(proxy, target, apiKey, model, messages, extra, onDelta, tools, signal, onThink) {
     var payload = { model: model, messages: messages, max_tokens: 16000, temperature: 0.1 };
     if (extra) {
       for (var k in extra) {
@@ -687,6 +688,11 @@
             if (!jj || !jj.choices || !jj.choices[0]) continue;
             var dd = jj.choices[0].delta || {};
             if (dd.tool_calls && dd.tool_calls.length) { feedToolDelta(dd.tool_calls); sawStream = true; }
+            // 推理模型的思考增量：单独回调给「深度思考」折叠卡（不算正文，不影响 sawStream 判定）
+            var rdelta = '';
+            if (typeof dd.reasoning_content === 'string') rdelta = dd.reasoning_content;
+            else if (typeof dd.reasoning === 'string') rdelta = dd.reasoning;
+            if (rdelta && onThink) onThink(rdelta);
             var delta = '';
             if (typeof dd.content === 'string') delta = dd.content;
             else if (typeof jj.choices[0].text === 'string') delta = jj.choices[0].text;
@@ -837,7 +843,7 @@
         // 注入澄清问答历史（若有）
         clarifyContext(clarifyRounds).forEach(function (m) { segMsgs.push(m); });
         for (var att = 1; att <= 2; att++) {
-          var r = await callOnce(proxy, target, apiKey, model, segMsgs, extra, opts.onDelta, null, opts.signal);
+          var r = await callOnce(proxy, target, apiKey, model, segMsgs, extra, opts.onDelta, null, opts.signal, opts.onThink);
           if (r.aborted) return { success: false, aborted: true, message: '已停止生成' };
           if (!r.ok && !r.empty) return { success: false, message: '第 ' + (ci + 1) + ' 段处理失败：' + r.message };
           var text = r.text || '';
@@ -900,13 +906,13 @@
       if (loopGuard > 14) break;
       if (opts.onPhase) opts.onPhase(attempt > 1 ? '🔁 自动纠错第 ' + (attempt - 1) + ' 次…' : '🤖 正在生成…');
       var r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta,
-                             nativeTools ? tools : null, opts.signal);
+                             nativeTools ? tools : null, opts.signal, opts.onThink);
       // 只有错误明确指向 tools 参数能力才降级；旧 /tool/i 过宽——瞬时错误里带 "tool" 就误判为不支持
       if (!r.ok && nativeTools && (r.toolsRejected || /tool_choice|tools|tool[\s_-]?use|function[\s_-]?call|工具调用|不支持工具|invalid.{0,24}(parameter|schema|properties)|tool\s*\d+\s*function|is not of type/i.test(String(r.message || '')))) {
         nativeTools = false;
         if (opts.onPhase) opts.onPhase('ℹ️ 该模型不支持原生工具调用，切换文本协议');
         messages.push({ role: 'user', content: '【系统】当前上游不支持原生工具调用，请改用文本协议输出（<<<TOOL>>>{json}<<<END>>>）。' });
-        r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta, null, opts.signal);
+        r = await callOnce(proxy, target, apiKey, model, messages, extra, opts.onDelta, null, opts.signal, opts.onThink);
       }
       if (r.aborted) return { success: false, aborted: true, message: '已停止生成' };
       if (!r.ok && !r.empty) return { success: false, message: r.message };
