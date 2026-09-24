@@ -2089,3 +2089,10 @@ body.mm-open { overflow: hidden; }
 .prompt-input:focus { box-shadow: 3px 3px 0 #000; }
 .prompt-dialog-foot { display: flex; align-items: center; gap: 10px; }
 
+
+/* === 🥚 编辑式弹窗过渡：关闭对称淡出（v106）——编辑式开关下阅读弹窗关闭不再瞬移 === */
+.md-modal-overlay.edit-closing {
+  pointer-events: none;               /* 淡出期间屏蔽交互，防连点 */
+  animation: modalFadeOut 0.15s ease-in forwards;
+}
+@keyframes modalFadeOut { from { opacity: 1; } to { opacity: 0; } }

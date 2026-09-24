@@ -50,7 +50,7 @@
       vt.finished.finally(function () { clearTimeout(guard); cleanup(); });
       return vt;
     }
-    return { morph: morph, supported: supported, NAME: NAME };
+    return { morph: morph, supported: supported, edgeSlideOn: edgeSlideOn, NAME: NAME };
   })();
 
   var API_BASE = 'api/notes.php';
@@ -4486,6 +4486,7 @@
   }
 
   function closeModal(quiet) {
+    quiet = quiet === true;   // 归一化：事件对象等真值误传会吞掉关闭动画（X 按钮曾直接把 MouseEvent 当 quiet 传入）
     var ov = document.querySelector('.md-modal-overlay');
     if (!ov) { restoreAdoptedPlayers(); return; }
     var doClose = function () {
@@ -4496,6 +4497,31 @@
         modalEscHandler = null;
       }
     };
+    // 🥚 编辑式过渡：打开靠 overlay 自带 fadeIn，关闭对称补一个 fadeOut 再移除
+    // （全程无快照层参与，机制上不可能穿模；淡出结束后才归还领养的播放器）
+    if (PNVT.edgeSlideOn() && !quiet) {
+      if (ov.dataset.closing) return;   // 淡出进行中：X / Esc / 点遮罩重复触发直接忽略
+      ov.dataset.closing = '1';
+      ov.classList.add('edit-closing');
+      if (modalEscHandler) {
+        document.removeEventListener('keydown', modalEscHandler, true);
+        modalEscHandler = null;
+      }
+      var fadeFired = false;
+      var fadeFinish = function () {
+        if (fadeFired) return;
+        fadeFired = true;
+        if (!ov.parentNode) return;   // 淡出期间已被静默移除并开了新弹窗：领养状态归新弹窗，旧保险丝不许碰
+        doClose();
+      };
+      // 只认遮罩自身的 animationend（子元素动画结束会冒泡，不能误收）
+      ov.addEventListener('animationend', function (e) {
+        if (e.target === ov) fadeFinish();
+      });
+      setTimeout(fadeFinish, 260);   // 保险丝：animationend 万一丢失也能收尾
+      modalSourceCard = null;
+      return;
+    }
     // 非静默关闭：弹窗 morph 缩回源卡片（灵动岛原路径返回；root 切换由 morph 内部处理）；源卡片已不在 DOM 时退化为淡出
     if (!quiet && PNVT.supported()) {
       var modalEl2 = ov.querySelector('.md-modal');
@@ -4525,7 +4551,7 @@
     var titleEl = mkEl('div', 'md-modal-title', note.title || '无标题');
     var closeBtn = mkBtn('✖ 关闭');
     closeBtn.className = 'md-modal-close';
-    closeBtn.addEventListener('click', closeModal);
+    closeBtn.addEventListener('click', function () { closeModal(); });
     head.appendChild(titleEl);
     head.appendChild(closeBtn);
 
