@@ -230,8 +230,82 @@ function db() {
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false
         ));
+        img_ensure_tables();   // 首次连接自愈建表（2026-09-27：全新部署零手工 SQL）
     }
     return $pdo;
+}
+
+// ================= 建表自愈（2026-09-27：全新部署零手工 SQL） =================
+// db() 首次连接时执行一次（每进程一次，稳态零开销）；CREATE IF NOT EXISTS 对已有表零影响。
+// 列结构与当前代码完全对应（含去重 sha 列、封禁 banned 列）；旧库缺列由各自的自愈 ALTER 补齐。
+function img_ensure_tables() {
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    $sqls = array(
+        "CREATE TABLE IF NOT EXISTS img_users (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            username VARCHAR(50) NOT NULL,
+            uuid VARCHAR(36) NOT NULL DEFAULT '',
+            pass_hash VARCHAR(255) NOT NULL DEFAULT '',
+            created_at INT UNSIGNED NOT NULL,
+            quota INT UNSIGNED NOT NULL DEFAULT 0,
+            quota_b BIGINT NOT NULL DEFAULT 0,
+            pn_uid INT UNSIGNED NULL DEFAULT NULL,
+            banned TINYINT(1) NOT NULL DEFAULT 0,
+            PRIMARY KEY (id),
+            UNIQUE KEY uniq_username (username),
+            KEY idx_pn_uid (pn_uid)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS img_images (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            uid INT UNSIGNED NOT NULL,
+            name VARCHAR(200) NOT NULL DEFAULT '',
+            file VARCHAR(64) NOT NULL,
+            size INT UNSIGNED NOT NULL DEFAULT 0,
+            w INT UNSIGNED NOT NULL DEFAULT 0,
+            h INT UNSIGNED NOT NULL DEFAULT 0,
+            created_at INT UNSIGNED NOT NULL,
+            expire_at INT UNSIGNED NOT NULL DEFAULT 0,
+            hits INT UNSIGNED NOT NULL DEFAULT 0,
+            share_token VARCHAR(36) NULL DEFAULT NULL,
+            share_until INT UNSIGNED NOT NULL DEFAULT 0,
+            folder_id INT UNSIGNED NULL DEFAULT NULL,
+            sha CHAR(64) NULL DEFAULT NULL,
+            PRIMARY KEY (id),
+            KEY idx_uid (uid),
+            KEY idx_sha (sha),
+            KEY idx_file (file),
+            KEY idx_folder (uid, folder_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS img_folders (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            uid INT UNSIGNED NOT NULL,
+            parent_id INT UNSIGNED NULL DEFAULT NULL,
+            name VARCHAR(100) NOT NULL,
+            sort_order INT NOT NULL DEFAULT 0,
+            created_at INT UNSIGNED NOT NULL,
+            share_token VARCHAR(36) NULL DEFAULT NULL,
+            share_until INT UNSIGNED NOT NULL DEFAULT 0,
+            PRIMARY KEY (id),
+            KEY idx_uid (uid),
+            KEY idx_uid_parent (uid, parent_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS img_api_keys (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            uid INT UNSIGNED NOT NULL,
+            api_key VARCHAR(64) NOT NULL,
+            enabled TINYINT(1) NOT NULL DEFAULT 1,
+            created_at INT UNSIGNED NOT NULL,
+            last_used INT UNSIGNED NOT NULL DEFAULT 0,
+            PRIMARY KEY (id),
+            UNIQUE KEY uniq_api_key (api_key),
+            KEY idx_uid (uid)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    );
+    foreach ($sqls as $sql) {
+        try { db()->exec($sql); } catch (Exception $e) { /* 单表失败不阻断（并发竞争下次再补） */ }
+    }
 }
 
 // ================= 工具函数 =================
