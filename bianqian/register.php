@@ -1,6 +1,6 @@
 <?php
 /**
- * 用户注册页面（邮箱验证码注册）
+ * 用户注册页面（邮箱验证码注册；/admini 关闭 bianqian_email_verify 后切换免验证码直注册）
  */
 require_once __DIR__ . '/config/database.php';
 sendSecurityHeaders();
@@ -10,6 +10,7 @@ if (isset($_SESSION['user_id'])) {
     header('Location: index.php');
     exit;
 }
+$emailVerifyRequired = emailVerifyRequired();   // database.php 全局函数：true=需验证码
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -40,8 +41,8 @@ if (isset($_SESSION['user_id'])) {
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="email">邮箱</label>
-                    <input type="email" id="email" class="form-input" placeholder="主流邮箱或 @naxid.top" required autocomplete="email">
-                    <p class="md-hint">支持 QQ / Gmail / Outlook / 163 等主流邮箱及 @naxid.top，需接收验证码</p>
+                    <input type="email" id="email" class="form-input" placeholder="主流邮箱（QQ/Gmail/Outlook 等）" required autocomplete="email">
+                    <p class="md-hint"><?php echo $emailVerifyRequired ? '支持 QQ / Gmail / Outlook / 163 等主流邮箱，需接收验证码' : '支持 QQ / Gmail / Outlook / 163 等主流邮箱，无需验证码直接注册'; ?></p>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="captcha">人机验证</label>
@@ -49,8 +50,9 @@ if (isset($_SESSION['user_id'])) {
                         <input type="text" id="captcha" class="form-input" placeholder="图中字符" required maxlength="4" autocomplete="off" spellcheck="false">
                         <img id="captchaImg" src="captcha.php" alt="captcha" title="点击刷新" class="cap-img">
                     </div>
-                    <p class="md-hint">看不清？点击图片换一张</p>
+                    <p class="md-hint">看不清？点击图片换一张<?php echo $emailVerifyRequired ? '（发送邮件验证码前需先通过人机验证）' : '（免验证码注册模式，人机验证是唯一防线）'; ?></p>
                 </div>
+                <?php if ($emailVerifyRequired): ?>
                 <div class="form-group">
                     <label class="form-label" for="code">邮箱验证码</label>
                     <div class="code-row">
@@ -58,6 +60,7 @@ if (isset($_SESSION['user_id'])) {
                         <button type="button" class="btn btn-outline btn-send-code" data-email-id="email" data-purpose="register" data-captcha-id="captcha">发送验证码</button>
                     </div>
                 </div>
+                <?php endif; ?>
                 <div class="form-group">
                     <label class="form-label" for="password">密码</label>
                     <input type="password" id="password" class="form-input" placeholder="至少 8 个字符" required minlength="8" autocomplete="new-password">
@@ -70,6 +73,6 @@ if (isset($_SESSION['user_id'])) {
         </div>
     </div>
 
-    <script src="js/auth.js?v=9"></script>
+    <script src="js/auth.js?v=10"></script>
 </body>
 </html>

@@ -4,12 +4,20 @@
  */
 require_once __DIR__ . '/config/database.php';
 sendSecurityHeaders();
+// 首次部署（无 suite-config.php）自动路由到 /admini/ 安装向导；向导保存一次配置后自动取消
+if (!suite_installed()) {
+    header('Location: admini/');
+    exit;
+}
 header('Cache-Control: no-store, must-revalidate');
 startSecureSession();
 if (isset($_SESSION['user_id'])) {
     header('Location: index.php');
     exit;
 }
+// 邮箱验证开关（/admini bianqian_email_verify）：关闭时「验证码登录/找回密码」入口整体隐藏，
+// 服务端 sendcode/resetpass 也同步拒绝（见 api/auth.php emailVerifyRequired）
+$emailVerifyRequired = emailVerifyRequired();
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -31,7 +39,9 @@ if (isset($_SESSION['user_id'])) {
 
             <div class="auth-tabs">
                 <button type="button" class="auth-tab active" data-panel="pass"><i class="ic ic-lock"></i> 密码登录</button>
+                <?php if ($emailVerifyRequired): ?>
                 <button type="button" class="auth-tab" data-panel="code"><i class="ic ic-mail"></i> 验证码登录</button>
+                <?php endif; ?>
             </div>
 
             <div id="errorMsg" class="error-msg" style="display:none;"></div>
@@ -50,9 +60,11 @@ if (isset($_SESSION['user_id'])) {
                 <div class="form-actions">
                     <button type="submit" class="btn btn-primary"><i class="ic ic-play-pink"></i> 登录</button>
                 </div>
+                <?php if ($emailVerifyRequired): ?>
                 <p class="auth-link" style="text-align:right;"><a href="#" id="gotoReset">忘记密码？</a></p>
+                <?php endif; ?>
             </form>
-
+<?php if ($emailVerifyRequired): ?>
             <!-- 面板二：验证码登录 -->
             <form id="codeLoginForm" class="auth-panel" data-panel="code">
                 <div class="form-group">
@@ -94,11 +106,12 @@ if (isset($_SESSION['user_id'])) {
                 </div>
                 <p class="auth-link" style="text-align:center;"><a href="#" id="backLogin">← 返回登录</a></p>
             </form>
+<?php endif; ?>
 
             <p class="auth-link">还没有账户？<a href="register.php">点此注册</a></p>
         </div>
     </div>
 
-    <script src="js/auth.js?v=9"></script>
+    <script src="js/auth.js?v=10"></script>
 </body>
 </html>

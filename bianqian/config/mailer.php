@@ -12,11 +12,13 @@ function defaultEmailWhitelist() {
     // suite-config 的 email_whitelist（/admini 可配）优先于内置清单
     $cfg = suite_cfg('email_whitelist', '');
     if ($cfg !== '') return $cfg;
-    return 'qq.com,foxmail.com,163.com,126.com,sina.com,sohu.com,yeah.net,139.com,189.cn,aliyun.com,gmail.com,outlook.com,hotmail.com,live.com,icloud.com,me.com,yahoo.com,yahoo.co.jp,protonmail.com,naxid.top';
+    // [2026-09-27] 默认清单移除 naxid.top——那是本站私有域名，不应写死在通用代码里；
+    // 其他站长部署时应只得到主流邮箱默认值，需要自家域名请在 /admini 面板自行添加
+    return 'qq.com,foxmail.com,163.com,126.com,sina.com,sohu.com,yeah.net,139.com,189.cn,aliyun.com,gmail.com,outlook.com,hotmail.com,live.com,icloud.com,me.com,yahoo.com,yahoo.co.jp,protonmail.com';
 }
 
 /**
- * 邮箱域名是否在白名单（主流邮箱 + naxid.top，管理员可在后台调整）
+ * 邮箱域名是否在白名单（主流邮箱，管理员可在后台调整）
  */
 function emailDomainAllowed($email) {
     $at = strrpos($email, '@');

@@ -18,12 +18,49 @@ if (!isAdminUser()) {
     exit;
 }
 
+// ===== 用户搜索（AI 密钥「推送到账号」选择器用，2026-09-27） =====
+// GET 只读 + 管理员会话双重门槛；按用户名/邮箱前中缀模糊匹配，最多 8 条
+if (isset($_GET['op']) && $_GET['op'] === 'search_users') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    $q = trim(isset($_GET['q']) ? (string)$_GET['q'] : '');
+    $users = array();
+    if ($q !== '') {
+        try {
+            $like = '%' . str_replace(array('%', '_'), array('\\%', '\\_'), $q) . '%';
+            $st = getDB()->prepare("SELECT id, username, email FROM pn_users
+                                    WHERE username LIKE ? ESCAPE '\\\\' OR email LIKE ? ESCAPE '\\\\'
+                                    ORDER BY id ASC LIMIT 8");
+            $st->execute(array($like, $like));
+            foreach ($st->fetchAll() as $r) {
+                $users[] = array('id' => (int)$r['id'], 'username' => (string)$r['username'], 'email' => (string)$r['email']);
+            }
+        } catch (Exception $e) { /* 查询失败按空结果返回 */ }
+    }
+    echo json_encode(array('success' => true, 'users' => $users), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 // CSRF token
 if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 $csrf = $_SESSION['csrf'];
 
 $saved = false;
 $error = '';
+
+// ================= 图床库连接（用户管理融合，2026-09-25） =================
+// 两站账号绑定（便签注册 → ensure_pn_account 自动映射图床），用户管理统一在便签 admin.php：
+// 便签库管 pn_users（封禁事实源），图床库管 img_users（容量 + banned 冗余副本）。
+// [2026-09-27] 连接助手已上移 config/database.php 的 img_db()（auth.php 改用户名同步也用），
+// admin.php 内原 img_db() 定义删除，调用点全部改走 img_db()。
+// img_users.banned 冗余列自愈（与图床 config.php user_banned() 同款；已存在时报错被静默吞掉）
+function imgEnsureBannedCol($img) {
+    try { $img->query('SELECT banned FROM img_users LIMIT 1'); return true; }
+    catch (Exception $e) {
+        try { $img->exec('ALTER TABLE img_users ADD COLUMN banned TINYINT(1) NOT NULL DEFAULT 0'); return true; }
+        catch (Exception $e2) { return false; }
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!isset($_POST['csrf']) || !hash_equals($csrf, (string)$_POST['csrf'])) {
@@ -77,6 +114,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $st->execute(array((int)$_POST['kid']));
             $saved = true;
         } catch (Exception $e) { $error = '操作失败'; }
+    } elseif (isset($_POST['op']) && ($_POST['op'] === 'user_ban' || $_POST['op'] === 'user_unban')) {
+        // ===== 用户封禁/解禁（双库同步：pn_users.banned 事实源 + img_users.banned 冗余） =====
+        // pn_uid 传便签用户 id；imgid 传旧图床账号行 id（pn_uid 为 NULL 的历史账号，只能封图床侧）
+        $ban = $_POST['op'] === 'user_ban' ? 1 : 0;
+        $target = (int)(isset($_POST['uid']) ? $_POST['uid'] : 0);
+        $imgId  = (int)(isset($_POST['imgid']) ? $_POST['imgid'] : 0);
+        if ($ban === 1 && $target > 0 && $target === (int)$_SESSION['user_id']) {
+            $error = '不能封禁当前登录的管理员自己';
+        } elseif ($target <= 0 && $imgId <= 0) {
+            $error = '参数不合法';
+        } else {
+            try {
+                if ($target > 0) {
+                    getDB()->prepare("UPDATE pn_users SET banned = ?, banned_at = ? WHERE id = ?")
+                        ->execute(array($ban, $ban ? time() : 0, $target));
+                }
+                $img = img_db();
+                if ($img) {
+                    imgEnsureBannedCol($img);
+                    if ($imgId > 0) {
+                        $img->prepare('UPDATE img_users SET banned = ? WHERE id = ?')->execute(array($ban, $imgId));
+                    } else {
+                        $img->prepare('UPDATE img_users SET banned = ? WHERE pn_uid = ?')->execute(array($ban, $target));
+                    }
+                }
+                $saved = true;
+            } catch (Exception $e) { $error = '操作失败：' . $e->getMessage(); }
+        }
+    } elseif (isset($_POST['op']) && $_POST['op'] === 'user_quota') {
+        // ===== 图床容量调整（继承 adminws setquota 语义：0=恢复默认配额，上限 100GB） =====
+        $target = (int)(isset($_POST['uid']) ? $_POST['uid'] : 0);
+        $imgId  = (int)(isset($_POST['imgid']) ? $_POST['imgid'] : 0);
+        $mb = (float)(isset($_POST['quota_mb']) ? $_POST['quota_mb'] : -1);
+        $img = img_db();
+        if ($target <= 0 && $imgId <= 0) {
+            $error = '参数不合法';
+        } elseif (!$img) {
+            $error = '图床数据库不可用，无法调整容量';
+        } elseif ($mb < 0 || $mb > 102400) {
+            $error = '容量须在 0-102400 MB 之间（0=恢复默认）';
+        } else {
+            try {
+                $bytes = (int)round($mb * 1048576);
+                if ($imgId > 0) {
+                    $img->prepare('UPDATE img_users SET quota_b = ? WHERE id = ?')->execute(array($bytes, $imgId));
+                } else {
+                    $img->prepare('UPDATE img_users SET quota_b = ? WHERE pn_uid = ?')->execute(array($bytes, $target));
+                }
+                $saved = true;
+            } catch (Exception $e) { $error = '调整失败：' . $e->getMessage(); }
+        }
     } elseif (isset($_POST['op']) && $_POST['op'] === 'smtp_save') {
         $host = trim(isset($_POST['smtp_host']) ? (string)$_POST['smtp_host'] : '');
         $port = (int)(isset($_POST['smtp_port']) ? $_POST['smtp_port'] : 465);
@@ -152,6 +240,32 @@ $smtpMask  = $smtpPass === '' ? '' : '••••••••（保持不变）
 $smtpName  = getSetting('smtp_from_name', 'Pixel Notes');
 $mailWhitelist = getSetting('email_whitelist', '');
 if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
+
+// ================= 用户管理数据（便签 pn_users ∘ 图床 img_users 双库联查，2026-09-25） =================
+$pnUsers = array();
+$legacyImgUsers = array();   // pn_uid IS NULL 的旧图床账号（独立注册时代产物，仅图床侧可管）
+$imgMap = array();           // pn_uid => img_users 行
+$imgUsed = array();          // img_users.id => 已用字节
+$imgErr = '';
+$imgDb = img_db();
+if ($imgDb) { imgEnsureBannedCol($imgDb); }
+try {
+    $pnUsers = getDB()->query("SELECT id, username, email, created_at, is_admin, banned FROM pn_users ORDER BY id ASC LIMIT 500")->fetchAll();
+} catch (Exception $e) { $imgErr = '便签用户读取失败：' . $e->getMessage(); }
+if ($imgDb) {
+    try {
+        foreach ($imgDb->query('SELECT id, pn_uid, username, quota_b, banned FROM img_users ORDER BY id ASC')->fetchAll() as $r) {
+            if ($r['pn_uid'] === null) { $legacyImgUsers[] = $r; continue; }
+            $imgMap[(int)$r['pn_uid']] = $r;
+        }
+        foreach ($imgDb->query('SELECT uid, COALESCE(SUM(size),0) AS u FROM img_images GROUP BY uid')->fetchAll() as $r) {
+            $imgUsed[(int)$r['uid']] = (int)$r['u'];
+        }
+    } catch (Exception $e) { $imgErr = '图床数据读取失败（容量/图床封禁状态暂不可用）：' . $e->getMessage(); }
+} elseif ($imgErr === '') {
+    $imgErr = '图床数据库未配置或无法连接：封禁仅生效于便签侧，容量管理暂不可用';
+}
+$imgDefaultQuota = (int)suite_cfg('tuchang_user_quota', 20 * 1024 * 1024);   // 图床默认配额（quota_b=0 时生效）
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -265,7 +379,8 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
                 </div>
                 <div class="form-group">
                     <label class="form-label">推送到账号（可选）</label>
-                    <input type="text" name="bind_user" class="form-input" placeholder="用户名，留空则谁拿到都能用" maxlength="50">
+                    <input type="text" name="bind_user" id="bindUser" class="form-input" placeholder="输入用户名或邮箱搜索后点选；留空则谁拿到都能用" maxlength="50" autocomplete="off">
+                    <div id="bindUserSug" style="display:none;border:1px solid var(--border);border-top:none;max-height:180px;overflow:auto;"></div>
                 </div>
                 <div class="form-group" style="display:flex;align-items:flex-end;">
                     <button type="submit" class="btn btn-primary btn-sm"><i class="ic ic-key-pink"></i> 生成密钥</button>
@@ -372,10 +487,155 @@ if ($mailWhitelist === '') $mailWhitelist = defaultEmailWhitelist();
             </div>
             <div class="md-hint">QQ 邮箱的「授权码」在 QQ 邮箱设置 → 账户 → POP3/SMTP 服务中生成，不是 QQ 密码。端口 465 走 SSL，587 走 STARTTLS。</div>
         </form>
+
+        <div class="toolbar" style="margin-top:28px;">
+            <span class="toolbar-title">👥 用户管理（便签 + 图床，2026-09-25 融合）</span>
+            <div class="toolbar-actions">
+                <span class="md-hint">两站账号绑定：封禁双库同步生效；容量 0=恢复图床默认</span>
+            </div>
+        </div>
+
+        <?php if ($imgErr !== ''): ?>
+            <div class="ai-admin-msg warn">⚠️ <?= htmlspecialchars($imgErr) ?></div>
+        <?php endif; ?>
+
+        <?php if (!empty($pnUsers)): ?>
+        <div class="form-group" style="max-width:360px;">
+            <input type="text" id="userFilter" class="form-input" placeholder="🔍 输入用户名 / 邮箱 / ID 过滤下方用户列表" autocomplete="off">
+        </div>
+        <div class="ai-key-table-wrap">
+        <table class="ai-key-table" id="userTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>用户名</th>
+                    <th>邮箱</th>
+                    <th>注册时间</th>
+                    <th>图床空间（已用 / 配额 MB）</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($pnUsers as $u):
+                $pnBanned = isset($u['banned']) && (int)$u['banned'] === 1;
+                $im = isset($imgMap[(int)$u['id']]) ? $imgMap[(int)$u['id']] : null;
+                $quotaB = $im ? (int)$im['quota_b'] : 0;
+                $effQuota = $quotaB > 0 ? $quotaB : $imgDefaultQuota;
+                $usedB = $im ? (isset($imgUsed[(int)$im['id']]) ? $imgUsed[(int)$im['id']] : 0) : 0;
+                $pct = $effQuota > 0 ? min(100, (int)round($usedB * 100 / $effQuota)) : 0;
+            ?>
+                <tr class="<?= $pnBanned ? 'disabled-row' : '' ?>">
+                    <td><?= (int)$u['id'] ?></td>
+                    <td><?= htmlspecialchars($u['username']) ?></td>
+                    <td class="md-hint"><?= htmlspecialchars($u['email']) ?></td>
+                    <td class="md-hint"><?= htmlspecialchars((string)$u['created_at']) ?></td>
+                    <td>
+                        <?php if ($im !== null): ?>
+                            <div class="md-hint" style="margin-bottom:2px;"><?= round($usedB / 1048576) ?> MB / <?= $quotaB > 0 ? round($quotaB / 1048576) . ' MB' : '默认(' . round($imgDefaultQuota / 1048576) . ' MB)' ?>（<?= $pct ?>%）</div>
+                            <form method="post" style="display:inline-flex;gap:6px;align-items:center;" autocomplete="off">
+                                <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                <input type="hidden" name="op" value="user_quota">
+                                <input type="hidden" name="uid" value="<?= (int)$u['id'] ?>">
+                                <input type="number" name="quota_mb" class="form-input" style="width:90px;padding:4px 8px;" min="0" max="102400" step="1" value="<?= (int)round($effQuota / 1048576) ?>">
+                                <button type="submit" class="btn btn-outline btn-xs">存容量</button>
+                            </form>
+                        <?php else: ?>
+                            <span class="md-hint">未映射图床账号</span>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <?= (int)$u['is_admin'] === 1 ? '<span class="st-on">管理员</span>' : '' ?>
+                        <?= $pnBanned ? '<span class="st-off">已封禁</span>' : ((int)$u['is_admin'] === 1 ? '' : '<span class="md-hint">正常</span>') ?>
+                    </td>
+                    <td>
+                        <?php if ($pnBanned): ?>
+                            <form method="post" style="display:inline;">
+                                <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                <input type="hidden" name="op" value="user_unban">
+                                <input type="hidden" name="uid" value="<?= (int)$u['id'] ?>">
+                                <button type="submit" class="btn btn-outline btn-xs"><i class="ic ic-play"></i> 解禁</button>
+                            </form>
+                        <?php else: ?>
+                            <form method="post" style="display:inline;" class="key-confirm" data-confirm="确定封禁用户「<?= htmlspecialchars($u['username']) ?>」？&#10;便签登录与图床上传将同时被拦截，已登录会话也会被踢出。">
+                                <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                <input type="hidden" name="op" value="user_ban">
+                                <input type="hidden" name="uid" value="<?= (int)$u['id'] ?>">
+                                <button type="submit" class="btn btn-outline btn-xs btn-danger"><i class="ic ic-ban"></i> 封禁</button>
+                            </form>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        </div>
+        <?php else: ?>
+            <div class="md-hint" style="margin-top:14px;">还没有注册用户。</div>
+        <?php endif; ?>
+
+        <?php if (!empty($legacyImgUsers)): ?>
+        <div class="toolbar" style="margin-top:22px;">
+            <span class="toolbar-title">🗄 旧图床独立账号（未绑定便签，历史遗留）</span>
+            <div class="toolbar-actions">
+                <span class="md-hint">图床注册流程已移除，仅剩这些存量账号可管理</span>
+            </div>
+        </div>
+        <div class="ai-key-table-wrap">
+        <table class="ai-key-table" id="legacyUserTable">
+            <thead>
+                <tr><th>图床ID</th><th>用户名</th><th>图床空间（已用 / 配额 MB）</th><th>状态</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+            <?php foreach ($legacyImgUsers as $im2):
+                $q2 = (int)$im2['quota_b'];
+                $eff2 = $q2 > 0 ? $q2 : $imgDefaultQuota;
+                $u2 = isset($imgUsed[(int)$im2['id']]) ? $imgUsed[(int)$im2['id']] : 0;
+                $pct2 = $eff2 > 0 ? min(100, (int)round($u2 * 100 / $eff2)) : 0;
+                $b2 = isset($im2['banned']) && (int)$im2['banned'] === 1;
+            ?>
+                <tr class="<?= $b2 ? 'disabled-row' : '' ?>">
+                    <td><?= (int)$im2['id'] ?></td>
+                    <td><?= htmlspecialchars($im2['username']) ?></td>
+                    <td>
+                        <div class="md-hint" style="margin-bottom:2px;"><?= round($u2 / 1048576) ?> MB / <?= $q2 > 0 ? round($q2 / 1048576) . ' MB' : '默认(' . round($imgDefaultQuota / 1048576) . ' MB)' ?>（<?= $pct2 ?>%）</div>
+                        <form method="post" style="display:inline-flex;gap:6px;align-items:center;" autocomplete="off">
+                            <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                            <input type="hidden" name="op" value="user_quota">
+                            <input type="hidden" name="imgid" value="<?= (int)$im2['id'] ?>">
+                            <input type="number" name="quota_mb" class="form-input" style="width:90px;padding:4px 8px;" min="0" max="102400" step="1" value="<?= (int)round($eff2 / 1048576) ?>">
+                            <button type="submit" class="btn btn-outline btn-xs">存容量</button>
+                        </form>
+                    </td>
+                    <td><?= $b2 ? '<span class="st-off">已封禁</span>' : '<span class="md-hint">正常</span>' ?></td>
+                    <td>
+                        <?php if ($b2): ?>
+                            <form method="post" style="display:inline;">
+                                <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                <input type="hidden" name="op" value="user_unban">
+                                <input type="hidden" name="imgid" value="<?= (int)$im2['id'] ?>">
+                                <button type="submit" class="btn btn-outline btn-xs"><i class="ic ic-play"></i> 解禁</button>
+                            </form>
+                        <?php else: ?>
+                            <form method="post" style="display:inline;" class="key-confirm" data-confirm="确定封禁该旧图床账号？&#10;仅拦截图床侧（该账号没有便签绑定）。">
+                                <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                <input type="hidden" name="op" value="user_ban">
+                                <input type="hidden" name="imgid" value="<?= (int)$im2['id'] ?>">
+                                <button type="submit" class="btn btn-outline btn-xs btn-danger"><i class="ic ic-ban"></i> 封禁</button>
+                            </form>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        </div>
+        <?php endif; ?>
+        <div class="md-hint" style="margin-top:10px;">删除用户等高危操作仍在图床旧后台 adminws.php（已从导航隐藏，直接输 URL 可用）；封禁用户重新登录会看到「账号已被封禁」提示。</div>
     </div>
 
     <div id="toast" class="toast" style="display:none;"></div>
 
-    <script src="js/admin.js?v=5"></script>
+    <script src="js/admin.js?v=6"></script>
 </body>
 </html>

@@ -1,8 +1,4 @@
-nul
-*.log
-*.tmp
-private_img_store/
-*-X
-.probe*
-.sess*
-probe_session.php
+# 本地/部署敏感文件，绝不入库（真实凭据只存在于服务器上的部署副本）
+# suite-config.php 由 /admini 面板生成，含数据库密码与各站密令
+suite-config.php
+__pycache__/

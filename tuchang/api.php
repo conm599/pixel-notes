@@ -133,9 +133,15 @@ if ($isApi) {
         if (user_used($uid) + $size > user_quota($uid)) {
             jerr('空间配额不足');
         }
-        if (!is_dir(IMG_DIR)) @mkdir(IMG_DIR, 0755, true);
-        $file = rand_name() . '.webp';
-        if (file_put_contents(IMG_DIR . $file, $webp) === false) jerr('存储写入失败', 500);
+        // 内容去重：相同压缩产物只存一份，新记录指向既有物理文件（配额逻辑不变）
+        $sha = hash('sha256', $webp);
+        $file = img_find_dedup_file($sha);
+        $dedup = $file !== null;
+        if (!$dedup) {
+            if (!is_dir(IMG_DIR)) @mkdir(IMG_DIR, 0755, true);
+            $file = rand_name() . '.webp';
+            if (file_put_contents(IMG_DIR . $file, $webp) === false) jerr('存储写入失败', 500);
+        }
 
         $exp = 0;
         if (isset($_POST['expire'])) {
@@ -155,8 +161,8 @@ if ($isApi) {
         if ($apiFolderId === null) {
             $apiFolderId = ensureApiFolder($uid);
         }
-        $ins = db()->prepare('INSERT INTO img_images (uid, name, file, size, w, h, created_at, expire_at, folder_id) VALUES (?,?,?,?,?,?,?,?,?)');
-        $ins->execute(array($uid, $name === '' ? 'api-upload' : $name, $file, $size, $w, $h, time(), $exp, $apiFolderId));
+        $ins = db()->prepare('INSERT INTO img_images (uid, name, file, size, w, h, created_at, expire_at, folder_id, sha) VALUES (?,?,?,?,?,?,?,?,?,?)');
+        $ins->execute(array($uid, $name === '' ? 'api-upload' : $name, $file, $size, $w, $h, time(), $exp, $apiFolderId, $sha));
         $id = (int)db()->lastInsertId();
         // API 上传默认自动创建公开分享（Mod 等外部程序场景）；传 share=0 保持私有（Web 前端）
         $autoShare = !isset($_POST['share']) || (int)$_POST['share'] === 1;
@@ -171,7 +177,7 @@ if ($isApi) {
         jout(array('ok' => true, 'id' => $id,
             'url' => $url,
             'url2' => $url2,
-            'size' => $size, 'w' => $w, 'h' => $h));
+            'size' => $size, 'w' => $w, 'h' => $h, 'dedup' => $dedup));
     }
 
     // ---- 图片列表 ----
@@ -421,8 +427,9 @@ if ($isApi) {
         $st->execute(array($id, $uid));
         $row = $st->fetch();
         if (!$row) jerr('图片不存在');
-        @unlink(IMG_DIR . $row['file']);
+        // 先删行再按引用计数清物理文件（去重后同文件可能被其他记录共享）
         db()->prepare('DELETE FROM img_images WHERE id = ?')->execute(array($id));
+        img_unlink_if_orphan($row['file']);
         jout(array('ok' => true));
     }
 
@@ -564,7 +571,8 @@ if ($action === 'folder_share') {
     $pref = PREFERRED_HOST;
     jout(array('ok' => true, 'token' => $tok, 'until' => $until,
         'url' => base_url() . 'fshare.php?t=' . $tok,
-        'url2' => 'https://' . $pref . '/fshare.php?t=' . $tok));
+        // 未配置优选域时 url2 置空（前端隐藏「优选」行，api-doc 早已约定空串语义）
+        'url2' => $pref === '' ? '' : 'https://' . $pref . '/fshare.php?t=' . $tok));
 }
 
 // 文件夹分享状态查询（只读，GET 白名单）
@@ -581,7 +589,7 @@ if ($action === 'folder_share_info') {
     jout(array('ok' => true, 'name' => $row['name'], 'shared' => $shared ? 1 : 0,
         'until' => $shared ? $until : 0,
         'url' => $shared ? base_url() . 'fshare.php?t=' . $tok : '',
-        'url2' => $shared ? 'https://' . PREFERRED_HOST . '/fshare.php?t=' . $tok : ''));
+        'url2' => ($shared && PREFERRED_HOST !== '') ? 'https://' . PREFERRED_HOST . '/fshare.php?t=' . $tok : ''));
 }
 
 if ($action === 'folder_delete') {
@@ -780,10 +788,15 @@ if ($action === 'upload') {
         jerr('空间配额不足（当前配额 ' . round(user_quota($uid) / 1048576) . 'MB）');
     }
 
-    // 随机文件名落盘
-    if (!is_dir(IMG_DIR)) @mkdir(IMG_DIR, 0755, true);
-    $file = rand_name() . '.webp';
-    if (file_put_contents(IMG_DIR . $file, $webp) === false) jerr('存储写入失败', 500);
+    // 内容去重：相同压缩产物只存一份，新记录指向既有物理文件（配额逻辑不变）
+    $sha = hash('sha256', $webp);
+    $file = img_find_dedup_file($sha);
+    $dedup = $file !== null;
+    if (!$dedup) {
+        if (!is_dir(IMG_DIR)) @mkdir(IMG_DIR, 0755, true);
+        $file = rand_name() . '.webp';
+        if (file_put_contents(IMG_DIR . $file, $webp) === false) jerr('存储写入失败', 500);
+    }
 
     $name = isset($_POST['name']) ? trim(substr(strip_tags($_POST['name']), 0, 200)) : 'image';
     if ($name === '') $name = 'image';
@@ -808,12 +821,12 @@ if ($action === 'upload') {
     if ($folderId === null && isset($_POST['folder']) && $_POST['folder'] === 'notes') {
         $folderId = ensureNotesFolder($uid);
     }
-    $ins = db()->prepare('INSERT INTO img_images (uid, name, file, size, w, h, created_at, expire_at, folder_id) VALUES (?,?,?,?,?,?,?,?,?)');
-    $ins->execute(array($uid, $name, $file, $size, $w, $h, time(), $exp, $folderId));
+    $ins = db()->prepare('INSERT INTO img_images (uid, name, file, size, w, h, created_at, expire_at, folder_id, sha) VALUES (?,?,?,?,?,?,?,?,?,?)');
+    $ins->execute(array($uid, $name, $file, $size, $w, $h, time(), $exp, $folderId, $sha));
     $id = (int)db()->lastInsertId();
     jout(array('ok' => true, 'id' => $id,
         'url' => base_url() . 'i.php?id=' . $id,
-        'size' => $size, 'w' => $w, 'h' => $h, 'expire' => $exp));
+        'size' => $size, 'w' => $w, 'h' => $h, 'expire' => $exp, 'dedup' => $dedup));
 }
 
 // ============ 删除 ============
@@ -824,8 +837,9 @@ if ($action === 'delete') {
     $st->execute(array($id, $uid));
     $row = $st->fetch();
     if (!$row) jerr('图片不存在');
-    @unlink(IMG_DIR . $row['file']);
+    // 先删行再按引用计数清物理文件（去重后同文件可能被其他记录共享）
     db()->prepare('DELETE FROM img_images WHERE id = ?')->execute(array($id));
+    img_unlink_if_orphan($row['file']);
     jout(array('ok' => true));
 }
 
@@ -950,11 +964,14 @@ function batch_handlers($uid, $action) {
         $rows = $st->fetchAll();
         $del = db()->prepare('DELETE FROM img_images WHERE id = ?');
         $n = 0;
+        $files = array();
         foreach ($rows as $r) {
-            @unlink(IMG_DIR . $r['file']);
+            // 先删全部行，再对去重后的文件做引用计数清理（同文件可能被多条/多用户共享）
+            $files[] = $r['file'];
             $del->execute(array((int)$r['id']));
             $n++;
         }
+        foreach (array_unique($files) as $f) img_unlink_if_orphan($f);
         jout(array('ok' => true, 'deleted' => $n));
     }
 

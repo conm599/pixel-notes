@@ -30,6 +30,11 @@ $CFG_TARGET = is_file($CANDIDATES[0]) ? $CANDIDATES[0] : $CANDIDATES[1];
 $INSTALLED = $CFG_FILE !== '';
 $cfg = $INSTALLED ? (array)include($CFG_FILE) : array();
 
+// PASS_KEYS：留空=保持原值的密钥类键。2026-09-25 从保存分支提到全局——
+// 渲染表单也用它选 password 输入框，原先只在 save 分支定义，登录后直接渲染时
+// PHP 8.1 下 in_array(..., null) 直接 Fatal（PHP 7 仅告警，故生产一直未暴露）
+$PASS_KEYS = array('bianqian_db_pass', 'tuchang_db_pass', 'tuchang_admin_pass', 'tts_token', 'tuchang_cron_key');
+
 function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
 // ---- 登录态 ----
@@ -112,13 +117,13 @@ if (!$INSTALLED && isset($_POST['install'])) {
     $_SESSION['admini_fail'] = $cnt + 1;
     $err = '密码错误';
 } elseif ($INSTALLED && $logged && isset($_POST['save'])) {
-    // ---- 面板保存：读旧值合并（PASS_KEYS 留空=不改） ----
-    $PASS_KEYS = array('bianqian_db_pass', 'tuchang_db_pass', 'tuchang_admin_pass', 'tts_token', 'tuchang_cron_key');
+    // ---- 面板保存：读旧值合并（PASS_KEYS 留空=不改；键表定义见文件头全局区） ----
     $cfg['__old_admin'] = $cfg['tuchang_admin_pass'] ?? '';   // 供同步判断（修复死代码）
-    $keys = array('smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from_name','email_whitelist','bianqian_host','tuchang_host','bianqian_db_host','bianqian_db_port','bianqian_db_name','bianqian_db_user','bianqian_db_pass',
+    $keys = array('smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from_name','email_whitelist','bianqian_host','tuchang_host','bianqian_url','tuchang_url','bianqian_db_host','bianqian_db_port','bianqian_db_name','bianqian_db_user','bianqian_db_pass',
         'tuchang_db_host','tuchang_db_name','tuchang_db_user','tuchang_db_pass',
         'tuchang_invite_code','tuchang_admin_pass','tuchang_user_quota','tuchang_max_upload','tuchang_max_compressed',
         'tuchang_max_dim','tuchang_cron_key','tuchang_preferred_host',
+        'bianqian_email_verify',
         'tts_url','tts_token','tts_max_text','tts_model','tts_voices','backup_enabled');
     foreach ($keys as $k) {
         if (!isset($_POST[$k])) continue;
@@ -154,6 +159,11 @@ $FIELDS = array(
     ),
     '站点域名（公共部署）' => array(
         'bianqian_host' => '便签完整域名', 'tuchang_host' => '图床完整域名',
+        // [2026-09-27] 完整 URL（可选，优先级高于 host）：子路径共域部署必填。
+        // 例：图床挂便签域名 /tuchang/ 子路径时，tuchang_host 留空无意义，
+        // 填 tuchang_url = https://你的域名/tuchang ，站间跳转即自动带上路径前缀
+        'bianqian_url' => '便签完整URL(可选,含https://)',
+        'tuchang_url' => '图床完整URL(可选,含https://与子路径,如 https://x.com/tuchang)',
     ),
     '便签数据库' => array(
         'bianqian_db_host' => '主机', 'bianqian_db_port' => '端口', 'bianqian_db_name' => '库名',
@@ -163,10 +173,23 @@ $FIELDS = array(
         'tuchang_db_host' => '主机', 'tuchang_db_name' => '库名', 'tuchang_db_user' => '用户', 'tuchang_db_pass' => '密码',
     ),
     '图床常量' => array(
-        'tuchang_invite_code' => '注册邀请码', 'tuchang_admin_pass' => 'adminws 管理密令',
+        // [2026-09-25] 隐藏两项（键保留在 $keys 列表里，已存值不受影响，需要时可随时恢复字段）：
+        // - tuchang_invite_code（注册邀请码）：图床独立注册流程已移除（tuchang/register.php 已删除），
+        //   便签注册经 ensure_pn_account() 自动映射图床账号，该配置全站无任何代码消费，纯摆设。
+        // - tuchang_cron_key（cron 密钥）：非人工配置项——仅供服务器面板计划任务访问
+        //   https://图床域名/cron.php?key=本值 触发过期清理（删过期图片/分享链接置空/限流临时文件清理）。
+        //   若更换密钥必须同步修改面板计划任务里的访问 URL，日常无需在此展示。
+        // 'tuchang_invite_code' => '注册邀请码',
+        // 'tuchang_cron_key' => 'cron 密钥',
+        'tuchang_admin_pass' => 'adminws 管理密令',
         'tuchang_user_quota' => '默认配额(字节)', 'tuchang_max_upload' => '上传上限(字节)',
         'tuchang_max_compressed' => '压缩上限(字节)', 'tuchang_max_dim' => '最大边长(px)',
-        'tuchang_cron_key' => 'cron 密钥', 'tuchang_preferred_host' => '优选域名(分享副域)',
+        'tuchang_preferred_host' => '优选域名(分享副域)',
+    ),
+    '便签功能' => array(
+        // [2026-09-27] 邮箱验证开关：0=注册仅需邮箱+密码（验证码登录/找回密码入口前后端一并隐藏，
+        // 服务端 sendcode/resetpass 同步拒绝，免验证码注册改用图片验证码防滥用）；留空/1=保持必须验证码
+        'bianqian_email_verify' => '邮箱验证开关(1=注册需验证码 0=免验证码直注册)',
     ),
     'TTS 语音（OpenAI 兼容）' => array(
         'tts_url' => 'TTS 接口地址', 'tts_token' => 'TTS Token', 'tts_max_text' => '单次最大字数',
@@ -241,13 +264,15 @@ button.ghost { background: var(--panel); color: var(--txt); border-color: var(--
       <label>SMTP 授权码</label><input type="password" name="smtp_pass">
       <label>发件人名称</label><input type="text" name="smtp_from_name" value="Pixel Notes">
       <h2>图床常量</h2>
-      <label>注册邀请码</label><input type="text" name="tuchang_invite_code" required>
+      <!-- [2026-09-25] 隐藏：注册邀请码 / cron 清理密钥（原因见上方 $FIELDS 图床常量注释）；
+           安装提交缺省为空串，suite-config 里这两个键存空值即可，功能不受影响 -->
+      <!-- <label>注册邀请码</label><input type="text" name="tuchang_invite_code" required> -->
       <label>adminws 管理密令（留空=与管理员密码相同）</label><input type="password" name="tuchang_admin_pass">
       <label>默认每用户配额（字节）</label><input type="number" name="tuchang_user_quota" value="20971520">
       <label>上传上限（字节）</label><input type="number" name="tuchang_max_upload" value="10485760">
       <label>压缩后上限（字节）</label><input type="number" name="tuchang_max_compressed" value="4194304">
       <label>图片最大边长（px）</label><input type="number" name="tuchang_max_dim" value="8192">
-      <label>cron 清理密钥</label><input type="text" name="tuchang_cron_key" required>
+      <!-- <label>cron 清理密钥</label><input type="text" name="tuchang_cron_key" required> -->
       <label>优选域名（分享链接副域）</label><input type="text" name="tuchang_preferred_host" value="tuchang.naxid.top">
       <h2>TTS 语音</h2>
       <label>接口地址</label><input type="text" name="tts_url" value="https://edgetts.naxid.top/v1/audio/speech">

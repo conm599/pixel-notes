@@ -141,12 +141,17 @@
   if (registerForm) {
     registerForm.addEventListener('submit', function (e) {
       e.preventDefault();
+      // 免验证码模式（bianqian_email_verify=0）下 #code 输入框不存在：code 置空串，
+      // captcha 则两种模式都提交（免验证码模式下它是服务端唯一反滥用防线）
+      var codeEl = document.getElementById('code');
+      var capEl = document.getElementById('captcha');
       submitForm({
         action: 'register',
         username: document.getElementById('username').value.trim(),
         email: document.getElementById('email').value.trim(),
         password: document.getElementById('password').value,
-        code: document.getElementById('code').value.trim()
+        code: codeEl ? codeEl.value.trim() : '',
+        captcha: capEl ? capEl.value.trim() : ''
       });
     });
   }

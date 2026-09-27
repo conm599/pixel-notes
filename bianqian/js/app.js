@@ -2886,21 +2886,24 @@
     }
     function ensureThink() {
       if (h.thinkCard) return;
-      h.thinkCard = mkEl('div', 'ai-think-card open');
+      // 每张卡各自捕获 card/body/label 局部变量；闭包绝不能引用 h.thinkCard/h.thinkBody——
+      // 多轮思考时 h 上会被第二张卡重新赋值，第一张卡的点击就会去开合最后一张（实测 bug）
+      var card = mkEl('div', 'ai-think-card open');
       var th = mkEl('div', 'ai-think-head');
       th.appendChild(mkEl('span', 'ai-think-ic', '\u{1F4AD}'));
-      h.thinkLabel = mkEl('span', 'ai-think-label', '深度思考');
-      th.appendChild(h.thinkLabel);
+      var label = mkEl('span', 'ai-think-label', '深度思考');
+      th.appendChild(label);
       th.appendChild(mkEl('span', 'ai-think-arrow', '\u203a'));
-      h.thinkBody = mkEl('div', 'ai-think-body');
-      h.thinkCard.appendChild(th);
-      h.thinkCard.appendChild(h.thinkBody);
+      var body = mkEl('div', 'ai-think-body');
+      card.appendChild(th);
+      card.appendChild(body);
       th.addEventListener('click', function () {
-        var open = h.thinkBody.style.display !== 'none';
-        h.thinkBody.style.display = open ? 'none' : '';
-        h.thinkCard.classList.toggle('open', !open);
+        var open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : '';
+        card.classList.toggle('open', !open);
       });
-      h.parts.appendChild(h.thinkCard);
+      h.parts.appendChild(card);
+      h.thinkCard = card; h.thinkBody = body; h.thinkLabel = label;
     }
 
     // 正文按「块」组织：工具卡 / 新一轮思考之后，正文另起一块，保持时间顺序
@@ -3967,6 +3970,99 @@
       closeSettingsMenu();
       openChangePassDialog();
     });
+  }
+
+  // 点抽屉栏自己的用户名 → 改名弹窗（2026-09-27，导航栏名字已移除避免突兀）
+  var mmUserName = document.getElementById('mmUserName');
+  if (mmUserName) mmUserName.addEventListener('click', function () {
+    mmClose();               // 关抽屉（同官方关闭路径：菜单/遮罩/body 状态一并复位）
+    openChangeNameDialog();
+  });
+
+  // ============== 修改用户名弹窗（2026-09-27 补基础功能） ==============
+  function closeChangeNameDialog() {
+    var ov = document.querySelector('.changename-modal');
+    if (ov) ov.closest('.md-modal-overlay').remove();
+  }
+
+  function openChangeNameDialog() {
+    closeChangeNameDialog();
+    var overlay = mkEl('div', 'md-modal-overlay');
+    var modal = mkEl('div', 'md-modal changename-modal');
+
+    var head = mkEl('div', 'md-modal-head');
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-user"></i> 更改用户名'));
+    var closeBtn = mkBtn('✖ 关闭');
+    closeBtn.className = 'md-modal-close';
+    closeBtn.addEventListener('click', closeChangeNameDialog);
+    head.appendChild(closeBtn);
+
+    var body = mkEl('div', 'md-modal-body');
+    var status = mkEl('div', 'ai-status');
+    status.style.display = 'none';
+
+    var nameInp = mkEl('input', 'form-input ai-input');
+    nameInp.type = 'text';
+    nameInp.placeholder = '新的用户名（2-30 个字符）';
+    nameInp.maxLength = 30;
+    nameInp.autocomplete = 'off';
+    body.appendChild(mkEl('div', 'ai-set-label', '用户名仅作展示昵称，登录始终使用邮箱'));
+    body.appendChild(nameInp);
+    body.appendChild(status);
+
+    var foot = mkEl('div', 'md-modal-foot');
+    var okBtn = mkBtn('<i class="ic ic-save"></i> 确认修改');
+    okBtn.className = 'btn btn-primary btn-xs';
+    var cancelBtn = mkBtn('关闭');
+    cancelBtn.className = 'btn btn-outline btn-xs';
+    foot.appendChild(okBtn);
+    foot.appendChild(cancelBtn);
+    foot.appendChild(mkEl('span', 'md-hint', '改完后页面会自动刷新，图床侧昵称同步更新'));
+
+    okBtn.addEventListener('click', async function () {
+      status.style.display = 'none';
+      var newName = nameInp.value.trim();
+      if (newName.length < 2 || newName.length > 30) {
+        status.textContent = '❌ 用户名需要 2-30 个字符';
+        status.style.display = 'block';
+        return;
+      }
+      okBtn.disabled = true;
+      okBtn.textContent = '提交中...';
+      try {
+        var resp = await fetch('api/auth.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          cache: 'no-store',
+          body: jbody({ action: 'changeusername', username: newName })
+        });
+        if (resp.status === 401) { await check401(); return; }
+        var r = await resp.json();
+        if (r.success) {
+          showToast('✅ ' + r.message, 'success');
+          closeChangeNameDialog();
+          setTimeout(function () { location.reload(); }, 800);   // 导航栏等处的展示名随刷新更新
+        } else {
+          status.textContent = '❌ ' + (r.message || '修改失败');
+          status.style.display = 'block';
+        }
+      } catch (e) {
+        status.textContent = '❌ 网络错误，请稍后再试';
+        status.style.display = 'block';
+      }
+      okBtn.disabled = false;
+      okBtn.innerHTML = '<i class="ic ic-save"></i> 确认修改';
+    });
+    cancelBtn.addEventListener('click', closeChangeNameDialog);
+
+    modal.appendChild(head);
+    modal.appendChild(body);
+    modal.appendChild(foot);
+    overlay.appendChild(modal);
+    overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) closeChangeNameDialog(); });
+    document.body.appendChild(overlay);
+    setTimeout(function () { nameInp.focus(); }, 50);
   }
 
   // ============== 注销账号弹窗（需邮箱验证码核验） ==============

@@ -5,7 +5,8 @@ if (!defined('TAWA_IMG')) { http_response_code(403); exit; }
 // ================= 强制 HTTPS（防降级 / 中间人攻击） =================
 // [本地开发] PSU_LOCAL_HTTP=1（php -S http 环境）跳过强制跳转、放宽 Cookie secure；生产不设该变量零影响
 define('TAWA_LOCAL_HTTP', getenv('PSU_LOCAL_HTTP') === '1');
-$isHttps = !empty($_SERVER['HTTPS']) || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+$isHttps = !empty($_SERVER['HTTPS']) || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+           || PHP_SAPI === 'cli';   // CLI（维护脚本）无 HTTP 上下文，视同 https 跳过强制跳转
 if (!$isHttps && !TAWA_LOCAL_HTTP) {
     $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
     $uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/';
@@ -23,9 +24,16 @@ ini_set('session.use_strict_mode', '1');
 ini_set('session.gc_maxlifetime', '86400'); // 登录态服务端有效期 24H（每次请求滑动续期）
 
 // ==== 套件共享配置（/admini 面板管理）：环境变量 PSU_* > 共享配置文件 > 代码默认 ====
-// 探测顺序：VPS 布局 /var/www/suite-config.php（两站 webroot 的上一级自动共享）→ 项目根 suite-config.php（本地测试）
+// 探测顺序：webroot 上一级 /var/www/suite-config.php → 项目根 suite-config.php（本地测试）
+// → 兄弟站点 webroot（/admini 首装在上级目录不可写时会落到便签 webroot 内：
+//   VPS 布局叫 hosting/，本地仓库布局叫 bianqian/，两个都探，2026-09-27 补）
 $GLOBALS['SUITE_CFG'] = array();
-foreach (array(@__DIR__ . '/../suite-config.php', @__DIR__ . '/../../suite-config.php') as $__suiteFile) {
+foreach (array(
+    @__DIR__ . '/../suite-config.php',
+    @__DIR__ . '/../../suite-config.php',
+    @__DIR__ . '/../hosting/suite-config.php',
+    @__DIR__ . '/../bianqian/suite-config.php',
+) as $__suiteFile) {
     if (is_file($__suiteFile)) { $GLOBALS['SUITE_CFG'] = (array)include($__suiteFile); break; }
 }
 function suite_cfg($key, $default) {
@@ -35,12 +43,44 @@ function suite_cfg($key, $default) {
     return isset($GLOBALS['SUITE_CFG'][$key]) && $GLOBALS['SUITE_CFG'][$key] !== '' ? $GLOBALS['SUITE_CFG'][$key] : $default;
 }
 
+// 首次部署判定：suite-config.php 是否已生成（/admini 安装向导保存一次即存在，此后自动路由取消）。
+// 探测路径与上方 SUITE_CFG 一致（含 /admini 首装落点：上级目录不可写时会写进便签 webroot 内）。
+function suite_installed() {
+    static $v = null;
+    if ($v === null) {
+        $v = false;
+        foreach (array(
+            __DIR__ . '/../suite-config.php',
+            __DIR__ . '/../../suite-config.php',
+            __DIR__ . '/../hosting/suite-config.php',
+            __DIR__ . '/../bianqian/suite-config.php',
+        ) as $__f) {
+            if (is_file($__f)) { $v = true; break; }
+        }
+    }
+    return $v;
+}
+
+// 便签主站 URL（未安装时的自动路由落点 / 管理入口跨站跳转）
+// 优先级：bianqian_url（完整前缀）> bianqian_host > 前缀互换推导 > 默认 bianqian.naxid.top
+function bianqian_site_url($path = '/') {
+    $u = suite_cfg('bianqian_url', '');
+    if ($u !== '') return rtrim($u, '/') . $path;
+    $h = suite_cfg('bianqian_host', '');
+    if ($h === '') {
+        $__h = strtolower(preg_replace('/:\d+$/', '', isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : ''));
+        $h = preg_match('/^(bianqian|tuchang)\.([a-z0-9.-]+)$/', $__h, $__m) ? 'bianqian.' . $__m[2] : 'bianqian.naxid.top';
+    }
+    return (getenv('PSU_LOCAL_HTTP') === '1' ? 'http' : 'https') . '://' . $h . $path;
+}
+
 // ================= 配置区（按需修改） =================
 define('DB_HOST', suite_cfg('tuchang_db_host', 'localhost'));
 define('DB_USER', suite_cfg('tuchang_db_user', ''));
 define('DB_PASS', suite_cfg('tuchang_db_pass', '')); // 凭证由 /admini 面板或环境变量提供，不写死在代码
 define('DB_NAME', suite_cfg('tuchang_db_name', ''));
-define('INVITE_CODE', suite_cfg('tuchang_invite_code', ''));       // 注册邀请码（/admini 面板可改）
+// [2026-09-25] INVITE_CODE（tuchang_invite_code）已删除：图床独立注册流程已移除（register.php 删除），
+// 账号统一走便签注册 → ensure_pn_account() 自动映射图床；该配置无任何代码消费，/admini 面板字段一并隐藏。
 define('ADMIN_PASS', suite_cfg('tuchang_admin_pass', '')); // adminws 管理密码（/admini 面板可改）
 define('USER_QUOTA', (int)suite_cfg('tuchang_user_quota', 20 * 1024 * 1024)); // 默认每用户配额（adminws 可单独调整）
 define('MAX_UPLOAD', (int)suite_cfg('tuchang_max_upload', 10 * 1024 * 1024)); // 上传文件最大（mod 截图 PNG 较大，后端压缩后须 ≤4MB）
@@ -49,15 +89,20 @@ define('MAX_DIM', (int)suite_cfg('tuchang_max_dim', 8192));                // �
 define('IMG_DIR', suite_cfg('tuchang_img_dir', __DIR__ . '/../private_img_store/'));
 define('CRON_KEY', suite_cfg('tuchang_cron_key', ''));      // cron 清理密钥
 define('EXPIRE_OPTIONS', suite_cfg('tuchang_expire_options', '0,3600,86400,604800,2592000')); // 永不过期,1小时,1天,7天,30天
-define('PREFERRED_HOST', suite_cfg('tuchang_preferred_host', 'tuchang.naxid.top')); // 优选域名（CF Worker 反代），分享链接副域名
+// 优选域名（CF Worker 反代），分享链接副域名。
+// [2026-09-27] 默认改空：旧默认硬编码站长私域 tuchang.naxid.top，其他部署未配置时会把它
+// 泄漏进分享链接（测试机实测）。空值 = 未配置优选域，所有优选链接自动坍缩为当前域链接
+// （前端对 url === url2 只渲染一个框，dashboard 的「优选」行同步隐藏）
+define('PREFERRED_HOST', suite_cfg('tuchang_preferred_host', ''));
 
 // 生成分享双链接：主域名 + 优选域名
 function share_urls($tok) {
     global $isHttps;
     $scheme = $isHttps ? 'https' : 'http';
-    $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
-    $main = $scheme . '://' . $host . '/s.php?t=' . $tok;
-    $pref = $scheme . '://' . PREFERRED_HOST . '/s.php?t=' . $tok;
+    // [2026-09-27] 主链接改走 base_url()：子路径部署（/tuchang/）时自动带上前缀，
+    // 旧写法 $host.'/s.php' 在共域部署下会生成 404 的根路径链接（测试机实测 bug）
+    $main = base_url() . 's.php?t=' . $tok;
+    $pref = PREFERRED_HOST === '' ? $main : $scheme . '://' . PREFERRED_HOST . '/s.php?t=' . $tok;
     return array($main, $pref);
 }
 
@@ -220,7 +265,11 @@ function fmt_size($b) {
 }
 function base_url() {
     global $isHttps;
-    return ($isHttps ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/';
+    // [2026-09-27] 子路径部署自适应：图床可挂主域名子路径（如 /tuchang/）与便签同域同端口共存。
+    // SCRIPT_NAME=/tuchang/i.php → base 带 /tuchang 前缀；根部署（/i.php）→ 根路径，行为与旧版一致。
+    $dir = str_replace('\\', '/', dirname(isset($_SERVER['SCRIPT_NAME']) ? $_SERVER['SCRIPT_NAME'] : '/'));
+    $base = ($dir === '/' || $dir === '.' || $dir === '') ? '/' : rtrim($dir, '/') . '/';
+    return ($isHttps ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $base;
 }
 function now() {
     return time();
@@ -261,10 +310,41 @@ function ensure_pn_account() {
     $_SESSION['uname'] = $row['username'];
     $_SESSION['uuid'] = $row['uuid'];
 }
+// 封禁拦截：img_users.banned=1（与便签 pn_users.banned 双库同步，便签 admin.php 用户管理维护）
+// 的账号视同未登录。列尚未迁移时静默放过（fail-open，不影响站点可用性）；
+// 首次用到时顺带自愈补列，稳态零额外开销（每请求至多一条主键查询，仅登录用户）。
+function user_banned($imgUid) {
+    static $colOk = null;
+    if ($colOk === null) {
+        try {
+            db()->query('SELECT banned FROM img_users LIMIT 1');
+            $colOk = true;
+        } catch (Exception $e) {
+            try {
+                db()->exec('ALTER TABLE img_users ADD COLUMN banned TINYINT(1) NOT NULL DEFAULT 0');
+                $colOk = true;
+            } catch (Exception $e2) { $colOk = false; }
+        }
+    }
+    if (!$colOk || !(int)$imgUid) return false;
+    try {
+        $st = db()->prepare('SELECT banned FROM img_users WHERE id = ?');
+        $st->execute(array((int)$imgUid));
+        return (int)$st->fetchColumn() === 1;
+    } catch (Exception $e) {
+        return false;
+    }
+}
 function is_logged_in() {
-    if (isset($_SESSION['uid']) && isset($_SESSION['uname'])) return true;
-    if (isset($_SESSION['user_id'])) { ensure_pn_account(); return isset($_SESSION['uid']) && isset($_SESSION['uname']); }
-    return false;
+    $ok = false;
+    if (isset($_SESSION['uid']) && isset($_SESSION['uname'])) $ok = true;
+    elseif (isset($_SESSION['user_id'])) { ensure_pn_account(); $ok = isset($_SESSION['uid']) && isset($_SESSION['uname']); }
+    if ($ok && !empty($_SESSION['uid']) && user_banned($_SESSION['uid'])) {
+        // 封禁用户：清空会话视同未登录（页面 require_login 弹回登录页；上传 API 也一并被拦）
+        $_SESSION = array();
+        $ok = false;
+    }
+    return $ok;
 }
 function require_login() {
     if (!is_logged_in()) {
@@ -344,6 +424,49 @@ function user_quota($uid) {
     return $row && (int)$row['quota_b'] > 0 ? (int)$row['quota_b'] : USER_QUOTA;
 }
 
+// ================= 内容去重（sha256 引用计数，2026-09-25） =================
+// img_images.sha 存「压缩落盘字节」的哈希，相同内容的记录共享同一物理文件：
+// 上传命中已有哈希 → 不写盘、新记录 file 直接指向既有文件；删除按引用计数，
+// 最后一个引用消失才真正 unlink。配额仍按每用户 SUM(size) 逻辑计（去重只省磁盘不改账）。
+function img_ensure_dedup_schema() {
+    static $ok = null;
+    if ($ok !== null) return $ok;
+    try {
+        db()->query('SELECT sha FROM img_images LIMIT 1');
+        $ok = true;
+    } catch (Exception $e) {
+        try {
+            db()->exec("ALTER TABLE img_images ADD COLUMN sha CHAR(64) NULL DEFAULT NULL");
+            db()->exec("ALTER TABLE img_images ADD INDEX idx_sha (sha)");
+        } catch (Exception $e2) { /* 列已存在/并发竞争：静默 */ }
+        try {
+            db()->exec("ALTER TABLE img_images ADD INDEX idx_file (file)");
+        } catch (Exception $e3) { /* 索引已存在：静默 */ }
+        try { db()->query('SELECT sha FROM img_images LIMIT 1'); $ok = true; }
+        catch (Exception $e4) { $ok = false; }
+    }
+    return $ok;
+}
+// 按内容哈希找可复用的物理文件（必须真实存在，防止指向已丢失的孤儿文件）
+function img_find_dedup_file($sha) {
+    if (!img_ensure_dedup_schema() || !is_string($sha) || !preg_match('/^[a-f0-9]{64}$/', $sha)) return null;
+    $st = db()->prepare('SELECT file FROM img_images WHERE sha = ? ORDER BY id ASC LIMIT 1');
+    $st->execute(array($sha));
+    $file = $st->fetchColumn();
+    if (!$file || !is_file(IMG_DIR . $file)) return null;
+    return (string)$file;
+}
+// 引用计数删除：调用方必须「先删行、后调本函数」；同 file 已无任何记录才 unlink。
+// 去重后同一物理文件可能被多条记录（跨用户）共享，严禁直接 unlink。
+function img_unlink_if_orphan($file) {
+    if (!is_string($file) || $file === '' || strpos($file, '/') !== false || strpos($file, '\\') !== false) return;
+    try {
+        $st = db()->prepare('SELECT COUNT(*) FROM img_images WHERE file = ?');
+        $st->execute(array($file));
+        if ((int)$st->fetchColumn() === 0) @unlink(IMG_DIR . $file);
+    } catch (Exception $e) { /* 查询失败宁可不删，绝不错删共享文件 */ }
+}
+
 // ================= 惰性过期清理 =================
 function cleanup_expired() {
     $st = db()->prepare('SELECT id, file FROM img_images WHERE expire_at > 0 AND expire_at < ?');
@@ -351,8 +474,8 @@ function cleanup_expired() {
     $rows = $st->fetchAll();
     $del = db()->prepare('DELETE FROM img_images WHERE id = ?');
     foreach ($rows as $r) {
-        @unlink(IMG_DIR . $r['file']);
-        $del->execute(array((int)$r['id']));
+        $del->execute(array((int)$r['id']));   // 先删行再按引用计数清文件（去重后文件可能被共享）
+        img_unlink_if_orphan($r['file']);
     }
     // 清理过期分享（token 置空，前端不再显示"已分享"）
     db()->prepare('UPDATE img_images SET share_token = NULL, share_until = 0 WHERE share_until > 0 AND share_until < ?')->execute(array(time()));

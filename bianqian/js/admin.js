@@ -76,4 +76,59 @@
       mailBtn.innerHTML = '<i class="ic ic-send"></i> 测试发信';
     });
   }
+
+  // ===== 用户搜索（AI 密钥「推送到账号」选择器，2026-09-27）=====
+  var bindUser = document.getElementById('bindUser');
+  var sug = document.getElementById('bindUserSug');
+  if (bindUser && sug) {
+    var sugTimer = 0;
+    var hideSug = function () { sug.style.display = 'none'; sug.innerHTML = ''; };
+    bindUser.addEventListener('input', function () {
+      clearTimeout(sugTimer);
+      var q = bindUser.value.trim();
+      if (q === '') { hideSug(); return; }
+      sugTimer = setTimeout(function () {
+        fetch('admin.php?op=search_users&q=' + encodeURIComponent(q), { credentials: 'include', cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d || !d.success || !d.users || !d.users.length) { hideSug(); return; }
+            sug.innerHTML = '';
+            d.users.forEach(function (u) {
+              var it = document.createElement('div');
+              it.style.cssText = 'padding:8px 10px;cursor:pointer;font-size:13px;';
+              it.innerHTML = '<b>' + u.username + '</b> <span style="opacity:.6">' + u.email + '</span>';
+              it.addEventListener('mouseenter', function () { it.style.background = 'rgba(255,255,255,.08)'; });
+              it.addEventListener('mouseleave', function () { it.style.background = ''; });
+              // mousedown 抢在 input blur 之前，避免候选框先消失
+              it.addEventListener('mousedown', function (e) {
+                e.preventDefault();
+                bindUser.value = u.username;
+                hideSug();
+              });
+              sug.appendChild(it);
+            });
+            sug.style.display = 'block';
+          })
+          .catch(function () { /* 静默 */ });
+      }, 250);
+    });
+    bindUser.addEventListener('blur', function () { setTimeout(hideSug, 150); });
+  }
+
+  // ===== 用户列表过滤（客户端本地过滤，只作用于两张用户表，2026-09-27）=====
+  var uf = document.getElementById('userFilter');
+  if (uf) {
+    var tables = ['userTable', 'legacyUserTable']
+      .map(function (id) { return document.getElementById(id); })
+      .filter(Boolean);
+    uf.addEventListener('input', function () {
+      var q = uf.value.trim().toLowerCase();
+      tables.forEach(function (tb) {
+        var rows = tb.querySelectorAll('tbody tr');
+        for (var i = 0; i < rows.length; i++) {
+          rows[i].style.display = (!q || rows[i].textContent.toLowerCase().indexOf(q) !== -1) ? '' : 'none';
+        }
+      });
+    });
+  }
 })();

@@ -690,7 +690,40 @@ function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid, $curNoteId 
             $alias = array('list_folders' => 'list_folder', 'list_folder' => 'list_folder', 'read_note' => 'read_note');
             $rn = isset($alias[$name]) ? $alias[$name] : (string)$name;
             if ($rn === 'list_folder' && !isset($args['path'])) $args['path'] = '主页';
-            return aiRunTool($rn, $args, $pdo, $uid, $curNoteId);
+            // 工作副本一致性：append/replace/write 只改 $work，整轮结束才落库。
+            // 模型随后用 read_note/list_folder 验证时，查库会读回追加前的旧内容，
+            // 于是「确认不了有没有追加成功」→ 再追加一遍 → 内容重复（实测 bug）。
+            // 凡涉及当前便签的读取，一律以 $work 为准。
+            $nid = 0;
+            if ($rn === 'read_note' && isset($args['id'])) $nid = (int)preg_replace('/[^0-9]/', '', (string)$args['id']);
+            if ($rn === 'read_note' && $nid <= 0 && $curNoteId > 0) $nid = (int)$curNoteId;
+            if ($rn === 'read_note' && $nid > 0 && (int)$nid === (int)$curNoteId) {
+                $st = $pdo->prepare("SELECT title FROM pn_notes WHERE id = ? AND user_id = ?");
+                $st->execute(array($curNoteId, $uid));
+                $row = $st->fetch();
+                if ($row) {
+                    return json_encode(array('id' => (int)$curNoteId, 'title' => (string)$row['title'],
+                        'content' => $work,
+                        'note' => 'content 为当前便签的实时工作副本（含本回合内已执行的 append/replace/write 改动；这些改动要到整轮结束才落库，读回旧内容不代表改动失败）'), JSON_UNESCAPED_UNICODE);
+                }
+                // 查不到当前便签（异常场景）→ 落回 aiRunTool 走统一报错
+            }
+            $out = aiRunTool($rn, $args, $pdo, $uid, $curNoteId);
+            if ($rn === 'list_folder' && $curNoteId > 0) {
+                $lf = json_decode($out, true);
+                if (is_array($lf) && !empty($lf['notes'])) {
+                    foreach ($lf['notes'] as $i => $n) {
+                        if (isset($n['id']) && (int)$n['id'] === (int)$curNoteId) {
+                            // 清单里当前便签的摘要同样可能落后于工作副本，同步替换
+                            $lf['notes'][$i]['snippet'] = function_exists('mb_substr') ? mb_substr($work, 0, 80, 'UTF-8') : substr($work, 0, 80);
+                            $lf['notes'][$i]['snippet_live'] = true;
+                            break;
+                        }
+                    }
+                    $out = json_encode($lf, JSON_UNESCAPED_UNICODE);
+                }
+            }
+            return $out;
     }
 }
 

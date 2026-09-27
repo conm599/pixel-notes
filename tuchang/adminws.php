@@ -3,6 +3,13 @@
 define('TAWA_IMG', true);
 require __DIR__ . '/config.php';
 
+// 首次部署护栏（2026-09-25 加，不属于门禁逻辑本身、门禁代码零改动）：
+// 未安装（无 suite-config.php）时管理密令为空串，统一跳便签主站根走 /admini/ 安装向导
+if (!suite_installed()) {
+    header('Location: ' . bianqian_site_url('/'));
+    exit;
+}
+
 $isAdmin = !empty($_SESSION['is_admin']);
 $msg = '';
 
@@ -59,13 +66,13 @@ if ($isAdmin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])
         } elseif (!$tokOk) {
             $msg = '删除失败：二级安全令牌不正确';
         } elseif ($target > 0) {
-            // 删除该用户所有图片（文件 + 记录）再删用户
+            // 删除该用户全部图片记录，物理文件按引用计数清理（去重后同文件可能被其他用户共享）
             $st = db()->prepare('SELECT id, file FROM img_images WHERE uid = ?');
             $st->execute(array($target));
-            foreach ($st->fetchAll() as $im) {
-                @unlink(IMG_DIR . $im['file']);
-            }
+            $files = array();
+            foreach ($st->fetchAll() as $im) $files[] = $im['file'];
             db()->prepare('DELETE FROM img_images WHERE uid = ?')->execute(array($target));
+            foreach (array_unique($files) as $f) img_unlink_if_orphan($f);
             db()->prepare('DELETE FROM img_users WHERE id = ?')->execute(array($target));
             $msg = '用户已删除（含全部图片）';
         }

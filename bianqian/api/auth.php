@@ -6,7 +6,7 @@
  * 加固措施：
  * - 仅接受 JSON 请求体（根治 CSRF）
  * - 注册/重置：必须邮箱验证码（6 位，10 分钟有效，错误 5 次作废）
- * - 邮箱白名单：仅主流邮箱 + naxid.top（管理员可改），挡掉临时邮箱
+ * - 邮箱白名单：仅主流邮箱（管理员可改），挡掉临时邮箱
  * - 同邮箱 60 秒冷却、8 次/小时；同 IP 20 次/小时；登录失败 15 分钟 5 次锁定
  * - 会话 Cookie：HttpOnly + Secure + SameSite=Lax
  */
@@ -28,6 +28,7 @@ function jsonResponse($data, $code = 200) {
     echo json_encode($data, defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0);
     exit;
 }
+// emailVerifyRequired() 已上移至 config/database.php（login/register 页面共用，2026-09-27）
 
 /** 校验验证码：成功标记已用，失败累计 attempts；返回 bool */
 function verifyEmailCode($pdo, $email, $purpose, $code) {
@@ -94,11 +95,15 @@ try {
         if (!in_array($purpose, array('register', 'login', 'reset', 'delete', 'backup'), true)) {
             jsonResponse(array('success' => false, 'message' => '用途参数非法'), 400);
         }
+        // 邮箱验证开关关闭：验证码体系整体停用（前端入口已隐藏，这里服务端兜底）
+        if (!emailVerifyRequired()) {
+            jsonResponse(array('success' => false, 'message' => '邮箱验证功能已关闭，请直接注册或使用密码登录'), 403);
+        }
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             jsonResponse(array('success' => false, 'message' => '请输入有效的邮箱地址'), 400);
         }
         if (!emailDomainAllowed($email)) {
-            jsonResponse(array('success' => false, 'message' => '暂不支持该邮箱服务商，请使用主流邮箱（QQ/Gmail/Outlook/163 等）或 @naxid.top'), 400);
+            jsonResponse(array('success' => false, 'message' => '暂不支持该邮箱服务商，请使用主流邮箱（QQ/Gmail/Outlook/163 等）'), 400);
         }
 
         // 注册发码前必须通过图片人机验证（一次性：无论对错，校验后立即作废，须重新输入）
@@ -207,13 +212,25 @@ try {
             jsonResponse(array('success' => false, 'message' => '用户名需要2-30个字符'), 400);
         }
         if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !emailDomainAllowed($email)) {
-            jsonResponse(array('success' => false, 'message' => '邮箱无效或不被支持，请使用主流邮箱或 @naxid.top'), 400);
+            jsonResponse(array('success' => false, 'message' => '邮箱无效或不被支持，请使用主流邮箱（QQ/Gmail/Outlook/163 等）'), 400);
         }
         if (strlen($password) < 8) {
             jsonResponse(array('success' => false, 'message' => '密码至少需要8个字符'), 400);
         }
-        if (!verifyEmailCode($pdo, $email, 'register', $code)) {
-            jsonResponse(array('success' => false, 'message' => '验证码错误或已过期'), 400);
+        if (emailVerifyRequired()) {
+            if (!verifyEmailCode($pdo, $email, 'register', $code)) {
+                jsonResponse(array('success' => false, 'message' => '验证码错误或已过期'), 400);
+            }
+        } else {
+            // 免验证码注册：图片验证码成为唯一反滥用防线，服务端强校验（与会话内 captcha.php 生成值比对）
+            $cap = isset($input['captcha']) ? strtoupper(trim((string)$input['captcha'])) : '';
+            $capOk = isset($_SESSION['captcha_code'], $_SESSION['captcha_expire'])
+                     && time() <= $_SESSION['captcha_expire']
+                     && hash_equals($_SESSION['captcha_code'], $cap);
+            unset($_SESSION['captcha_code'], $_SESSION['captcha_expire']);
+            if (!$capOk) {
+                jsonResponse(array('success' => false, 'message' => '图片验证码错误或已过期，请刷新后重试', 'captcha_failed' => true), 400);
+            }
         }
 
         $stmt = $pdo->prepare("INSERT INTO pn_login_attempts (username, ip, action, success, attempted_at)
@@ -268,7 +285,7 @@ try {
         }
 
         // 仅支持邮箱登录（用户名仅作昵称展示，不参与登录，避免撞名歧义）
-        $stmt = $pdo->prepare("SELECT id, username, password_hash, email_verified FROM pn_users WHERE email = ?");
+        $stmt = $pdo->prepare("SELECT id, username, password_hash, email_verified, banned FROM pn_users WHERE email = ?");
         $stmt->execute(array($login));
         $user = $stmt->fetch();
 
@@ -279,8 +296,13 @@ try {
             $stmt->execute(array(substr($login, 0, 100), $ip));
             jsonResponse(array('success' => false, 'message' => '邮箱或密码错误'), 401);
         }
-        if ((int)$user['email_verified'] !== 1) {
+        // 免验证模式：email_verified 不再作为登录门槛（历史未验证账号一并放行）
+        if (emailVerifyRequired() && (int)$user['email_verified'] !== 1) {
             jsonResponse(array('success' => false, 'message' => '该账号邮箱未验证，无法登录（如需恢复请联系管理员）'), 403);
+        }
+        // 封禁拦截（2026-09-25 双库封禁，pn_users.banned 为唯一事实源；列未迁移时 fetch 报错由外层兜底）
+        if (isset($user['banned']) && (int)$user['banned'] === 1) {
+            jsonResponse(array('success' => false, 'message' => '该账号已被封禁，如有疑问请联系管理员'), 403);
         }
 
         $stmt = $pdo->prepare("DELETE FROM pn_login_attempts WHERE action = 'login' AND username = ?");
@@ -312,14 +334,18 @@ try {
         if (!verifyEmailCode($pdo, $email, 'login', $code)) {
             jsonResponse(array('success' => false, 'message' => '验证码错误或已过期'), 401);
         }
-        $st = $pdo->prepare("SELECT id, username, email_verified FROM pn_users WHERE email = ?");
+        $st = $pdo->prepare("SELECT id, username, email_verified, banned FROM pn_users WHERE email = ?");
         $st->execute(array($email));
         $user = $st->fetch();
         if (!$user) {
             jsonResponse(array('success' => false, 'message' => '验证码错误或已过期'), 401);
         }
-        if ((int)$user['email_verified'] !== 1) {
+        if (emailVerifyRequired() && (int)$user['email_verified'] !== 1) {
             jsonResponse(array('success' => false, 'message' => '该账号邮箱未验证，无法登录'), 403);
+        }
+        // 封禁拦截（与密码登录同款）
+        if (isset($user['banned']) && (int)$user['banned'] === 1) {
+            jsonResponse(array('success' => false, 'message' => '该账号已被封禁，如有疑问请联系管理员'), 403);
         }
         session_regenerate_id(true);
         $_SESSION['user_id'] = (int)$user['id'];
@@ -329,6 +355,10 @@ try {
 
     // ================= 重置密码 =================
     if ($action === 'resetpass') {
+        // 邮箱验证关闭 = 找回密码入口已隐藏，服务端兜底拒绝（无验证码无法确认身份）
+        if (!emailVerifyRequired()) {
+            jsonResponse(array('success' => false, 'message' => '密码重置未启用（邮箱验证已关闭），请联系管理员重置'), 403);
+        }
         $email    = strtolower(trim(isset($input['email']) ? $input['email'] : ''));
         $code     = isset($input['code']) ? $input['code'] : '';
         $password = isset($input['password']) ? $input['password'] : '';
@@ -373,6 +403,41 @@ try {
         $pdo->prepare("UPDATE pn_users SET password_hash = ? WHERE id = ?")
             ->execute(array($hash, (int)$_SESSION['user_id']));
         jsonResponse(array('success' => true, 'message' => '密码已修改，下次登录请用新密码'));
+    }
+
+    // ================= 修改用户名（已登录；用户名仅作展示昵称，登录始终用邮箱） =================
+    if ($action === 'changeusername') {
+        if (!isset($_SESSION['user_id'])) {
+            jsonResponse(array('success' => false, 'message' => '请先登录'), 401);
+        }
+        $username = trim(isset($input['username']) ? $input['username'] : '');
+        $ulen = function_exists('mb_strlen') ? mb_strlen($username, 'UTF-8') : strlen($username);
+        if ($ulen < 2 || $ulen > 30) {
+            jsonResponse(array('success' => false, 'message' => '用户名需要2-30个字符'), 400);
+        }
+        try {
+            $st = $pdo->prepare("SELECT id FROM pn_users WHERE username = ? AND id != ?");
+            $st->execute(array($username, (int)$_SESSION['user_id']));
+            if ($st->fetch()) {
+                jsonResponse(array('success' => false, 'message' => '该用户名已被占用'), 409);
+            }
+            $pdo->prepare("UPDATE pn_users SET username = ? WHERE id = ?")
+                ->execute(array($username, (int)$_SESSION['user_id']));
+        } catch (Exception $e) {
+            jsonResponse(array('success' => false, 'message' => '修改失败（用户名可能已被占用）'), 500);
+        }
+        $_SESSION['username'] = $username;
+        // 图床侧镜像同步（img_users.username 仅展示用，改名不破坏 pn_uid 关联）。
+        // 跨库同步失败不影响改名本身（图床名字旧一截属可接受的显示延迟）
+        $img = img_db();
+        if ($img) {
+            try {
+                $img->prepare('UPDATE img_users SET username = ? WHERE pn_uid = ?')
+                    ->execute(array($username, (int)$_SESSION['user_id']));
+            } catch (Exception $e) { /* 跨库失败降级 */ }
+        }
+        if (isset($_SESSION['uname'])) $_SESSION['uname'] = $username;   // 图床会话内展示名即时同步
+        jsonResponse(array('success' => true, 'message' => '用户名已更新', 'user' => array('username' => $username)));
     }
 
     // ================= 注销账号（已登录，需邮箱验证码） =================
@@ -437,6 +502,16 @@ try {
     // ================= 检查登录状态 =================
     if ($action === 'check') {
         if (isset($_SESSION['user_id'])) {
+            // 封禁拦截（fail-open）：banned=1 时清会话并返回未登录，前端下次轮询即弹回登录页；
+            // banned 列尚未自愈出来时静默放过，不影响正常会话
+            try {
+                $st = getDB()->prepare("SELECT banned FROM pn_users WHERE id = ?");
+                $st->execute(array((int)$_SESSION['user_id']));
+                if ((int)$st->fetchColumn() === 1) {
+                    $_SESSION = array();
+                    jsonResponse(array('success' => true, 'logged_in' => false, 'banned' => true));
+                }
+            } catch (Exception $e) { /* 列未迁移/库异常：按未封禁处理 */ }
             $em = '';
             try {
                 $st = getDB()->prepare("SELECT email FROM pn_users WHERE id = ?");

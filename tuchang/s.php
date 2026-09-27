@@ -29,8 +29,8 @@ if ($row['share_until'] > 0 && time() > $row['share_until']) {
 }
 // 图片本身过期
 if ($row['expire_at'] > 0 && time() > $row['expire_at']) {
-    @unlink(IMG_DIR . $row['file']);
     db()->prepare('DELETE FROM img_images WHERE id = ?')->execute(array((int)$row['id']));
+    img_unlink_if_orphan($row['file']);   // 先删行再引用计数（去重后文件可能被共享）
     notfound_img();
 }
 

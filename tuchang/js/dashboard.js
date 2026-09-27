@@ -245,6 +245,9 @@ function doShare() {
           m = document.getElementById('s-md'),
           h = document.getElementById('s-html'), b = document.getElementById('s-bb');
       u.value = r.url;
+      // 未配置优选域（url2 为空或与主链接相同）时隐藏「优选」行（2026-09-27）
+      var prefRow = document.getElementById('s-url2-row');
+      if (prefRow) prefRow.style.display = (r.url2 && r.url2 !== r.url) ? '' : 'none';
       u2.value = r.url2 || '';
       m.value = '![](' + r.url + ')';
       h.value = '<img src="' + r.url + '" alt="taowa">';
@@ -809,6 +812,8 @@ document.addEventListener('click', function (e) {
     if (d.shared) {
       document.getElementById('fsUrlMain').value = d.url;
       document.getElementById('fsUrlPref').value = d.url2;
+      var prefRow2 = document.getElementById('fsUrlPref-row');
+      if (prefRow2) prefRow2.style.display = (d.url2 && d.url2 !== d.url) ? '' : 'none';
       untilEl.textContent = '当前状态：已分享 · ' + fmtUntil(d.until);
       box.style.display = 'block';
     } else {

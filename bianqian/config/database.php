@@ -18,6 +18,55 @@ function suite_cfg($key, $default) {
     return isset($GLOBALS['SUITE_CFG'][$key]) && $GLOBALS['SUITE_CFG'][$key] !== '' ? $GLOBALS['SUITE_CFG'][$key] : $default;
 }
 
+// 首次部署判定：suite-config.php 是否已生成。全新部署（无配置）时入口页自动路由到 /admini/
+// 安装向导；向导保存一次（文件落盘）后本判定即为 true，自动路由永久取消。
+// 探测路径与上方 SUITE_CFG 一致（webroot 内 → webroot 上一级）。
+function suite_installed() {
+    static $v = null;
+    if ($v === null) {
+        $v = false;
+        foreach (array(dirname(__DIR__) . '/suite-config.php', dirname(__DIR__, 2) . '/suite-config.php') as $__f) {
+            if (is_file($__f)) { $v = true; break; }
+        }
+    }
+    return $v;
+}
+
+/**
+ * 邮箱验证开关（/admini 面板 bianqian_email_verify，默认 1=注册必须验证码）。
+ * 关闭后：注册仅需邮箱+密码（直接视为已验证），「验证码登录/找回密码」入口在前端隐藏，
+ * 服务端 sendcode/resetpass 一并拒绝——无 SMTP 的部署不再暴露不可用的功能。
+ * [2026-09-27] 放在 database.php：login/register 页面与 auth API 都要用，曾因放 auth.php 导致页面 Fatal
+ */
+function emailVerifyRequired() {
+    return suite_cfg('bianqian_email_verify', '1') === '1';
+}
+
+/**
+ * 图床库连接（跨站用户数据同步用：改名同步 img_users.username、admin.php 用户管理/封禁/容量）。
+ * 凭据与便签同源（/admini 面板写的 suite-config.php）；未配置图床库或连不上时返回 null，调用方降级。
+ * [2026-09-27] 自 admin.php 上移为全局助手（auth.php 改用户名同步也需要）
+ */
+function img_db() {
+    static $pdo = null, $tried = false;
+    if ($tried) return $pdo;
+    $tried = true;
+    $h = suite_cfg('tuchang_db_host', 'localhost');
+    $n = suite_cfg('tuchang_db_name', '');
+    $u = suite_cfg('tuchang_db_user', '');
+    $p = suite_cfg('tuchang_db_pass', '');
+    if ($n === '' || $u === '') return null;   // 未配置图床库（纯便签部署）
+    try {
+        $pdo = new PDO('mysql:host=' . $h . ';dbname=' . $n . ';charset=utf8mb4', $u, $p, array(
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ));
+    } catch (Exception $e) {
+        $pdo = null;
+    }
+    return $pdo;
+}
+
 // [本地开发] PSU_LOCAL_HTTP=1（php -S http 环境）：Cookie secure 放宽、siblingUrl 走 http；生产不设该变量零影响
 define('SUITE_LOCAL_HTTP', getenv('PSU_LOCAL_HTTP') === '1');
 
@@ -223,6 +272,11 @@ function ensureTables(&$error = null) {
         $pdo->exec("ALTER TABLE `pn_users` ADD COLUMN `img_consent` TINYINT(1) NOT NULL DEFAULT 0");
         $pdo->exec("ALTER TABLE `pn_users` ADD COLUMN `img_consent_at` INT UNSIGNED NOT NULL DEFAULT 0");
         $pdo->exec("ALTER TABLE `pn_users` ADD COLUMN `img_policy_ver` INT UNSIGNED NOT NULL DEFAULT 0");
+        // 自愈：账号封禁标记（2026-09-25 双库封禁）——pn_users.banned 是唯一事实源，
+        // 图库侧 img_users.banned 为冗余副本（两站分库，图床跨库查不到便签表），
+        // 便签 admin.php 用户管理的封禁/解禁操作同时写两库；图床 config.php user_banned() 有同款自愈
+        $pdo->exec("ALTER TABLE `pn_users` ADD COLUMN `banned` TINYINT(1) NOT NULL DEFAULT 0");
+        $pdo->exec("ALTER TABLE `pn_users` ADD COLUMN `banned_at` INT UNSIGNED NOT NULL DEFAULT 0");
         $pdo->setAttribute(PDO::ATTR_ERRMODE, $oldMode);
 
         try {

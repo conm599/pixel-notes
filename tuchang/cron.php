@@ -6,7 +6,8 @@ require __DIR__ . '/config.php';
 header('Content-Type: application/json; charset=utf-8');
 
 $key = isset($_GET['key']) ? (string)$_GET['key'] : '';
-if (!hash_equals(CRON_KEY, $key)) {
+// CRON_KEY 未配置（空串）时一律拒绝：防止 hash_equals('','') 把无密钥请求放进来
+if (CRON_KEY === '' || !hash_equals(CRON_KEY, $key)) {
     http_response_code(403);
     echo json_encode(array('ok' => false, 'err' => 'forbidden'));
     exit;

@@ -2,6 +2,14 @@
 // ================= 陶瓦图床 · 主界面 =================
 define('TAWA_IMG', true);
 require __DIR__ . '/config.php';
+
+// 首次部署护栏（须在任何 DB 访问前）：无 suite-config.php 时跳便签主站根，
+// 由便签入口自动路由 /admini/ 安装向导；保存一次配置后本跳转自动失效
+if (!suite_installed()) {
+    header('Location: ' . bianqian_site_url('/'));
+    exit;
+}
+
 require_login();
 
 $uid = (int)$_SESSION['uid'];
@@ -55,7 +63,8 @@ $csrf = csrf_token();
     <div class="brand">陶瓦<span>图床</span></div>
     <div class="top-user">
 <?php if (!empty($_SESSION['is_admin'])): // 与 adminws 门禁同一标记 ?>
-      <a class="link-btn" href="adminws.php" title="管理后台"><i class="ic ic-gear"></i> <span class="tb-label">管理</span></a>
+      <!-- [2026-09-25] 用户/配额管理融合进便签 admin.php（两站账号本就绑定）；adminws.php 保留但不再从导航直达（隐藏旧页，直接输 URL 仍可用） -->
+      <a class="link-btn" href="<?php echo e(siblingUrl('bianqian', '/admin.php')); ?>" title="用户与配额管理（便签+图床）"><i class="ic ic-gear"></i> <span class="tb-label">管理</span></a>
 <?php endif; ?>
       <button type="button" class="link-btn" id="apiToggle" title="开发者 API Key"><i class="ic ic-key"></i> <span class="tb-label">API</span></button>
       <a class="link-btn" href="<?php echo e(siblingUrl('bianqian', '/index.php')); ?>" title="返回便签"><i class="ic ic-home"></i> <span class="tb-label">便签</span></a>
@@ -174,7 +183,7 @@ $csrf = csrf_token();
       <h3 style="font-size:13px;color:var(--muted);margin-bottom:10px">分享链接（携带 token，未登录访问需 token）</h3>
       <div class="code-grid">
         <div class="code-row"><label>主域名</label><input id="s-url" readonly><button class="copy-btn">复制</button></div>
-        <div class="code-row"><label>优选</label><input id="s-url2" readonly><button class="copy-btn">复制</button></div>
+        <div class="code-row" id="s-url2-row" style="display:none"><label>优选</label><input id="s-url2" readonly><button class="copy-btn">复制</button></div>
         <div class="code-row"><label>Markdown</label><input id="s-md" readonly><button class="copy-btn">复制</button></div>
         <div class="code-row"><label>HTML</label><input id="s-html" readonly><button class="copy-btn">复制</button></div>
         <div class="code-row"><label>BBcode</label><input id="s-bb" readonly><button class="copy-btn">复制</button></div>
@@ -201,7 +210,7 @@ $csrf = csrf_token();
     <div class="share-result" id="fsResult" style="display:none;margin-top:16px">
       <h3 style="font-size:13px;color:var(--muted);margin-bottom:10px">分享链接（携带 token，未登录访问需 token）</h3>
       <div class="code-row" style="margin-bottom:6px"><label>主域名</label><input id="fsUrlMain" readonly><button class="copy-btn" data-copy="fsUrlMain">复制</button></div>
-      <div class="code-row"><label>优选</label><input id="fsUrlPref" readonly><button class="copy-btn" data-copy="fsUrlPref">复制</button></div>
+      <div class="code-row" id="fsUrlPref-row" style="display:none"><label>优选</label><input id="fsUrlPref" readonly><button class="copy-btn" data-copy="fsUrlPref">复制</button></div>
       <div id="fsUntil" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
     </div>
   </div>
@@ -216,6 +225,6 @@ var CUR_FOLDER = <?php echo json_encode($curFolder); ?>;
 </script>
 <script src="js/spa.js?v=12"></script>
 <script src="js/selection.js?v=10"></script>
-<script src="js/dashboard.js?v=30"></script>
+<script src="js/dashboard.js?v=31"></script>
 </body>
 </html>

@@ -85,8 +85,9 @@ if ($remain > 0) {
     <div class="v-share-box" id="shareBox">
       <?php if ($shared):
           $curHost = strtolower(preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST']));
-          $prefUrl = 'https://' . PREFERRED_HOST . '/s.php?t=' . $img['share_token'];
-          $sameHost = ($curHost === strtolower(PREFERRED_HOST));
+          // PREFERRED_HOST 未配置（空串）= 无优选域，优选链接坍缩为当前域链接（不渲染优选框）
+          $prefUrl = PREFERRED_HOST === '' ? $base . 's.php?t=' . $img['share_token'] : 'https://' . PREFERRED_HOST . '/s.php?t=' . $img['share_token'];
+          $sameHost = (PREFERRED_HOST === '' || $curHost === strtolower(PREFERRED_HOST));
       ?>
         <?php if (!$sameHost): ?>
           <div class="v-url-label">优选线路（推荐外发）</div>
