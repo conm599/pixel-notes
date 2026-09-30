@@ -628,7 +628,11 @@ function aiEditApplyReplace(&$work, $search, $replace, &$how) {
 
 function aiEditToolExec($name, $args, &$work, &$touched, $pdo, $uid, $curNoteId = 0) {
     $jp = defined('JSON_UNESCAPED_UNICODE') ? JSON_UNESCAPED_UNICODE : 0;
-    $excerpt = function () use ($work) {
+    // [2026-09-29] 必须 &引用捕获：值捕获会在闭包创建时（=工具改内容之前）冻结 $work，
+    // 导致 append/set_full/replace 的返回里 current_tail/current_length 永远是改动前的旧值
+    // （模型看到「追加成功但 tail 没变/长度为 0」陷入自我怀疑，实测反复困惑）。changed 字段
+    // 是改动后实时计算的所以一直正确——两相矛盾正是困惑来源。
+    $excerpt = function () use (&$work) {
         $len = function_exists('mb_strlen') ? mb_strlen($work, 'UTF-8') : strlen($work);
         $tail = function_exists('mb_substr') ? mb_substr($work, max(0, $len - 600), 600, 'UTF-8') : substr($work, -600);
         return array('current_length' => $len, 'current_tail' => $tail);
