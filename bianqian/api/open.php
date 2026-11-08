@@ -144,64 +144,19 @@ function handleStatus($owner, $pdo) {
         }
     }
 
-    // 2. diary 状态：用户今天有没有编辑/创建日记
-    // 递归检索用户所有名称包含“日记”的文件夹（含所有子孙文件夹）
-    $diaryFolderIds = array();
-    try {
-        $st = $pdo->prepare("SELECT id, parent_id, name FROM `pn_folders` WHERE `user_id` = ?");
-        $st->execute(array($userId));
-        $allFolders = $st->fetchAll();
-
-        // 找到根“日记”夹
-        $matchedRoot = array();
-        foreach ($allFolders as $f) {
-            if (mb_strpos($f['name'], '日记') !== false) {
-                $matchedRoot[] = (int)$f['id'];
-            }
-        }
-
-        // 递归找子夹
-        if (!empty($matchedRoot)) {
-            $toExpand = $matchedRoot;
-            $diaryFolderIds = $matchedRoot;
-            while (!empty($toExpand)) {
-                $curr = array_pop($toExpand);
-                foreach ($allFolders as $f) {
-                    if ((int)$f['parent_id'] === $curr && !in_array((int)$f['id'], $diaryFolderIds, true)) {
-                        $diaryFolderIds[] = (int)$f['id'];
-                        $toExpand[] = (int)$f['id'];
-                    }
-                }
-            }
-        }
-    } catch (Exception $e) {}
-
+    // 2. diary 状态：方案 A —— 只要今天创建或编辑了任何便签，即判定为已动笔写日记 (1)
     $diary = 0;
     try {
-        if (!empty($diaryFolderIds)) {
-            $placeholders = implode(',', array_fill(0, count($diaryFolderIds), '?'));
-            $sql = "SELECT COUNT(*) FROM `pn_notes` 
-                    WHERE `user_id` = ? 
-                      AND `folder_id` IN ($placeholders)
-                      AND (DATE(`updated_at`) = ? OR DATE(`created_at`) = ?)";
-            $params = array_merge(array($userId), $diaryFolderIds, array($today, $today));
-            $st = $pdo->prepare($sql);
-            $st->execute($params);
-            if ((int)$st->fetchColumn() > 0) {
-                $diary = 1;
-            }
-        } else {
-            // 没有日记文件夹时，兜底匹配标题含日记的便签
+        if ($pdo) {
             $st = $pdo->prepare("SELECT COUNT(*) FROM `pn_notes` 
                                  WHERE `user_id` = ? 
-                                   AND `title` LIKE '%日记%'
                                    AND (DATE(`updated_at`) = ? OR DATE(`created_at`) = ?)");
             $st->execute(array($userId, $today, $today));
             if ((int)$st->fetchColumn() > 0) {
                 $diary = 1;
             }
         }
-    } catch (Exception $e) {}
+    } catch (Throwable $e) {}
 
     // 3. todo 状态：按约定先不做，固定返回 0
     $todo = 0;
