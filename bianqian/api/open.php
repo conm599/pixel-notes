@@ -79,8 +79,11 @@ $pdo = null;
 // 异步记录 Key 最后使用时间（非致命错误可忽略）
 if ($owner) {
     try {
-        $pdo->prepare("UPDATE `pn_api_keys` SET `last_used_at` = NOW() WHERE `id` = ?")->execute(array((int)$owner['id']));
-    } catch (Exception $e) {}
+        $pdo = getDB();
+        if ($pdo) {
+            $pdo->prepare("UPDATE `pn_api_keys` SET `last_used_at` = NOW() WHERE `id` = ?")->execute(array((int)$owner['id']));
+        }
+    } catch (Throwable $e) {}
 }
 
 
