@@ -311,7 +311,7 @@ try {
         session_regenerate_id(true);
         $_SESSION['user_id'] = (int)$user['id'];
         $_SESSION['username'] = $user['username'];
-        try { $pdo->prepare("UPDATE pn_users SET last_login_at = NOW() WHERE id = ?")->execute(array((int)$user['id'])); } catch (Exception $e) {}
+        touchUserLoginDate((int)$user['id']);
         // 账号统一过渡：清除可能残留的旧 host-only 会话 Cookie（与父域新 Cookie 并存会让 PHP 读到旧会话）
         // 父域为空（localhost / IP 直连）时新会话 Cookie 本就是 host-only，删除会清掉刚发的登录态 → 登录弹回，必须跳过。
         if (isset($_COOKIE['PHPSESSID']) && siteParentDomain() !== '') {
@@ -351,7 +351,7 @@ try {
         session_regenerate_id(true);
         $_SESSION['user_id'] = (int)$user['id'];
         $_SESSION['username'] = $user['username'];
-        try { $pdo->prepare("UPDATE pn_users SET last_login_at = NOW() WHERE id = ?")->execute(array((int)$user['id'])); } catch (Exception $e) {}
+        touchUserLoginDate((int)$user['id']);
         jsonResponse(array('success' => true, 'message' => '登录成功！', 'user' => array('username' => $user['username'])));
     }
 

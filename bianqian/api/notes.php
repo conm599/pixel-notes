@@ -38,6 +38,7 @@ try {
     }
 
     $userId = (int)$_SESSION['user_id'];
+    touchUserLoginDate($userId);
     $pdo = getDB();
 
     $schemaError = null;

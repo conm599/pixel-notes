@@ -633,3 +633,24 @@ function getDeskKeyOwner($apiKey) {
         return $row;
     } catch (Exception $e) { return null; }
 }
+
+/**
+ * 刷新用户今日活跃登录状态（桌面状态屏 open 判定）
+ * 借助 Session 缓存当天日期，每人每天仅在首次打开/请求时触发 1 次 SQL 更新，零多余开销
+ */
+function touchUserLoginDate($userId) {
+    if (!$userId) return;
+    $today = date('Y-m-d');
+    if (isset($_SESSION['pn_last_touch']) && $_SESSION['pn_last_touch'] === $today) {
+        return;
+    }
+    $_SESSION['pn_last_touch'] = $today;
+    try {
+        $pdo = getDB();
+        if ($pdo) {
+            $st = $pdo->prepare("UPDATE `pn_users` SET `last_login_at` = NOW() WHERE `id` = ?");
+            $st->execute(array((int)$userId));
+        }
+    } catch (Throwable $e) {}
+}
+

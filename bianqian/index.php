@@ -15,6 +15,7 @@ if (!isset($_SESSION['user_id'])) {
     header('Location: login.php');
     exit;
 }
+touchUserLoginDate((int)$_SESSION['user_id']);
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
