@@ -74,7 +74,7 @@ if ($isMockEndpoint) {
 }
 
 $userId = $owner ? (int)$owner['user_id'] : 0;
-$pdo = getDB();
+$pdo = null;
 
 // 异步记录 Key 最后使用时间（非致命错误可忽略）
 if ($owner) {
@@ -127,6 +127,7 @@ exit;
  * 接口一：GET /status
  */
 function handleStatus($owner, $pdo) {
+    if (!$pdo) { try { $pdo = getDB(); } catch (Exception $e) { $pdo = null; } }
     $userId = (int)$owner['user_id'];
     $now = time();
     $today = date('Y-m-d', $now);
@@ -217,6 +218,7 @@ function handleStatus($owner, $pdo) {
  * 接口二：GET /roast
  */
 function handleRoast($owner, $pdo) {
+    if (!$pdo) { try { $pdo = getDB(); } catch (Exception $e) { $pdo = null; } }
     $userId = (int)$owner['user_id'];
     $now = time();
     $today = date('Y-m-d', $now);
