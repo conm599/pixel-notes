@@ -4337,6 +4337,7 @@
     mmBind('mImgBridge', function () { var b = document.getElementById('btnImgBridge'); if (b) b.click(); });
     mmBind('mMdColors', function () { var b = document.getElementById('btnMdColors'); if (b) b.click(); });
     mmBind('mAiSettings', function () { var b = document.getElementById('btnAiSettings'); if (b) b.click(); else openAiSettings(function () {}); });
+    mmBind('mDeskScreen', function () { var b = document.getElementById('btnDeskScreen'); if (b) b.click(); else openDeskScreenModal(); });
     mmBind('mIconset', function () { var b = document.getElementById('btnIconset'); if (b) b.click(); else if (window.PixelIconset) window.PixelIconset.set(window.PixelIconset.get() === 'mix' ? 'v1' : (window.PixelIconset.get() === 'v1' ? 'v2' : 'mix')); });
     mmBind('mChangePass', function () { var b = document.getElementById('btnChangePass'); if (b) b.click(); });
     mmBind('mLogout', function () { var f = document.querySelector('form[action="logout.php"]'); if (f) f.submit(); });
@@ -4616,6 +4617,240 @@
   if (btnAiSettings) btnAiSettings.addEventListener('click', function () {
     openAiSettings(function () {});
   });
+
+  var btnDeskScreen = document.getElementById('btnDeskScreen');
+  if (btnDeskScreen) btnDeskScreen.addEventListener('click', function () {
+    openDeskScreenModal();
+  });
+
+  // ============== 桌面状态屏 (MCU / 开放接口) Key 与性格管理 ==============
+  var currentDeskModal = null;
+  function closeDeskScreenModal() {
+    if (currentDeskModal && currentDeskModal.parentNode) {
+      currentDeskModal.parentNode.removeChild(currentDeskModal);
+    }
+    currentDeskModal = null;
+  }
+
+  function openDeskScreenModal() {
+    closeDeskScreenModal();
+    var overlay = mkEl('div', 'md-modal-overlay');
+    var modal = mkEl('div', 'md-modal');
+    modal.style.maxWidth = '520px';
+
+    var head = mkEl('div', 'md-modal-head');
+    head.appendChild(mkEl('div', 'md-modal-title', '<i class="ic ic-gamepad"></i> 桌面状态屏 (MCU / 开放接口)'));
+    var closeBtn = mkBtn('✖ 关闭');
+    closeBtn.className = 'md-modal-close';
+    closeBtn.addEventListener('click', closeDeskScreenModal);
+    head.appendChild(closeBtn);
+
+    var body = mkEl('div', 'md-modal-body');
+    body.style.padding = '18px 20px';
+
+    var intro = mkEl('div');
+    intro.style.cssText = 'font-size:12px;color:#8a8ab0;margin-bottom:14px;line-height:1.6;';
+    intro.textContent = '供 ESP32 桌面屏幕或第三方应用获取您的便签状态与 AI 吐槽。请妥善保管您的 API Key。';
+    body.appendChild(intro);
+
+    // API Key 区域
+    var keyGroup = mkEl('div');
+    keyGroup.style.marginBottom = '12px';
+    var keyHead = mkEl('div');
+    keyHead.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px;color:var(--accent2);';
+    keyHead.appendChild(mkEl('span', '', 'API Key (请求头 X-API-Key)'));
+    var statusSpan = mkEl('span', '', '加载中...');
+    statusSpan.style.fontSize = '11px';
+    keyHead.appendChild(statusSpan);
+    keyGroup.appendChild(keyHead);
+
+    var inputRow = mkEl('div');
+    inputRow.style.cssText = 'display:flex;gap:8px;';
+    var keyInput = mkEl('input', 'form-input');
+    keyInput.type = 'text';
+    keyInput.readOnly = true;
+    keyInput.placeholder = '尚未申请密钥';
+    keyInput.style.cssText = 'font-family:monospace;font-size:12px;background:rgba(0,0,0,0.3);';
+    var copyBtn = mkBtn('复制');
+    copyBtn.className = 'btn btn-outline btn-sm';
+    copyBtn.style.flexShrink = '0';
+    inputRow.appendChild(keyInput);
+    inputRow.appendChild(copyBtn);
+    keyGroup.appendChild(inputRow);
+    body.appendChild(keyGroup);
+
+    // Key 操作按钮组
+    var btnRow = mkEl('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-bottom:16px;';
+    var resetBtn = mkBtn('🔄 生成 / 重置密钥');
+    resetBtn.className = 'btn btn-primary btn-sm';
+    resetBtn.style.fontSize = '11px';
+    var delBtn = mkBtn('🗑️ 删除密钥');
+    delBtn.className = 'btn btn-outline btn-sm';
+    delBtn.style.cssText = 'font-size:11px;color:var(--danger);border-color:var(--danger);display:none;';
+    btnRow.appendChild(resetBtn);
+    btnRow.appendChild(delBtn);
+    body.appendChild(btnRow);
+
+    // AI 性格区域
+    var personaGroup = mkEl('div');
+    personaGroup.style.cssText = 'border-top:1px dashed var(--border-color);padding-top:14px;margin-bottom:14px;';
+    var pLabel = mkEl('div', '', 'AI 吐槽管家性格设定 (Persona)');
+    pLabel.style.cssText = 'font-size:12px;color:var(--accent2);margin-bottom:6px;';
+    personaGroup.appendChild(pLabel);
+
+    var pText = mkEl('textarea', 'form-input');
+    pText.rows = 2;
+    pText.maxLength = 200;
+    pText.placeholder = '设定管家性格（如：傲娇毒舌、温柔管家、摆烂大王...）';
+    pText.style.cssText = 'font-size:12px;resize:vertical;width:100%;';
+    personaGroup.appendChild(pText);
+
+    var pActionRow = mkEl('div');
+    pActionRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-top:6px;';
+    var pHint = mkEl('span', '', '最长200字，以普通管家偏好安全注入');
+    pHint.style.cssText = 'font-size:11px;color:#8a8ab0;';
+    var savePBtn = mkBtn('保存性格');
+    savePBtn.className = 'btn btn-outline btn-sm';
+    savePBtn.style.fontSize = '11px';
+    pActionRow.appendChild(pHint);
+    pActionRow.appendChild(savePBtn);
+    personaGroup.appendChild(pActionRow);
+    body.appendChild(personaGroup);
+
+    // 接入指引
+    var guideBox = mkEl('div');
+    guideBox.style.cssText = 'background:rgba(74,240,255,0.06);border:1px solid var(--accent2);padding:10px 12px;font-size:11px;line-height:1.6;color:#8a8ab0;';
+    var apiBaseCode = mkEl('div');
+    apiBaseCode.innerHTML = '<b>接口基址</b>: <code id="deskApiBaseVal" style="color:var(--accent2);">' + (location.origin + '/api/open.php') + '</code>';
+    var authCode = mkEl('div');
+    authCode.innerHTML = '<b>认证头</b>: <code style="color:var(--accent2);">X-API-Key: &lt;您的密钥&gt;</code>';
+    var endCode = mkEl('div');
+    endCode.innerHTML = '<b>可用端点</b>: <code>?endpoint=status</code> (状态) / <code>?endpoint=roast</code> (吐槽) / <code>?endpoint=mock_status</code>';
+    guideBox.appendChild(apiBaseCode);
+    guideBox.appendChild(authCode);
+    guideBox.appendChild(endCode);
+    body.appendChild(guideBox);
+
+    modal.appendChild(head);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    currentDeskModal = overlay;
+
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) closeDeskScreenModal();
+    });
+
+    // 复制事件
+    copyBtn.addEventListener('click', function () {
+      if (!keyInput.value || keyInput.value === '尚未申请密钥') {
+        showToast('请先生成密钥', 'error');
+        return;
+      }
+      navigator.clipboard.writeText(keyInput.value).then(function () {
+        showToast('API Key 已复制到剪贴板！');
+      }).catch(function () {
+        showToast('复制失败，请手动长按复制', 'error');
+      });
+    });
+
+    // 保存性格
+    savePBtn.addEventListener('click', async function () {
+      savePBtn.disabled = true;
+      try {
+        var resp = await fetch('api/user_key.php?action=save_persona', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ persona: pText.value })
+        });
+        var data = await resp.json();
+        if (data.success) {
+          showToast(data.message || '性格设定已保存！');
+        } else {
+          showToast(data.message || '保存失败', 'error');
+        }
+      } catch (err) {
+        showToast('保存失败：网络错误', 'error');
+      } finally {
+        savePBtn.disabled = false;
+      }
+    });
+
+    // 重置/生成密钥
+    resetBtn.addEventListener('click', async function () {
+      var hasVal = !!keyInput.value && keyInput.value !== '尚未申请密钥';
+      if (hasVal && !confirm('重置密钥后，之前配置该 Key 的桌面屏或程序将立即失效，确定要重新生成吗？')) {
+        return;
+      }
+      resetBtn.disabled = true;
+      try {
+        var resp = await fetch('api/user_key.php?action=reset', { method: 'POST' });
+        var data = await resp.json();
+        if (data.success) {
+          keyInput.value = data.api_key;
+          statusSpan.textContent = '正常生效';
+          statusSpan.style.color = 'var(--success)';
+          delBtn.style.display = '';
+          showToast(data.message || '新密钥已生成！');
+        } else {
+          showToast(data.message || '生成失败', 'error');
+        }
+      } catch (e) {
+        showToast('生成失败：网络错误', 'error');
+      } finally {
+        resetBtn.disabled = false;
+      }
+    });
+
+    // 删除密钥
+    delBtn.addEventListener('click', async function () {
+      if (!confirm('确定彻底删除该 API Key 吗？删除后所有接入该 Key 的设备将无法使用。')) {
+        return;
+      }
+      delBtn.disabled = true;
+      try {
+        var resp = await fetch('api/user_key.php?action=delete', { method: 'POST' });
+        var data = await resp.json();
+        if (data.success) {
+          keyInput.value = '';
+          statusSpan.textContent = '未生成';
+          statusSpan.style.color = '#8a8ab0';
+          delBtn.style.display = 'none';
+          showToast(data.message || '密钥已删除');
+        } else {
+          showToast(data.message || '删除失败', 'error');
+        }
+      } catch (e) {
+        showToast('删除失败：网络错误', 'error');
+      } finally {
+        delBtn.disabled = false;
+      }
+    });
+
+    // 加载当前数据
+    fetch('api/user_key.php?action=get').then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.success) return;
+      if (d.has_key && d.api_key) {
+        keyInput.value = d.api_key;
+        statusSpan.textContent = '正常生效';
+        statusSpan.style.color = 'var(--success)';
+        delBtn.style.display = '';
+      } else {
+        keyInput.value = '';
+        statusSpan.textContent = '未生成';
+        statusSpan.style.color = '#8a8ab0';
+        delBtn.style.display = 'none';
+      }
+      if (d.persona) {
+        pText.value = d.persona;
+      }
+      if (d.api_base) {
+        var baseCode = document.getElementById('deskApiBaseVal');
+        if (baseCode) baseCode.textContent = d.api_base;
+      }
+    }).catch(function () {});
+  }
 
   // ============== 渲染强调色自定义（设置菜单入口，存 localStorage） ==============
   var MD_COLORS_KEY = 'pixel_notes_md_colors';

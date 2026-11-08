@@ -239,6 +239,31 @@ function ensureTables(&$error = null) {
             KEY `idx_user` (`user_id`, `created_at`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
+        // 桌面状态屏/第三方 API 密钥表（每个用户 1 个激活 key + 自定义性格设定）
+        $sqlApiKeys = "CREATE TABLE IF NOT EXISTS `pn_api_keys` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `user_id` INT UNSIGNED NOT NULL,
+            `api_key` VARCHAR(64) NOT NULL,
+            `persona` VARCHAR(500) NOT NULL DEFAULT '嘴硬心软、爱吐槽的桌面管家',
+            `created_at` DATETIME NOT NULL,
+            `last_used_at` DATETIME NULL DEFAULT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_api_key` (`api_key`),
+            KEY `idx_user_id` (`user_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
+        // 桌面屏 AI 吐槽多轮记忆上下文（继承记忆，200K 触发压缩，保留最近 30 条）
+        $sqlDeskMemories = "CREATE TABLE IF NOT EXISTS `pn_desk_memories` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `user_id` INT UNSIGNED NOT NULL,
+            `role` VARCHAR(20) NOT NULL,
+            `content` TEXT NOT NULL,
+            `content_len` INT UNSIGNED NOT NULL DEFAULT 0,
+            `created_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_user_time` (`user_id`, `created_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
         // 自愈：给已有 pn_notes 表补充 sort_order / share 列（兼容旧表）
         // 使用临时静默模式，不抛出任何异常
         $oldMode = $pdo->getAttribute(PDO::ATTR_ERRMODE);
@@ -277,6 +302,9 @@ function ensureTables(&$error = null) {
         // 便签 admin.php 用户管理的封禁/解禁操作同时写两库；图床 config.php user_banned() 有同款自愈
         $pdo->exec("ALTER TABLE `pn_users` ADD COLUMN `banned` TINYINT(1) NOT NULL DEFAULT 0");
         $pdo->exec("ALTER TABLE `pn_users` ADD COLUMN `banned_at` INT UNSIGNED NOT NULL DEFAULT 0");
+        // 自愈：用户最后登录时间（桌面状态屏 open 状态）
+        $pdo->exec("ALTER TABLE `pn_users` ADD COLUMN `last_login_at` DATETIME NULL DEFAULT NULL");
+        $pdo->exec("ALTER TABLE `pn_api_keys` ADD COLUMN `persona` VARCHAR(500) NOT NULL DEFAULT '嘴硬心软、爱吐槽的桌面管家'");
         $pdo->setAttribute(PDO::ATTR_ERRMODE, $oldMode);
 
         try {
@@ -296,6 +324,8 @@ function ensureTables(&$error = null) {
             $pdo->exec($sqlEmailCodes);
             $pdo->exec($sqlFolders);
             $pdo->exec($sqlAiActions);
+            $pdo->exec($sqlApiKeys);
+            $pdo->exec($sqlDeskMemories);
         } catch (PDOException $e) {
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlUsers));
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlNotes));
@@ -306,6 +336,8 @@ function ensureTables(&$error = null) {
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlEmailCodes));
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlFolders));
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlAiActions));
+            $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlApiKeys));
+            $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlDeskMemories));
         }
 
         $done = true;
@@ -528,4 +560,76 @@ function pnRescueDoubleCookie() {
  */
 function clientIp() {
     return isset($_SERVER['REMOTE_ADDR']) ? substr($_SERVER['REMOTE_ADDR'], 0, 45) : 'unknown';
+}
+
+/**
+ * ============================================================
+ * 桌面状态屏 / 第三方 API Key 管理助手函数
+ * ============================================================
+ */
+function getUserDeskApiKey($userId) {
+    try {
+        $pdo = getDB();
+        $st = $pdo->prepare("SELECT * FROM `pn_api_keys` WHERE `user_id` = ? LIMIT 1");
+        $st->execute(array((int)$userId));
+        $row = $st->fetch();
+        return $row ? $row : null;
+    } catch (Exception $e) { return null; }
+}
+
+function generateUserDeskApiKey($userId) {
+    try {
+        $pdo = getDB();
+        $key = 'pn_desk_' . bin2hex(random_bytes(16));
+        $existing = getUserDeskApiKey($userId);
+        if ($existing) {
+            $st = $pdo->prepare("UPDATE `pn_api_keys` SET `api_key` = ?, `created_at` = NOW() WHERE `user_id` = ?");
+            $st->execute(array($key, (int)$userId));
+        } else {
+            $st = $pdo->prepare("INSERT INTO `pn_api_keys` (`user_id`, `api_key`, `created_at`) VALUES (?, ?, NOW())");
+            $st->execute(array((int)$userId, $key));
+        }
+        return $key;
+    } catch (Exception $e) { return false; }
+}
+
+function deleteUserDeskApiKey($userId) {
+    try {
+        $pdo = getDB();
+        $st = $pdo->prepare("DELETE FROM `pn_api_keys` WHERE `user_id` = ?");
+        $st->execute(array((int)$userId));
+        return true;
+    } catch (Exception $e) { return false; }
+}
+
+function saveUserDeskPersona($userId, $persona) {
+    try {
+        $pdo = getDB();
+        $persona = mb_substr(trim((string)$persona), 0, 500, 'UTF-8');
+        if ($persona === '') $persona = '嘴硬心软、爱吐槽的桌面管家';
+        $existing = getUserDeskApiKey($userId);
+        if ($existing) {
+            $st = $pdo->prepare("UPDATE `pn_api_keys` SET `persona` = ? WHERE `user_id` = ?");
+            $st->execute(array($persona, (int)$userId));
+        } else {
+            $key = 'pn_desk_' . bin2hex(random_bytes(16));
+            $st = $pdo->prepare("INSERT INTO `pn_api_keys` (`user_id`, `api_key`, `persona`, `created_at`) VALUES (?, ?, ?, NOW())");
+            $st->execute(array((int)$userId, $key, $persona));
+        }
+        return true;
+    } catch (Exception $e) { return false; }
+}
+
+function getDeskKeyOwner($apiKey) {
+    try {
+        $apiKey = trim((string)$apiKey);
+        if ($apiKey === '') return null;
+        $pdo = getDB();
+        $st = $pdo->prepare("SELECT k.*, u.username, u.email, u.is_admin, u.banned, u.last_login_at FROM `pn_api_keys` k JOIN `pn_users` u ON k.user_id = u.id WHERE k.api_key = ? LIMIT 1");
+        $st->execute(array($apiKey));
+        $row = $st->fetch();
+        if (!$row) return null;
+        if (isset($row['banned']) && (int)$row['banned'] === 1) return null;
+        return $row;
+    } catch (Exception $e) { return null; }
 }
