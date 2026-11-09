@@ -247,6 +247,7 @@ void fetchDeskRoast() {
 | **获取吐槽** | `ROAST <API_KEY>\n` | 以 0.1s/字 逐字流式向 Socket 写入纯文本，传输完毕追加 `\n` 并自动关闭 Socket | ~4-6s |
 | **Mock 状态** | `MOCK_STATUS\n` | 直接回传固定 Mock 状态 JSON（免 Key） | <0.1s |
 | **Mock 吐槽** | `MOCK_ROAST\n` | 逐字流式吐出固定 Mock 吐槽文本（免 Key） | ~1.6s |
+| **获取天气** | `WEATHER [city\|adcode]\n` | 同端口明文 TCP 代理 uapis 天气数据（10分钟缓存，紧凑 JSON 回传），完毕自动断开 | **<0.05s** (缓存命中) |
 
 > 异常应答：若鉴权失败直接返回 `ERR 401 UNAUTHORIZED\n`，若触发限流返回 `ERR 429 TOO MANY REQUESTS\n`。
 
@@ -299,5 +300,57 @@ void fetchRoastTcp() {
         Serial.println();
         client.stop();
     }
+}
+```
+
+
+### 6.4 ESP32 获取天气极简代码示例（免 HTTP/TLS 协议栈）
+
+```cpp
+// 3. 免 HTTP 代理获取天气（单行 TCP，耗时 <50ms，完全消除 TLS/HTTP 握手开销）
+void fetchWeatherTcp(const char* city = "北京") {
+    WiFiClient client;
+    if (client.connect(SERVER_IP, SERVER_PORT, 5000)) {
+        if (city && strlen(city) > 0) {
+            client.printf("WEATHER %s\n", city);
+        } else {
+            client.print("WEATHER\n"); // 默认按服务器公网 IP 自动定位
+        }
+        String line = client.readStringUntil('\n');
+        client.stop();
+
+        StaticJsonDocument<512> doc;
+        DeserializationError err = deserializeJson(doc, line);
+        if (!err) {
+            const char* cityName = doc["city"];
+            const char* weather = doc["weather"];
+            int temp = doc["temperature"];
+            int humidity = doc["humidity"];
+            const char* wind = doc["wind_direction"];
+            Serial.printf("[%s] 天气: %s, 气温: %d℃, 湿度: %d%%, 风向: %s\n", cityName, weather, temp, humidity, wind);
+            // TODO: 送入墨水屏/TFT 屏幕天气组件刷新
+        } else {
+            Serial.println("解析天气 JSON 失败");
+        }
+    } else {
+        Serial.println("连接天气 TCP 失败");
+    }
+}
+```
+
+### 6.5 天气返回 JSON 契约字段参考
+
+```json
+{
+  "province": "北京市",
+  "city": "北京",
+  "adcode": "110000",
+  "weather": "晴",
+  "weather_icon": "100",
+  "temperature": 5,
+  "wind_direction": "西南风",
+  "wind_power": "2级",
+  "humidity": 56,
+  "report_time": "10 分钟前发布"
 }
 ```

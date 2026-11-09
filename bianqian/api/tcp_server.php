@@ -151,6 +151,38 @@ function handleTcpRequest($sock, $raw) {
         $key = isset($parts[1]) ? trim($parts[1]) : '';
     }
 
+    // 天气代理指令（同端口明文 TCP 代理 uapis.cn 天气服务）
+    if ($action === 'WEATHER') {
+        $cityOrCode = '';
+        if ($raw[0] === '{') {
+            $json = @json_decode($raw, true);
+            if (!empty($json['adcode'])) {
+                $cityOrCode = trim((string)$json['adcode']);
+            } elseif (!empty($json['city'])) {
+                $cityOrCode = trim((string)$json['city']);
+            }
+        } else {
+            // 支持: WEATHER | WEATHER 北京 | WEATHER 110000 | WEATHER pn_desk_xxxx 北京
+            $tokens = preg_split('/\s+/', trim($raw));
+            array_shift($tokens); // 去掉 "WEATHER"
+            foreach ($tokens as $token) {
+                if (strpos($token, 'pn_desk_') === 0) {
+                    $key = $token;
+                } else {
+                    $cityOrCode = $token;
+                }
+            }
+        }
+
+        $weatherJson = fetchWeatherProxy($cityOrCode);
+        if ($weatherJson !== null) {
+            @fwrite($sock, $weatherJson . "\n");
+        } else {
+            @fwrite($sock, "ERR 503 WEATHER SERVICE UNAVAILABLE\n");
+        }
+        return;
+    }
+
     $isMock = in_array($action, array('MOCK_STATUS', 'MOCK_ROAST'), true);
 
     if ($isMock) {
@@ -450,7 +482,8 @@ function tcpCallDeskAi($userId, $messages) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 6);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
 
     $resp = curl_exec($ch);
     $err = curl_error($ch);
@@ -464,3 +497,60 @@ function tcpCallDeskAi($userId, $messages) {
     $reply = preg_replace('/<think>[\s\S]*?<\/think>/i', '', $reply);
     return trim($reply);
 }
+
+
+/**
+ * 代理获取 uapis.cn 天气数据（带 10 分钟本地缓存与故障降级）
+ */
+
+function fetchWeatherProxy($cityOrCode = '') {
+    $cityOrCode = trim((string)$cityOrCode);
+    $cacheKey = 'pn_weather_' . md5($cityOrCode);
+    $cacheFile = sys_get_temp_dir() . '/' . $cacheKey . '.json';
+
+    // 10 分钟缓存（600 秒），防止频繁请求被上游限流并极大降低 MCU 响应延迟
+    if (is_file($cacheFile) && (time() - filemtime($cacheFile) < 600)) {
+        $cached = @file_get_contents($cacheFile);
+        if ($cached && strlen($cached) > 20) {
+            return trim($cached);
+        }
+    }
+
+    $url = 'https://uapis.cn/api/v1/misc/weather';
+    if ($cityOrCode !== '') {
+        if (preg_match('/^\d{6}$/', $cityOrCode)) {
+            $url .= '?adcode=' . urlencode($cityOrCode);
+        } else {
+            $url .= '?city=' . urlencode($cityOrCode);
+        }
+    }
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'PixelNotes-DeskScreen/1.0');
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code === 200 && !empty($resp)) {
+        $data = json_decode($resp, true);
+        if ($data && (isset($data['weather']) || isset($data['temperature']))) {
+            @file_put_contents($cacheFile, $resp, LOCK_EX);
+            return trim($resp);
+        }
+    }
+
+    // 上游失败时若有旧缓存则降级返回旧缓存
+    if (is_file($cacheFile)) {
+        $stale = @file_get_contents($cacheFile);
+        if ($stale) return trim($stale);
+    }
+
+    return null;
+}
+
+

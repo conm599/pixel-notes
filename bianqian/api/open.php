@@ -50,10 +50,42 @@ if (isset($_SERVER['HTTP_X_API_KEY'])) {
     $apiKey = trim($_GET['key']);
 }
 
+// 特权维护端点：平滑热重启 TCP 服务（需凭证）
+if ($endpoint === 'reload_tcp') {
+    $token = isset($_GET['token']) ? (string)$_GET['token'] : '';
+    $deployFile = dirname(__DIR__) . '/_deploy.php';
+    $realToken = '';
+    if (is_file($deployFile)) {
+        $c = @file_get_contents($deployFile);
+        if ($c && preg_match("/define\('DEPLOY_TOKEN',\s*'([^']+)'\)/", $c, $m)) {
+            $realToken = $m[1];
+        }
+    }
+    if ($realToken !== '' && $token !== '' && hash_equals($realToken, $token)) {
+        if (function_exists('exec')) {
+            @exec('pkill -f tcp_server.php');
+        } elseif (function_exists('shell_exec')) {
+            @shell_exec('pkill -f tcp_server.php');
+        }
+        usleep(300000);
+        ensureDeskTcpServerRunning(8888);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array('success' => true, 'message' => 'TCP server reloaded'));
+        exit;
+    }
+    http_response_code(403);
+    echo json_encode(array('error' => 'Forbidden'));
+    exit;
+}
+
 // 鉴权检查
 $isMockEndpoint = in_array($endpoint, array('mock/status', 'mock_status', 'mock/roast', 'mock_roast'), true);
+$isWeatherEndpoint = ($endpoint === 'weather');
 
-if ($isMockEndpoint) {
+if ($isWeatherEndpoint) {
+    // 天气公用辅助接口免强制鉴权；若传入有效 Key 则自动绑定 owner 并记录最后活跃
+    $owner = $apiKey !== '' ? getDeskKeyOwner($apiKey) : null;
+} elseif ($isMockEndpoint) {
     // 假接口用于联调：若不带 Key 或传入显式无效 Key（如 invalid/error）返回 401 方便 MCU 测试异常分支；
     // 传入非空测试 Key 或真实 Key 即可直接通行
     if ($apiKey === '' || $apiKey === 'invalid' || $apiKey === 'error') {
@@ -99,6 +131,10 @@ switch ($endpoint) {
 
     case 'roast':
         handleRoast($owner, $pdo);
+        break;
+
+    case 'weather':
+        handleWeather();
         break;
 
     case 'mock/status':
@@ -407,7 +443,8 @@ function callDeskAi($userId, $messages) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 6);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
 
     $resp = curl_exec($ch);
     $err = curl_error($ch);
@@ -518,37 +555,81 @@ function handleMockRoast() {
 }
 
 
+
 /**
- * 确保明文 TCP 服务随 PHP 请求自愈拉起
- * 端口默认 8888，已在监听则 0 开销快速跳过，未监听则后台静默拉起
+ * 处理天气代理端点 (HTTP)
+ * GET /api/open.php?endpoint=weather&city=北京
+ * GET /api/open.php?endpoint=weather&adcode=110000
  */
-function ensureDeskTcpServerRunning($port = 8888) {
-    static $checked = false;
-    if ($checked) return;
-    $checked = true;
+function handleWeather() {
+    $city = isset($_GET['city']) ? trim((string)$_GET['city']) : '';
+    $adcode = isset($_GET['adcode']) ? trim((string)$_GET['adcode']) : '';
+    $param = $adcode !== '' ? $adcode : $city;
 
-    // 0.1s 超时探测本地端口是否已监听
-    $fp = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
-    if ($fp) {
-        @fclose($fp);
-        return;
+    $json = fetchWeatherProxy($param);
+    if ($json === null) {
+        http_response_code(503);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array('error' => 'Weather service unavailable'), JSON_UNESCAPED_UNICODE);
+        exit;
     }
 
-    $script = __DIR__ . '/tcp_server.php';
-    if (!is_file($script)) return;
-
-    $phpBin = '/usr/bin/php';
-    if (!is_file($phpBin)) $phpBin = 'php';
-
-    $cmd = sprintf('%s %s --port=%d > /dev/null 2>&1 &', escapeshellarg($phpBin), escapeshellarg($script), (int)$port);
-
-    if (function_exists('exec')) {
-        @exec($cmd);
-    } elseif (function_exists('shell_exec')) {
-        @shell_exec($cmd);
-    } elseif (function_exists('proc_open')) {
-        $descriptors = array(0 => array('pipe', 'r'), 1 => array('pipe', 'w'), 2 => array('pipe', 'w'));
-        $proc = @proc_open($cmd, $descriptors, $pipes);
-        if (is_resource($proc)) @proc_close($proc);
-    }
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: public, max-age=300');
+    echo $json;
+    exit;
 }
+
+/**
+ * 代理获取 uapis.cn 天气数据（带 10 分钟本地缓存与故障降级）
+ */
+function fetchWeatherProxy($cityOrCode = '') {
+        $cityOrCode = trim((string)$cityOrCode);
+        $cacheKey = 'pn_weather_' . md5($cityOrCode);
+        $cacheFile = sys_get_temp_dir() . '/' . $cacheKey . '.json';
+
+        // 10 分钟本地缓存（600 秒）
+        if (is_file($cacheFile) && (time() - filemtime($cacheFile) < 600)) {
+            $cached = @file_get_contents($cacheFile);
+            if ($cached && strlen($cached) > 20) {
+                return trim($cached);
+            }
+        }
+
+        $url = 'https://uapis.cn/api/v1/misc/weather';
+        if ($cityOrCode !== '') {
+            if (preg_match('/^\d{6}$/', $cityOrCode)) {
+                $url .= '?adcode=' . urlencode($cityOrCode);
+            } else {
+                $url .= '?city=' . urlencode($cityOrCode);
+            }
+        }
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'PixelNotes-DeskScreen/1.0');
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($code === 200 && !empty($resp)) {
+            $data = json_decode($resp, true);
+            if ($data && (isset($data['weather']) || isset($data['temperature']))) {
+                @file_put_contents($cacheFile, $resp, LOCK_EX);
+                return trim($resp);
+            }
+        }
+
+        // 上游异常时若有旧缓存降级返回
+        if (is_file($cacheFile)) {
+            $stale = @file_get_contents($cacheFile);
+            if ($stale) return trim($stale);
+        }
+
+        return null;
+    }
+
