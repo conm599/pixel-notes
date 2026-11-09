@@ -702,8 +702,8 @@ function fetchProgrammerTodayProxy() {
     $cacheKey = 'pn_programmer_today';
     $cacheFile = sys_get_temp_dir() . '/' . $cacheKey . '.json';
 
-    // 本地缓存最长 24 小时（86400 秒），过北京时间凌晨 01:00 强制失效（预留 00:00~01:00 供服务商更新）
-    if (function_exists('isDeskCacheFresh') ? isDeskCacheFresh($cacheFile, 86400) : (is_file($cacheFile) && (time() - filemtime($cacheFile) < 86400))) {
+    // 本地缓存 12 小时（43200 秒），过北京时间凌晨 01:00 强制失效（预留 00:00~01:00 供服务商更新）
+    if (function_exists('isDeskCacheFresh') ? isDeskCacheFresh($cacheFile, 43200) : (is_file($cacheFile) && (time() - filemtime($cacheFile) < 43200))) {
         $cached = @file_get_contents($cacheFile);
         if ($cached && strlen($cached) > 20) {
             return trim($cached);

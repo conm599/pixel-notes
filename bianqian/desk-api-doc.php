@@ -298,7 +298,7 @@ $tcpPort = 8888;
                 <tr>
                     <td><b>程序员历史今天</b></td>
                     <td><code>PROGRAMMER_TODAY &lt;API_KEY&gt;\n</code> (或 <code>HISTORY &lt;API_KEY&gt;\n</code>)</td>
-                    <td>需携带有效 Desk Key，同端口代理 uapis 程序员历史事件集（带本地缓存（过北京时间凌晨 01:00 自动失效）），回传完整事件 JSON 并断开</td>
+                    <td>需携带有效 Desk Key，同端口代理 uapis 程序员历史事件集（带 12 小时本地缓存（过北京时间凌晨 01:00 自动失效）），回传完整事件 JSON 并断开</td>
                     <td><b>&lt;0.05s</b> (缓存命中)</td>
                 </tr>
                 <tr>
