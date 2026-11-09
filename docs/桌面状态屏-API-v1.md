@@ -226,3 +226,78 @@ void fetchDeskRoast() {
     }
 }
 ```
+
+## 6. 明文 TCP Socket 直连接入规范（非 HTTP/S，MCU 首选）
+
+专为单片机彻底去除 HTTP 协议头解析、避免 TLS/HTTPS 握手内存消耗（省下 ~40KB RAM，握手提速 3 倍）设计。
+
+### 6.1 服务端连接信息
+- **服务器 IP**：`154.219.110.21`（亦可直连域名 `bianqian.naxid.top`）
+- **TCP 端口**：`8888`
+- **传输协议**：Raw TCP Stream（明文传输，无任何 HTTP 请求头与响应头封装）
+- **自启动与自愈机制**：后端已集成进程守护机制，随 PHP 主服务与 Web 请求自动拉起并在崩溃后自愈。
+
+### 6.2 指令与响应规范（单行交互）
+
+客户端通过 TCP 连接服务器后，发送单行命令（以 `\n` 结尾）：
+
+| 指令 | 客户端发送格式（以 `\n` 结尾） | 服务端应答内容与行为 | 网络延迟 |
+|---|---|---|---|
+| **获取状态** | `STATUS <API_KEY>\n` | 直接回传状态 JSON 字符串 `{"ts":...,"d":...,"open":1,"diary":1,"todo":0}\n`，发送完毕自动关闭 Socket | **~0.1s** |
+| **获取吐槽** | `ROAST <API_KEY>\n` | 以 0.1s/字 逐字流式向 Socket 写入纯文本，传输完毕追加 `\n` 并自动关闭 Socket | ~4-6s |
+| **Mock 状态** | `MOCK_STATUS\n` | 直接回传固定 Mock 状态 JSON（免 Key） | <0.1s |
+| **Mock 吐槽** | `MOCK_ROAST\n` | 逐字流式吐出固定 Mock 吐槽文本（免 Key） | ~1.6s |
+
+> 异常应答：若鉴权失败直接返回 `ERR 401 UNAUTHORIZED\n`，若触发限流返回 `ERR 429 TOO MANY REQUESTS\n`。
+
+### 6.3 ESP32 Arduino 极简 TCP 代码示例（仅需基础 WiFiClient）
+
+```cpp
+#include <WiFi.h>
+#include <ArduinoJson.h>
+
+const char* SERVER_IP = "154.219.110.21";
+const uint16_t SERVER_PORT = 8888;
+const char* API_KEY = "pn_desk_973f824dcd77d5ae7d387ab6f31c24c9";
+
+// 1. 获取状态（普通 WiFiClient，无需 WiFiClientSecure，仅需几字节缓冲区，耗时仅 100ms）
+void fetchStatusTcp() {
+    WiFiClient client;
+    if (client.connect(SERVER_IP, SERVER_PORT, 5000)) {
+        client.printf("STATUS %s\n", API_KEY);
+        String line = client.readStringUntil('\n');
+        client.stop();
+
+        StaticJsonDocument<256> doc;
+        if (!deserializeJson(doc, line)) {
+            long ts   = doc["ts"];
+            int open  = doc["open"];
+            int diary = doc["diary"];
+            Serial.printf("TCP 状态获取成功: open=%d, diary=%d\n", open, diary);
+            // TODO: 绘制到桌面屏幕
+        }
+    } else {
+        Serial.println("TCP 连接失败");
+    }
+}
+
+// 2. 流式获取吐槽（逐字接收，直接送入屏幕刷新打字机效果）
+void fetchRoastTcp() {
+    WiFiClient client;
+    if (client.connect(SERVER_IP, SERVER_PORT, 5000)) {
+        client.printf("ROAST %s\n", API_KEY);
+        Serial.print("吐槽接收: ");
+        
+        while (client.connected() || client.available()) {
+            while (client.available()) {
+                char c = client.read();
+                Serial.print(c);
+                // TODO: 喂入字库绘制到屏幕
+            }
+            delay(10);
+        }
+        Serial.println();
+        client.stop();
+    }
+}
+```
