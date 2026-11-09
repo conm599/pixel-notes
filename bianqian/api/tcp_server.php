@@ -183,6 +183,18 @@ function handleTcpRequest($sock, $raw) {
         return;
     }
 
+    // 程序员历史上的今天代理指令（同端口明文 TCP）
+    if ($action === 'PROGRAMMER_TODAY' || $action === 'HISTORY' || $action === 'DEV_TODAY') {
+        $historyJson = fetchProgrammerTodayProxy();
+        if ($historyJson !== null) {
+            @fwrite($sock, $historyJson . "\n");
+        } else {
+            @fwrite($sock, "ERR 503 SERVICE UNAVAILABLE\n");
+        }
+        return;
+    }
+
+
     // 留言指令：MSG <KEY> <留言内容> 或 {"action":"msg","key":"...","msg":"..."}
     if ($action === 'MSG' || $action === 'MESSAGE') {
         $msgContent = '';
@@ -618,3 +630,48 @@ function fetchWeatherProxy($cityOrCode = '') {
 }
 
 
+
+/**
+ * 代理获取 uapis.cn 程序员历史上的今天（带 1 小时本地缓存与故障降级）
+ */
+function fetchProgrammerTodayProxy() {
+    $today = date('m-d');
+    $cacheKey = 'pn_programmer_today_' . $today;
+    $cacheFile = sys_get_temp_dir() . '/' . $cacheKey . '.json';
+
+    // 1 小时本地缓存（3600 秒）
+    if (is_file($cacheFile) && (time() - filemtime($cacheFile) < 3600)) {
+        $cached = @file_get_contents($cacheFile);
+        if ($cached && strlen($cached) > 20) {
+            return trim($cached);
+        }
+    }
+
+    $url = 'https://uapis.cn/api/v1/history/programmer/today';
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'PixelNotes-DeskScreen/1.0');
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code === 200 && !empty($resp)) {
+        $data = json_decode($resp, true);
+        if ($data && (isset($data['events']) || isset($data['date']))) {
+            @file_put_contents($cacheFile, $resp, LOCK_EX);
+            return trim($resp);
+        }
+    }
+
+    // 上游异常时若有旧缓存降级返回
+    if (is_file($cacheFile)) {
+        $stale = @file_get_contents($cacheFile);
+        if ($stale) return trim($stale);
+    }
+
+    return null;
+}

@@ -296,6 +296,12 @@ $tcpPort = 8888;
                     <td><b>&lt;0.05s</b></td>
                 </tr>
                 <tr>
+                    <td><b>程序员历史今天</b></td>
+                    <td><code>PROGRAMMER_TODAY\n</code> (或 <code>HISTORY\n</code>)</td>
+                    <td>同端口代理 uapis 程序员历史事件集（带 1 小时本地缓存），回传完整事件 JSON 并断开</td>
+                    <td><b>&lt;0.05s</b> (缓存命中)</td>
+                </tr>
+                <tr>
                     <td><b>Mock 状态 (联调)</b></td>
                     <td><code>MOCK_STATUS\n</code></td>
                     <td>回传固定联调状态 JSON（免鉴权）</td>

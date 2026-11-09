@@ -80,10 +80,10 @@ if ($endpoint === 'reload_tcp') {
 
 // 鉴权检查
 $isMockEndpoint = in_array($endpoint, array('mock/status', 'mock_status', 'mock/roast', 'mock_roast'), true);
-$isWeatherEndpoint = ($endpoint === 'weather');
+$isPublicEndpoint = in_array($endpoint, array('weather', 'programmer_today', 'history', 'dev_today'), true);
 
-if ($isWeatherEndpoint) {
-    // 天气公用辅助接口免强制鉴权；若传入有效 Key 则自动绑定 owner 并记录最后活跃
+if ($isPublicEndpoint) {
+    // 公用辅助接口（天气、程序员历史等）免强制鉴权；若传入有效 Key 则自动绑定 owner 并记录最后活跃
     $owner = $apiKey !== '' ? getDeskKeyOwner($apiKey) : null;
 } elseif ($isMockEndpoint) {
     // 假接口用于联调：若不带 Key 或传入显式无效 Key（如 invalid/error）返回 401 方便 MCU 测试异常分支；
@@ -135,6 +135,12 @@ switch ($endpoint) {
 
     case 'weather':
         handleWeather();
+        break;
+
+    case 'programmer_today':
+    case 'history':
+    case 'dev_today':
+        handleProgrammerToday();
         break;
 
     case 'message':
@@ -699,4 +705,69 @@ function handleOpenLeaveMessage($owner, $pdo) {
         'stored'  => $stored
     ), JSON_UNESCAPED_UNICODE);
     exit;
+}
+
+/**
+ * 处理程序员历史上的今天端点 (HTTP)
+ * GET /api/open.php?endpoint=programmer_today
+ * GET /api/open.php?endpoint=history
+ */
+function handleProgrammerToday() {
+    $json = fetchProgrammerTodayProxy();
+    if ($json === null) {
+        http_response_code(503);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array('error' => 'Service unavailable', 'message' => '程序员历史服务暂不可用'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: public, max-age=1800');
+    echo $json;
+    exit;
+}
+
+/**
+ * 代理获取 uapis.cn 程序员历史上的今天（带 1 小时本地缓存与故障降级）
+ */
+function fetchProgrammerTodayProxy() {
+    $today = date('m-d');
+    $cacheKey = 'pn_programmer_today_' . $today;
+    $cacheFile = sys_get_temp_dir() . '/' . $cacheKey . '.json';
+
+    // 1 小时本地缓存（3600 秒），极速响应并降低上游开销
+    if (is_file($cacheFile) && (time() - filemtime($cacheFile) < 3600)) {
+        $cached = @file_get_contents($cacheFile);
+        if ($cached && strlen($cached) > 20) {
+            return trim($cached);
+        }
+    }
+
+    $url = 'https://uapis.cn/api/v1/history/programmer/today';
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'PixelNotes-DeskScreen/1.0');
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code === 200 && !empty($resp)) {
+        $data = json_decode($resp, true);
+        if ($data && (isset($data['events']) || isset($data['date']))) {
+            @file_put_contents($cacheFile, $resp, LOCK_EX);
+            return trim($resp);
+        }
+    }
+
+    // 上游异常时若有旧缓存降级返回
+    if (is_file($cacheFile)) {
+        $stale = @file_get_contents($cacheFile);
+        if ($stale) return trim($stale);
+    }
+
+    return null;
 }
