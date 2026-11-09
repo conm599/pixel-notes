@@ -1,0 +1,453 @@
+<?php
+/**
+ * 桌面状态屏开放接口与单片机接入技术文档
+ * 公开访问，无需登录鉴权
+ */
+require_once __DIR__ . '/config/database.php';
+sendSecurityHeaders();
+
+$openApiBase = siblingUrl('bianqian', '/api/open.php');
+$tcpHost = '154.219.110.21';
+$tcpPort = 8888;
+?>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>桌面状态屏 API 与单片机接入文档 · Pixel Notes</title>
+    <link rel="stylesheet" href="css/pixel.css?v=112">
+    <link rel="stylesheet" href="css/icons.css?v=7">
+    <link rel="icon" href="favicon.ico">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <style>
+        :root {
+            --accent2: #4af0ff;
+            --accent-pink: #ff6b9d;
+            --code-bg: rgba(13, 13, 31, 0.95);
+        }
+        body {
+            background: #0b0b1a;
+            color: #d1d1eb;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+        .doc-container {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 24px 20px 80px;
+        }
+        .doc-header {
+            border-bottom: 2px solid rgba(74, 240, 255, 0.2);
+            padding-bottom: 24px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .doc-header-left h1 {
+            font-size: 22px;
+            color: var(--accent2);
+            margin: 0 0 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .doc-header-left p {
+            margin: 0;
+            font-size: 13px;
+            color: #8a8ab0;
+        }
+        .doc-header-nav {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .nav-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: rgba(74, 240, 255, 0.08);
+            border: 1px solid var(--accent2);
+            color: var(--accent2);
+            text-decoration: none;
+            font-size: 12px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .nav-btn:hover {
+            background: var(--accent2);
+            color: #0b0b1a;
+        }
+        .doc-section {
+            background: rgba(22, 22, 46, 0.7);
+            border: 1px solid rgba(138, 138, 176, 0.2);
+            border-radius: 8px;
+            padding: 22px 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .doc-section h2 {
+            font-size: 16px;
+            color: var(--accent-pink);
+            border-bottom: 1px dashed rgba(255, 107, 157, 0.3);
+            padding-bottom: 8px;
+            margin-top: 0;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .doc-section h3 {
+            font-size: 14px;
+            color: var(--accent2);
+            margin: 18px 0 8px;
+        }
+        .endpoint-card {
+            background: rgba(11, 11, 26, 0.85);
+            border: 1px solid rgba(74, 240, 255, 0.25);
+            border-radius: 6px;
+            padding: 14px 18px;
+            margin-bottom: 14px;
+        }
+        .endpoint-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+        .badge-method {
+            font-size: 11px;
+            font-weight: bold;
+            padding: 2px 8px;
+            border-radius: 3px;
+            text-transform: uppercase;
+        }
+        .badge-get { background: rgba(74, 240, 255, 0.15); color: var(--accent2); border: 1px solid var(--accent2); }
+        .badge-tcp { background: rgba(0, 255, 136, 0.15); color: #00ff88; border: 1px solid #00ff88; }
+        .badge-opt { background: rgba(138, 138, 176, 0.2); color: #8a8ab0; border: 1px solid #8a8ab0; }
+        .endpoint-url {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 13px;
+            color: #fff;
+        }
+        .table-custom {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            margin: 12px 0;
+        }
+        .table-custom th {
+            text-align: left;
+            padding: 8px 10px;
+            border-bottom: 2px solid rgba(74, 240, 255, 0.2);
+            color: var(--accent2);
+        }
+        .table-custom td {
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(138, 138, 176, 0.15);
+            color: #d1d1eb;
+        }
+        .table-custom code {
+            font-family: ui-monospace, monospace;
+            color: var(--accent2);
+            background: rgba(0,0,0,0.3);
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        pre {
+            background: var(--code-bg);
+            border: 1px solid rgba(74, 240, 255, 0.2);
+            border-radius: 6px;
+            padding: 14px 16px;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow-x: auto;
+            color: #98c379;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            margin: 10px 0;
+        }
+        .alert-box {
+            background: rgba(74, 240, 255, 0.07);
+            border-left: 4px solid var(--accent2);
+            padding: 10px 14px;
+            font-size: 12px;
+            margin: 12px 0;
+            border-radius: 0 4px 4px 0;
+            line-height: 1.7;
+        }
+        .alert-danger {
+            background: rgba(255, 74, 110, 0.08);
+            border-left: 4px solid var(--danger);
+            color: #ffa8ba;
+        }
+    </style>
+</head>
+<body>
+<div class="doc-container">
+
+    <!-- 顶栏导航 -->
+    <header class="doc-header">
+        <div class="doc-header-left">
+            <h1><i class="ic ic-gamepad"></i> 桌面状态屏 API 技术文档 (v1.2)</h1>
+            <p>专为 ESP32-C3 墨水屏 / IPS 硬件屏幕与桌面伴侣打造 · 支持同端口明文 TCP 与标准 HTTP/S</p>
+        </div>
+        <div class="doc-header-nav">
+            <a href="index.php" class="nav-btn"><i class="ic ic-back"></i> 返回便签主页</a>
+            <a href="https://github.com/conm599/pixel-notes" target="_blank" rel="noopener" class="nav-btn"><i class="ic ic-star"></i> GitHub 源码</a>
+        </div>
+    </header>
+
+    <!-- 1. 核心设计与快速概览 -->
+    <section class="doc-section">
+        <h2><i class="ic ic-info"></i> 1. 设计哲学与核心原则</h2>
+        <p>传统硬件接入 Web 接口往往面临 <b>HTTPS/TLS 握手内存消耗大（~40KB RAM）</b>、<b>HTTP 请求头解析繁琐</b> 等痛点。Pixel Notes 桌面状态屏开放接口专门针对 ESP32-C3 等低算力单片机进行了全栈优化：</p>
+        <ul>
+            <li><b>免 HTTP/TLS 协议栈的同端口明文 TCP 直连（首选）</b>：单片机直接通过 Raw TCP Socket 连接 <code>8888</code> 端口，发单行指令即收紧凑 JSON，单次耗时压缩至 10~50ms，节约 80% 单片机堆内存。</li>
+            <li><b>客户端主动拉取（Pull-Only）</b>：无需维护长连接 WebSocket，极简轮询，ESP32 可以在传输完毕后立即进入 Deep Sleep 低功耗休眠。</li>
+            <li><b>安全字符集与 30 字截断</b>：吐槽文本强制转换为 <b>GB2312 字符集</b>并自动截断至 30 字内，无 Emoji/换行符，防墨水屏点阵乱码。</li>
+            <li><b>同端口公网天气代理</b>：集成 <code>WEATHER</code> 代理指令与 10 分钟本地缓存，无需单片机二次发起网络请求或维护第三方 Token。</li>
+            <li><b>3 级安全防误触遗忘机制</b>：管家吐槽支持上下文继承；若想换人设重新开始，提供严密的 3 级安全邮箱验证码清空通道。</li>
+        </ul>
+    </section>
+
+    <!-- 2. 鉴权与密钥申请 -->
+    <section class="doc-section">
+        <h2><i class="ic ic-key"></i> 2. 密钥申请与鉴权方式</h2>
+        <div class="alert-box">
+            <b>密钥申请方式</b>：登录便签系统，点击右上角「设置」菜单（手机端为抽屉栏）→「桌面状态屏」，点击「生成密钥」即可获得专属 <code>pn_desk_xxxx</code> 令牌。
+        </div>
+
+        <h3>HTTP/HTTPS 请求鉴权（3 种方式，任选其一）</h3>
+        <table class="table-custom">
+            <thead>
+                <tr>
+                    <th>方式</th>
+                    <th>格式示例</th>
+                    <th>推荐程度</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><b>自定义请求头</b></td>
+                    <td><code>X-API-Key: pn_desk_973f824dcd77d5ae7d387ab6f31c24c9</code></td>
+                    <td><span class="badge-method badge-get">首选推荐</span> 安全且无 URL 泄露风险</td>
+                </tr>
+                <tr>
+                    <td><b>标准 Bearer 头</b></td>
+                    <td><code>Authorization: Bearer pn_desk_xxxx</code></td>
+                    <td><span class="badge-method badge-opt">标准兼容</span> 适用于标准 HTTP 库与网关</td>
+                </tr>
+                <tr>
+                    <td><b>URL 查询参数</b></td>
+                    <td><code>?key=pn_desk_xxxx</code> 或 <code>?api_key=pn_desk_xxxx</code></td>
+                    <td><span class="badge-method badge-opt">备用</span> 适用于无 Header 自定义能力的简易客户端</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <!-- 3. 同端口明文 TCP 规范 -->
+    <section class="doc-section">
+        <h2><i class="ic ic-terminal"></i> 3. 明文 TCP Socket 直连接入（Port 8888，MCU 首选）</h2>
+        <div class="alert-box">
+            <b>服务端连接地址</b>：<code><?php echo htmlspecialchars($tcpHost); ?>:<?php echo (int)$tcpPort; ?></code>（或域名 <code>bianqian.naxid.top:<?php echo (int)$tcpPort; ?></code>）<br>
+            <b>协议规则</b>：单片机发送单行指令（以 <code>\n</code> 结尾），服务端处理完毕回传数据并<b>由服务端主动关闭连接</b>，单片机 0 负担。
+        </div>
+
+        <table class="table-custom">
+            <thead>
+                <tr>
+                    <th>指令功能</th>
+                    <th>单片机发送内容（以 \n 结尾）</th>
+                    <th>服务端响应内容与行为</th>
+                    <th>响应延迟</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><b>获取今日状态</b></td>
+                    <td><code>STATUS &lt;API_KEY&gt;\n</code></td>
+                    <td>回传 <code>{"ts":...,"d":...,"open":1,"diary":1,"todo":0}\n</code> 并断开</td>
+                    <td><b>~0.1s</b></td>
+                </tr>
+                <tr>
+                    <td><b>获取管家吐槽</b></td>
+                    <td><code>ROAST &lt;API_KEY&gt;\n</code></td>
+                    <td>以 0.1s/字 逐字流式向 Socket 吐出纯文本，传输完毕追加 <code>\n</code> 并断开</td>
+                    <td>~4-6s</td>
+                </tr>
+                <tr>
+                    <td><b>同端口代理天气</b></td>
+                    <td><code>WEATHER [city|adcode]\n</code></td>
+                    <td>代理 uapis 天气服务并带 10 分钟本地缓存，回传紧凑天气 JSON 并断开</td>
+                    <td><b>&lt;0.05s</b> (缓存命中)</td>
+                </tr>
+                <tr>
+                    <td><b>Mock 状态 (联调)</b></td>
+                    <td><code>MOCK_STATUS\n</code></td>
+                    <td>回传固定联调状态 JSON（免鉴权）</td>
+                    <td>&lt;0.1s</td>
+                </tr>
+                <tr>
+                    <td><b>Mock 吐槽 (联调)</b></td>
+                    <td><code>MOCK_ROAST\n</code></td>
+                    <td>逐字吐出固定 Mock 吐槽文本（免鉴权）</td>
+                    <td>~1.6s</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>天气指令参数示例</h3>
+        <ul>
+            <li><code>WEATHER 北京\n</code>：按中文城市名精准查询；</li>
+            <li><code>WEATHER 110000\n</code>：按 6 位行政区划代码查询（优先度高于城市名）；</li>
+            <li><code>WEATHER\n</code>：无参数时自动按服务器公网出口 IP 进行地理定位；</li>
+            <li><code>{"action":"weather","city":"上海"}\n</code>：亦兼容标准 JSON 格式。</li>
+        </ul>
+    </section>
+
+    <!-- 4. HTTP 接口清单 -->
+    <section class="doc-section">
+        <h2><i class="ic ic-globe"></i> 4. HTTP / HTTPS 接口清单（基址：<?php echo htmlspecialchars($openApiBase); ?>）</h2>
+
+        <div class="endpoint-card">
+            <div class="endpoint-title">
+                <span class="badge-method badge-get">GET</span>
+                <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=status</span>
+            </div>
+            <p>获取当前用户的今日活跃与日记完成状态（只读，不暴露日记正文）。</p>
+            <pre>{
+  "ts": 1794229999,
+  "d": "2026-11-09",
+  "open": 1,
+  "diary": 1,
+  "todo": 0
+}</pre>
+        </div>
+
+        <div class="endpoint-card">
+            <div class="endpoint-title">
+                <span class="badge-method badge-get">GET</span>
+                <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=roast</span>
+            </div>
+            <p>根据管家性格设定、时段与便签状态生成 30 字以内的短句吐槽（HTTP 伪流式逐字输出，频控 60 秒 1 次）。</p>
+        </div>
+
+        <div class="endpoint-card">
+            <div class="endpoint-title">
+                <span class="badge-method badge-get">GET</span>
+                <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=weather&city=北京</span>
+            </div>
+            <p>公网天气代理接口（免强制鉴权，带 10 分钟本地缓存与故障兜底）。</p>
+            <pre>{
+  "province": "北京市",
+  "city": "北京",
+  "adcode": "110000",
+  "weather": "晴",
+  "weather_icon": "100",
+  "temperature": 5,
+  "wind_direction": "西南风",
+  "wind_power": "2级",
+  "humidity": 56,
+  "report_time": "10 分钟前发布"
+}</pre>
+        </div>
+    </section>
+
+    <!-- 5. ESP32 Arduino 代码实战 -->
+    <section class="doc-section">
+        <h2><i class="ic ic-code"></i> 5. ESP32-C3 Arduino 极简代码实战（免 TLS/HTTP 库）</h2>
+        <p>使用标准基础 <code>WiFiClient</code>，彻底移除 <code>WiFiClientSecure</code> 与 <code>HTTPClient</code>，零握手负担：</p>
+
+        <pre><code class="language-cpp">#include &lt;WiFi.h&gt;
+#include &lt;ArduinoJson.h&gt;
+
+const char* SERVER_IP = "<?php echo htmlspecialchars($tcpHost); ?>";
+const uint16_t SERVER_PORT = <?php echo (int)$tcpPort; ?>;
+const char* API_KEY = "您的_pn_desk_密钥";
+
+// 1. 获取便签状态（耗时仅约 100ms）
+void fetchStatusTcp() {
+    WiFiClient client;
+    if (client.connect(SERVER_IP, SERVER_PORT, 5000)) {
+        client.printf("STATUS %s\n", API_KEY);
+        String line = client.readStringUntil('\n');
+        client.stop();
+
+        StaticJsonDocument&lt;256&gt; doc;
+        if (!deserializeJson(doc, line)) {
+            int open  = doc["open"];  // 今日是否打开过便签
+            int diary = doc["diary"]; // 今日是否写过便签日记
+            Serial.printf("便签状态: open=%d, diary=%d\n", open, diary);
+            // TODO: 送入墨水屏/状态指示灯
+        }
+    }
+}
+
+// 2. 同端口代理获取天气（耗时 &lt;50ms）
+void fetchWeatherTcp(const char* city = "北京") {
+    WiFiClient client;
+    if (client.connect(SERVER_IP, SERVER_PORT, 5000)) {
+        if (city && strlen(city) > 0) {
+            client.printf("WEATHER %s\n", city);
+        } else {
+            client.print("WEATHER\n");
+        }
+        String line = client.readStringUntil('\n');
+        client.stop();
+
+        StaticJsonDocument&lt;512&gt; doc;
+        if (!deserializeJson(doc, line)) {
+            const char* weather = doc["weather"];
+            int temp = doc["temperature"];
+            int humidity = doc["humidity"];
+            Serial.printf("天气: %s, 气温: %d℃, 湿度: %d%%\n", weather, temp, humidity);
+            // TODO: 绘制到天气组件
+        }
+    }
+}
+
+// 3. 流式逐字接收 AI 吐槽
+void fetchRoastTcp() {
+    WiFiClient client;
+    if (client.connect(SERVER_IP, SERVER_PORT, 5000)) {
+        client.printf("ROAST %s\n", API_KEY);
+        Serial.print("管家吐槽: ");
+        
+        while (client.connected() || client.available()) {
+            while (client.available()) {
+                char c = client.read();
+                Serial.print(c); // 送入字库渲染
+            }
+            delay(10);
+        }
+        Serial.println();
+        client.stop();
+    }
+}</code></pre>
+    </section>
+
+    <!-- 6. 3 级验证清空记忆 -->
+    <section class="doc-section">
+        <h2><i class="ic ic-shield"></i> 6. AI 记忆上下文与 3 级安全验证清空说明</h2>
+        <p>为保持管家吐槽的趣味性与连贯性，后端会自动维护用户的多轮吐槽记忆，并内置 200KB 自动滑动窗口压缩。若用户希望重置管家人设或开启全新关系：</p>
+        <div class="alert-box alert-danger">
+            <b>3 级安全邮箱验证机制</b>：<br>
+            清空历史记忆属于不可撤销操作，必须在便签系统网页端（「桌面状态屏」弹窗）点击「清空记忆」，并输入向账号绑定邮箱发送的 6 位动态验证码，验证通过后方可物理重置数据库中的历史上下文。
+        </div>
+    </section>
+
+    <footer style="text-align:center;color:#8a8ab0;font-size:12px;margin-top:40px;">
+        Pixel Notes 桌面状态屏开发团队 · 开源协议 MIT · 2026
+    </footer>
+
+</div>
+</body>
+</html>

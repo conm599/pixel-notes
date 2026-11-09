@@ -4649,8 +4649,16 @@
     body.style.padding = '18px 20px';
 
     var intro = mkEl('div');
-    intro.style.cssText = 'font-size:12px;color:#8a8ab0;margin-bottom:14px;line-height:1.6;';
-    intro.textContent = '供 ESP32 桌面屏幕或第三方应用获取您的便签状态与 AI 吐槽。请妥善保管您的 API Key。';
+    intro.style.cssText = 'font-size:12px;color:#8a8ab0;margin-bottom:14px;line-height:1.6;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;';
+    var introText = mkEl('span', '', '供 ESP32 桌面屏幕或第三方应用获取您的便签状态与 AI 吐槽。');
+    var introDocLink = mkEl('a');
+    introDocLink.href = 'desk-api-doc.php';
+    introDocLink.target = '_blank';
+    introDocLink.rel = 'noopener';
+    introDocLink.style.cssText = 'color:var(--accent2);text-decoration:none;font-weight:bold;';
+    introDocLink.innerHTML = '📖 接口与接入文档 ↗';
+    intro.appendChild(introText);
+    intro.appendChild(introDocLink);
     body.appendChild(intro);
 
     // API Key 区域
@@ -4776,18 +4784,29 @@
 
     body.appendChild(memGroup);
 
-    // 接入指引
+    // 接入指引与完整文档入口
     var guideBox = mkEl('div');
-    guideBox.style.cssText = 'background:rgba(74,240,255,0.06);border:1px solid var(--accent2);padding:10px 12px;font-size:11px;line-height:1.6;color:#8a8ab0;';
+    guideBox.style.cssText = 'background:rgba(74,240,255,0.06);border:1px solid var(--accent2);padding:12px 14px;font-size:11px;line-height:1.7;color:#8a8ab0;border-radius:4px;';
     var apiBaseCode = mkEl('div');
-    apiBaseCode.innerHTML = '<b>接口基址</b>: <code id="deskApiBaseVal" style="color:var(--accent2);">' + (location.origin + '/api/open.php') + '</code>';
-    var authCode = mkEl('div');
-    authCode.innerHTML = '<b>认证头</b>: <code style="color:var(--accent2);">X-API-Key: &lt;您的密钥&gt;</code>';
-    var endCode = mkEl('div');
-    endCode.innerHTML = '<b>可用端点</b>: <code>?endpoint=status</code> (状态) / <code>?endpoint=roast</code> (吐槽) / <code>?endpoint=mock_status</code>';
+    apiBaseCode.innerHTML = '<b>接口基址 (HTTP)</b>: <code id="deskApiBaseVal" style="color:var(--accent2);">' + (location.origin + '/api/open.php') + '</code>';
+    var tcpBaseCode = mkEl('div');
+    tcpBaseCode.innerHTML = '<b>明文 TCP (MCU首选)</b>: <code style="color:#00ff88;">154.219.110.21:8888</code>';
+    var docJumpRow = mkEl('div');
+    docJumpRow.style.cssText = 'margin-top:8px;padding-top:8px;border-top:1px dashed rgba(74,240,255,0.2);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;';
+    var docJumpDesc = mkEl('span', '', '📖 完整接口设计、参数字典、单片机代码：');
+    docJumpDesc.style.cssText = 'color:#d1d1eb;font-weight:bold;';
+    var docJumpBtn = mkEl('a', 'btn btn-outline btn-sm');
+    docJumpBtn.href = 'desk-api-doc.php';
+    docJumpBtn.target = '_blank';
+    docJumpBtn.rel = 'noopener';
+    docJumpBtn.style.cssText = 'font-size:11px;color:var(--accent2);border-color:var(--accent2);text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:3px 10px;';
+    docJumpBtn.innerHTML = '查看 API 接口技术文档 ↗';
+    docJumpRow.appendChild(docJumpDesc);
+    docJumpRow.appendChild(docJumpBtn);
+
     guideBox.appendChild(apiBaseCode);
-    guideBox.appendChild(authCode);
-    guideBox.appendChild(endCode);
+    guideBox.appendChild(tcpBaseCode);
+    guideBox.appendChild(docJumpRow);
     body.appendChild(guideBox);
 
     modal.appendChild(head);
