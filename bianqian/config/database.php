@@ -80,6 +80,7 @@ define('DB_PASS', suite_cfg('bianqian_db_pass', 'CHANGE_ME_DB_PASS')); // 凭证
 // 展示时区（默认北京时间；可用 suite-config.php 的 app_timezone 覆盖，如 'UTC'）。
 // VPS 系统时区多为 UTC，不显式设定会导致便签编辑时间「看起来是太平洋时间」（差 8 小时）。
 date_default_timezone_set(suite_cfg('app_timezone', 'Asia/Shanghai'));
+ensureDeskTcpServerRunning(8888);
 
 function getDB() {
     static $pdo = null;
@@ -652,5 +653,43 @@ function touchUserLoginDate($userId) {
             $st->execute(array((int)$userId));
         }
     } catch (Throwable $e) {}
+}
+
+/**
+ * 确保明文 TCP 服务随 PHP 请求自愈拉起
+ * 端口默认 8888，已在监听则 0.05s 快速跳过，未监听则后台静默拉起
+ */
+function ensureDeskTcpServerRunning($port = 8888) {
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+
+    // CLI 模式（包括 tcp_server.php 自身）不重复触发
+    if (php_sapi_name() === 'cli') return;
+
+    // 快速探测本地端口是否已监听
+    $fp = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.05);
+    if ($fp) {
+        @fclose($fp);
+        return;
+    }
+
+    $script = dirname(__DIR__) . '/api/tcp_server.php';
+    if (!is_file($script)) return;
+
+    $phpBin = '/usr/bin/php';
+    if (!is_file($phpBin)) $phpBin = 'php';
+
+    $cmd = sprintf('%s %s --port=%d > /dev/null 2>&1 &', escapeshellarg($phpBin), escapeshellarg($script), (int)$port);
+
+    if (function_exists('exec')) {
+        @exec($cmd);
+    } elseif (function_exists('shell_exec')) {
+        @shell_exec($cmd);
+    } elseif (function_exists('proc_open')) {
+        $descriptors = array(0 => array('pipe', 'r'), 1 => array('pipe', 'w'), 2 => array('pipe', 'w'));
+        $proc = @proc_open($cmd, $descriptors, $pipes);
+        if (is_resource($proc)) @proc_close($proc);
+    }
 }
 

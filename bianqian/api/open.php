@@ -18,6 +18,7 @@ require_once __DIR__ . '/../config/database.php';
 
 // 确保数据库表和字段自愈就位
 ensureTables();
+ensureDeskTcpServerRunning(8888);
 
 // 严格使用上海时区
 date_default_timezone_set(suite_cfg('app_timezone', 'Asia/Shanghai'));
@@ -514,4 +515,40 @@ function handleMockStatus() {
 function handleMockRoast() {
     $mockText = '今天日记又没写，还好意思看屏幕？';
     sendChunkedStream($mockText);
+}
+
+
+/**
+ * 确保明文 TCP 服务随 PHP 请求自愈拉起
+ * 端口默认 8888，已在监听则 0 开销快速跳过，未监听则后台静默拉起
+ */
+function ensureDeskTcpServerRunning($port = 8888) {
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+
+    // 0.1s 超时探测本地端口是否已监听
+    $fp = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
+    if ($fp) {
+        @fclose($fp);
+        return;
+    }
+
+    $script = __DIR__ . '/tcp_server.php';
+    if (!is_file($script)) return;
+
+    $phpBin = '/usr/bin/php';
+    if (!is_file($phpBin)) $phpBin = 'php';
+
+    $cmd = sprintf('%s %s --port=%d > /dev/null 2>&1 &', escapeshellarg($phpBin), escapeshellarg($script), (int)$port);
+
+    if (function_exists('exec')) {
+        @exec($cmd);
+    } elseif (function_exists('shell_exec')) {
+        @shell_exec($cmd);
+    } elseif (function_exists('proc_open')) {
+        $descriptors = array(0 => array('pipe', 'r'), 1 => array('pipe', 'w'), 2 => array('pipe', 'w'));
+        $proc = @proc_open($cmd, $descriptors, $pipes);
+        if (is_resource($proc)) @proc_close($proc);
+    }
 }
