@@ -4718,6 +4718,64 @@
     personaGroup.appendChild(pActionRow);
     body.appendChild(personaGroup);
 
+    // ============== AI 记忆上下文管理 (3 级验证) ==============
+    var memGroup = mkEl('div');
+    memGroup.style.cssText = 'border-top:1px dashed var(--border-color);padding-top:14px;margin-bottom:14px;';
+
+    var memHead = mkEl('div');
+    memHead.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
+    var memTitle = mkEl('div', '', '🧠 AI 记忆上下文管理');
+    memTitle.style.cssText = 'font-size:12px;color:var(--accent2);font-weight:bold;';
+    var memCountBadge = mkEl('span', '', '读取中...');
+    memCountBadge.style.cssText = 'font-size:11px;color:#8a8ab0;';
+    memHead.appendChild(memTitle);
+    memHead.appendChild(memCountBadge);
+    memGroup.appendChild(memHead);
+
+    var memDesc = mkEl('div');
+    memDesc.style.cssText = 'font-size:11px;color:#8a8ab0;line-height:1.5;margin-bottom:8px;';
+    memDesc.textContent = '管家会记住与您的历史吐槽对话以保持连续性。清空记忆可让管家彻底遗忘过去、重新开始。';
+    memGroup.appendChild(memDesc);
+
+    var memActionRow = mkEl('div');
+    memActionRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    var clearMemTriggerBtn = mkBtn('🧹 清空记忆 (3级验证)');
+    clearMemTriggerBtn.className = 'btn btn-outline btn-sm';
+    clearMemTriggerBtn.style.cssText = 'font-size:11px;color:var(--danger);border-color:var(--danger);';
+    memActionRow.appendChild(clearMemTriggerBtn);
+    memGroup.appendChild(memActionRow);
+
+    // 3 级安全验证卡片（展开式）
+    var verifyCard = mkEl('div');
+    verifyCard.style.cssText = 'display:none;margin-top:10px;padding:12px;background:rgba(255,74,110,0.06);border:1px solid rgba(255,74,110,0.25);border-radius:4px;';
+
+    var vNotice = mkEl('div');
+    vNotice.style.cssText = 'font-size:11px;color:var(--danger);margin-bottom:8px;line-height:1.5;';
+    vNotice.innerHTML = '⚠️ <b>3 级安全验证</b>：清空记忆不可逆！验证码将发至安全邮箱 <b id="deskMemUserEmail" style="color:var(--accent2);">...</b>';
+    verifyCard.appendChild(vNotice);
+
+    var vRow = mkEl('div');
+    vRow.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
+    var codeInput = mkEl('input', 'form-input');
+    codeInput.type = 'text';
+    codeInput.maxLength = 6;
+    codeInput.placeholder = '6位邮箱验证码';
+    codeInput.style.cssText = 'width:120px;font-size:12px;font-family:monospace;letter-spacing:2px;text-align:center;';
+    var sendCodeBtn = mkBtn('获取验证码');
+    sendCodeBtn.className = 'btn btn-primary btn-sm';
+    sendCodeBtn.style.fontSize = '11px';
+    var confirmClearBtn = mkBtn('确认立即清空');
+    confirmClearBtn.className = 'btn btn-danger btn-sm';
+    confirmClearBtn.style.cssText = 'font-size:11px;background:var(--danger);color:#fff;border-color:var(--danger);';
+
+    vRow.appendChild(codeInput);
+    vRow.appendChild(sendCodeBtn);
+    vRow.appendChild(confirmClearBtn);
+    verifyCard.appendChild(vRow);
+    memGroup.appendChild(verifyCard);
+
+    body.appendChild(memGroup);
+
     // 接入指引
     var guideBox = mkEl('div');
     guideBox.style.cssText = 'background:rgba(74,240,255,0.06);border:1px solid var(--accent2);padding:10px 12px;font-size:11px;line-height:1.6;color:#8a8ab0;';
@@ -4753,6 +4811,90 @@
       }).catch(function () {
         showToast('复制失败，请手动长按复制', 'error');
       });
+    });
+
+    // 展开/收起 3 级验证卡片
+    clearMemTriggerBtn.addEventListener('click', function () {
+      if (verifyCard.style.display === 'none') {
+        verifyCard.style.display = 'block';
+        codeInput.focus();
+      } else {
+        verifyCard.style.display = 'none';
+      }
+    });
+
+    // 发送 3 级验证码
+    var memCountdownTimer = null;
+    sendCodeBtn.addEventListener('click', async function () {
+      sendCodeBtn.disabled = true;
+      try {
+        var resp = await fetch('api/user_key.php?action=send_memory_code', { method: 'POST' });
+        var data = await resp.json();
+        if (data.success) {
+          showToast(data.message || '验证码已发送，请查收邮箱');
+          var sec = 60;
+          sendCodeBtn.textContent = sec + 's';
+          if (memCountdownTimer) clearInterval(memCountdownTimer);
+          memCountdownTimer = setInterval(function () {
+            sec--;
+            if (sec <= 0) {
+              clearInterval(memCountdownTimer);
+              memCountdownTimer = null;
+              sendCodeBtn.disabled = false;
+              sendCodeBtn.textContent = '获取验证码';
+            } else {
+              sendCodeBtn.textContent = sec + 's';
+            }
+          }, 1000);
+        } else {
+          showToast(data.message || '发送失败', 'error');
+          sendCodeBtn.disabled = false;
+        }
+      } catch (e) {
+        showToast('发送失败：网络错误', 'error');
+        sendCodeBtn.disabled = false;
+      }
+    });
+
+    // 确认清空记忆
+    confirmClearBtn.addEventListener('click', async function () {
+      var code = codeInput.value.trim();
+      if (!/^\d{6}$/.test(code)) {
+        showToast('请输入 6 位数字验证码', 'error');
+        codeInput.focus();
+        return;
+      }
+      if (!confirm('确定彻底清除 AI 桌面管家的全部历史记忆吗？此操作不可撤销。')) {
+        return;
+      }
+      confirmClearBtn.disabled = true;
+      try {
+        var resp = await fetch('api/user_key.php?action=clear_memory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: code })
+        });
+        var data = await resp.json();
+        if (data.success) {
+          showToast(data.message || '管家记忆已清空，开启全新对话！');
+          memCountBadge.textContent = '暂无记忆 (全新状态)';
+          memCountBadge.style.color = 'var(--success)';
+          codeInput.value = '';
+          verifyCard.style.display = 'none';
+          if (memCountdownTimer) {
+            clearInterval(memCountdownTimer);
+            memCountdownTimer = null;
+          }
+          sendCodeBtn.disabled = false;
+          sendCodeBtn.textContent = '获取验证码';
+        } else {
+          showToast(data.message || '清空失败', 'error');
+        }
+      } catch (e) {
+        showToast('清空失败：网络错误', 'error');
+      } finally {
+        confirmClearBtn.disabled = false;
+      }
     });
 
     // 保存性格
@@ -4844,6 +4986,19 @@
       }
       if (d.persona) {
         pText.value = d.persona;
+      }
+      if (typeof d.memory_count !== 'undefined') {
+        if (d.memory_count > 0) {
+          memCountBadge.textContent = '已建立 ' + d.memory_count + ' 条记忆';
+          memCountBadge.style.color = 'var(--accent2)';
+        } else {
+          memCountBadge.textContent = '暂无记忆 (全新状态)';
+          memCountBadge.style.color = 'var(--success)';
+        }
+      }
+      if (d.user_email) {
+        var emailSpan = document.getElementById('deskMemUserEmail');
+        if (emailSpan) emailSpan.textContent = d.user_email;
       }
       if (d.api_base) {
         var baseCode = document.getElementById('deskApiBaseVal');

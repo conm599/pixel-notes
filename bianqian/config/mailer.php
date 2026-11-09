@@ -136,6 +136,7 @@ function sendCodeEmail($email, $code, $purpose) {
         'reset'    => '重置密码验证码',
         'delete'   => '注销账号验证码',
         'backup'   => '数据导入确认验证码',
+        'clear_desk_memory' => '清空桌面管家记忆验证码',
     );
     $title = isset($titles[$purpose]) ? $titles[$purpose] : '验证码';
     $html = '<div style="max-width:480px;margin:0 auto;padding:28px 24px;font-family:-apple-system,Segoe UI,Microsoft YaHei,sans-serif;background:#0d0d1f;border-radius:8px;color:#e8e8f5">'
