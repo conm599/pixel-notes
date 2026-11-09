@@ -85,19 +85,29 @@ switch ($action) {
                 if ($uRow && !empty($uRow['email'])) {
                     $maskedEmail = maskEmailAddress($uRow['email']);
                 }
+
+                // 统计今日留言次数（每日上限 10 次）
+                $today = date('Y-m-d');
+                $stMsg = $pdo->prepare("SELECT COUNT(*) FROM `pn_desk_memories` WHERE `user_id` = ? AND `role` = 'user' AND `content` LIKE '%用户留言]%' AND DATE(`created_at`) = ?");
+                $stMsg->execute(array($userId, $today));
+                $todayMsgCount = (int)$stMsg->fetchColumn();
+                $todayMsgRemain = max(0, 10 - $todayMsgCount);
             } catch (Throwable $e) {}
         }
 
         echo json_encode(array(
-            'success'      => true,
-            'has_key'      => $keyRow !== null,
-            'api_key'      => $keyRow ? $keyRow['api_key'] : '',
-            'persona'      => ($keyRow && !empty($keyRow['persona'])) ? $keyRow['persona'] : '嘴硬心软、爱吐槽的桌面管家',
-            'created_at'   => $keyRow ? $keyRow['created_at'] : '',
-            'last_used_at' => $keyRow ? $keyRow['last_used_at'] : '',
-            'memory_count' => $memCount,
-            'user_email'   => $maskedEmail,
-            'api_base'     => siblingUrl('bianqian', '/api/open.php')
+            'success'          => true,
+            'has_key'          => $keyRow !== null,
+            'api_key'          => $keyRow ? $keyRow['api_key'] : '',
+            'persona'          => ($keyRow && !empty($keyRow['persona'])) ? $keyRow['persona'] : '嘴硬心软、爱吐槽的桌面管家',
+            'created_at'       => $keyRow ? $keyRow['created_at'] : '',
+            'last_used_at'     => $keyRow ? $keyRow['last_used_at'] : '',
+            'memory_count'     => $memCount,
+            'user_email'       => $maskedEmail,
+            'today_msg_count'  => isset($todayMsgCount) ? $todayMsgCount : 0,
+            'today_msg_remain' => isset($todayMsgRemain) ? $todayMsgRemain : 10,
+            'today_msg_max'    => 10,
+            'api_base'         => siblingUrl('bianqian', '/api/open.php')
         ), JSON_UNESCAPED_UNICODE);
         break;
 
@@ -129,6 +139,50 @@ switch ($action) {
         echo json_encode(array(
             'success' => $ok,
             'message' => $ok ? '管家性格已保存！' : '保存失败'
+        ), JSON_UNESCAPED_UNICODE);
+        break;
+
+    // 用户给管家留言（每日最多 10 次，不触发 AI，直接注入记忆末尾）
+    case 'leave_message':
+        $pdo = getDB();
+        if (!$pdo) {
+            http_response_code(500);
+            echo json_encode(array('success' => false, 'message' => '数据库连接异常'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $msg = isset($input['message']) ? trim((string)$input['message']) : '';
+        if ($msg === '') {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => '留言内容不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $msg = mb_substr(preg_replace('/[\r\n\t]+/', ' ', $msg), 0, 200, 'UTF-8');
+
+        $today = date('Y-m-d');
+        $stMsg = $pdo->prepare("SELECT COUNT(*) FROM `pn_desk_memories` WHERE `user_id` = ? AND `role` = 'user' AND `content` LIKE '%用户留言]%' AND DATE(`created_at`) = ?");
+        $stMsg->execute(array($userId, $today));
+        $todayMsgCount = (int)$stMsg->fetchColumn();
+        if ($todayMsgCount >= 10) {
+            http_response_code(429);
+            echo json_encode(array('success' => false, 'message' => '今日给管家的留言次数已达上限（每天最多10次），明天再来吧~'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $nowStr = date('Y-m-d H:i');
+        $storedContent = "[{$nowStr} 用户留言]: {$msg}";
+        $uLen = mb_strlen($storedContent, 'UTF-8');
+
+        // 直接注入记忆表末尾，不触发 AI
+        $st = $pdo->prepare("INSERT INTO `pn_desk_memories` (`user_id`, `role`, `content`, `content_len`, `created_at`) VALUES (?, 'user', ?, ?, NOW())");
+        $st->execute(array($userId, $storedContent, $uLen));
+
+        $newRemain = max(0, 10 - ($todayMsgCount + 1));
+        echo json_encode(array(
+            'success' => true,
+            'message' => '便利贴已贴好！管家下次醒来时就会看到你的留言~',
+            'remain'  => $newRemain,
+            'count'   => $todayMsgCount + 1,
+            'stored'  => $storedContent
         ), JSON_UNESCAPED_UNICODE);
         break;
 

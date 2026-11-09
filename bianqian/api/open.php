@@ -137,6 +137,11 @@ switch ($endpoint) {
         handleWeather();
         break;
 
+    case 'message':
+    case 'leave_message':
+        handleOpenLeaveMessage($owner, $pdo);
+        break;
+
     case 'mock/status':
     case 'mock_status':
         handleMockStatus();
@@ -279,15 +284,20 @@ function handleRoast($owner, $pdo) {
                      "1. 输出字数绝对不能超过 30 个汉字。\n" .
                      "2. 严禁包含任何表情符号 (Emoji)、换行符、引号（\" 或 '）、Markdown 格式。\n" .
                      "3. 字符必须在常用中文 GB2312 编码范围内（硬件屏幕不支持生僻字）。\n" .
-                     "4. 只输出这一句话本身，不要加任何前后缀、解释或客套。"
+                     "4. 只输出这一句话本身，不要加任何前后缀、解释或客套。\n" .
+                     "5. 用户可能会在离线时留下便利贴留言（带有时间点与 [用户留言] 标记）。如果历史上下文中有用户的近期留言，请在管家人设下自然呼应该留言（可调侃、吐槽或关心），但仍必须严格遵循上述 30 字与格式铁律。"
     );
 
-    // 注入历史记忆
+    // 注入历史记忆（支持合并连续 user 离线留言，确保消息结构稳健）
     foreach ($memories as $m) {
-        $messages[] = array(
-            'role' => $m['role'],
-            'content' => $m['content']
-        );
+        $role = $m['role'];
+        $content = $m['content'];
+        $count = count($messages);
+        if ($count > 0 && $messages[$count - 1]['role'] === $role && $role === 'user') {
+            $messages[$count - 1]['content'] .= "\n" . $content;
+        } else {
+            $messages[] = array('role' => $role, 'content' => $content);
+        }
     }
 
     // 本轮 User 提示（受控注入用户性格设定与状态）
@@ -633,3 +643,60 @@ function fetchWeatherProxy($cityOrCode = '') {
         return null;
     }
 
+
+/**
+ * 开放接口：用户给管家离线留言（每天限 10 次，直接注入记忆末尾，不触发 AI）
+ * POST /api/open.php?endpoint=message (需 Header X-API-Key)
+ */
+function handleOpenLeaveMessage($owner, $pdo) {
+    if (!$owner) {
+        http_response_code(401);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array('error' => 'Unauthorized', 'message' => 'Valid X-API-Key required'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    $userId = (int)$owner['user_id'];
+    $rawInput = file_get_contents('php://input');
+    $input = json_decode($rawInput, true);
+    $msg = '';
+    if (is_array($input) && !empty($input['message'])) {
+        $msg = trim((string)$input['message']);
+    } elseif (isset($_POST['message'])) {
+        $msg = trim((string)$_POST['message']);
+    } elseif (isset($_GET['msg'])) {
+        $msg = trim((string)$_GET['msg']);
+    }
+
+    if ($msg === '') {
+        http_response_code(400);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array('error' => 'Bad Request', 'message' => '留言内容不能为空'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $msg = mb_substr(preg_replace('/[\r\n\t]+/', ' ', $msg), 0, 200, 'UTF-8');
+    $today = date('Y-m-d');
+    $st = $pdo->prepare("SELECT COUNT(*) FROM `pn_desk_memories` WHERE `user_id` = ? AND `role` = 'user' AND `content` LIKE '%用户留言]%' AND DATE(`created_at`) = ?");
+    $st->execute(array($userId, $today));
+    $count = (int)$st->fetchColumn();
+    if ($count >= 10) {
+        http_response_code(429);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array('error' => 'Too Many Requests', 'message' => '今日给管家的留言次数已达上限（每天最多10次）'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $nowStr = date('Y-m-d H:i');
+    $stored = "[{$nowStr} 用户留言]: {$msg}";
+    $st = $pdo->prepare("INSERT INTO `pn_desk_memories` (`user_id`, `role`, `content`, `content_len`, `created_at`) VALUES (?, 'user', ?, ?, NOW())");
+    $st->execute(array($userId, $stored, mb_strlen($stored, 'UTF-8')));
+
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(array(
+        'success' => true,
+        'message' => '留言已成功送达管家！下次唤醒桌面屏时管家会带着这句记忆回应你。',
+        'remain'  => max(0, 10 - ($count + 1)),
+        'stored'  => $stored
+    ), JSON_UNESCAPED_UNICODE);
+    exit;
+}

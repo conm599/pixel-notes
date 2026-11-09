@@ -4726,6 +4726,42 @@
     personaGroup.appendChild(pActionRow);
     body.appendChild(personaGroup);
 
+    // ============== 给管家留言便利贴 (每日最多 10 次) ==============
+    var noteMsgGroup = mkEl('div');
+    noteMsgGroup.style.cssText = 'border-top:1px dashed var(--border-color);padding-top:14px;margin-bottom:14px;';
+
+    var msgHead = mkEl('div');
+    msgHead.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
+    var msgTitle = mkEl('div', '', '💌 给管家留言便利贴 (每日最多 10 次)');
+    msgTitle.style.cssText = 'font-size:12px;color:var(--accent2);';
+    var msgRemainBadge = mkEl('span', '', '今日剩余 10 次');
+    msgRemainBadge.style.cssText = 'font-size:11px;color:#8a8ab0;';
+    msgHead.appendChild(msgTitle);
+    msgHead.appendChild(msgRemainBadge);
+    noteMsgGroup.appendChild(msgHead);
+
+    var msgDesc = mkEl('div');
+    msgDesc.style.cssText = 'font-size:11px;color:#8a8ab0;line-height:1.5;margin-bottom:8px;';
+    msgDesc.textContent = '随时给管家留一句话（例如：今天加班好累、今晚要吃顿大餐...）。系统会自动带上时间点贴在管家桌面上，不实时打扰管家，下次桌面屏唤醒或请求吐槽时管家会带着这句记忆回应你。';
+    noteMsgGroup.appendChild(msgDesc);
+
+    var msgInputRow = mkEl('div');
+    msgInputRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    var noteInput = mkEl('input', 'form-input');
+    noteInput.type = 'text';
+    noteInput.maxLength = 150;
+    noteInput.placeholder = '写句留言贴给管家（最多150字）...';
+    noteInput.style.cssText = 'flex:1;font-size:12px;';
+    var sendNoteBtn = mkBtn('📨 留个言');
+    sendNoteBtn.className = 'btn btn-primary btn-sm';
+    sendNoteBtn.style.fontSize = '11px';
+    sendNoteBtn.style.flexShrink = '0';
+    msgInputRow.appendChild(noteInput);
+    msgInputRow.appendChild(sendNoteBtn);
+    noteMsgGroup.appendChild(msgInputRow);
+
+    body.appendChild(noteMsgGroup);
+
     // ============== AI 记忆上下文管理 (3 级验证) ==============
     var memGroup = mkEl('div');
     memGroup.style.cssText = 'border-top:1px dashed var(--border-color);padding-top:14px;margin-bottom:14px;';
@@ -4830,6 +4866,54 @@
       }).catch(function () {
         showToast('复制失败，请手动长按复制', 'error');
       });
+    });
+
+    // 发送离线留言
+    sendNoteBtn.addEventListener('click', async function () {
+      var txt = noteInput.value.trim();
+      if (!txt) {
+        showToast('请输入留言内容', 'error');
+        noteInput.focus();
+        return;
+      }
+      sendNoteBtn.disabled = true;
+      try {
+        var resp = await fetch('api/user_key.php?action=leave_message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: txt })
+        });
+        var data = await resp.json();
+        if (data.success) {
+          showToast(data.message || '便利贴已贴好！管家下次醒来会看到~');
+          noteInput.value = '';
+          msgRemainBadge.textContent = '今日剩余 ' + data.remain + ' 次';
+          if (data.remain <= 0) {
+            msgRemainBadge.style.color = 'var(--danger)';
+            sendNoteBtn.disabled = true;
+          } else {
+            msgRemainBadge.style.color = 'var(--success)';
+            sendNoteBtn.disabled = false;
+          }
+          if (memCountBadge && memCountBadge.textContent.indexOf('暂无记忆') !== -1) {
+            memCountBadge.textContent = '已建立 1 条记忆';
+            memCountBadge.style.color = 'var(--accent2)';
+          }
+        } else {
+          showToast(data.message || '留言失败', 'error');
+          sendNoteBtn.disabled = false;
+        }
+      } catch (e) {
+        showToast('留言失败：网络错误', 'error');
+        sendNoteBtn.disabled = false;
+      }
+    });
+
+    noteInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendNoteBtn.click();
+      }
     });
 
     // 展开/收起 3 级验证卡片
@@ -5018,6 +5102,16 @@
       if (d.user_email) {
         var emailSpan = document.getElementById('deskMemUserEmail');
         if (emailSpan) emailSpan.textContent = d.user_email;
+      }
+      if (typeof d.today_msg_remain !== 'undefined') {
+        msgRemainBadge.textContent = '今日剩余 ' + d.today_msg_remain + ' 次';
+        if (d.today_msg_remain <= 0) {
+          msgRemainBadge.style.color = 'var(--danger)';
+          sendNoteBtn.disabled = true;
+        } else {
+          msgRemainBadge.style.color = '#8a8ab0';
+          sendNoteBtn.disabled = false;
+        }
       }
       if (d.api_base) {
         var baseCode = document.getElementById('deskApiBaseVal');

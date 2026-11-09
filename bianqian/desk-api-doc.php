@@ -290,6 +290,12 @@ $tcpPort = 8888;
                     <td><b>&lt;0.05s</b> (缓存命中)</td>
                 </tr>
                 <tr>
+                    <td><b>给管家离线留言</b></td>
+                    <td><code>MSG &lt;API_KEY&gt; &lt;留言内容&gt;\n</code></td>
+                    <td>每天限 10 次，自动添加时间点注入记忆末尾，不实时触发 AI，回传 <code>OK MESSAGE RECORDED (REMAIN: X)\n</code> 并断开</td>
+                    <td><b>&lt;0.05s</b></td>
+                </tr>
+                <tr>
                     <td><b>Mock 状态 (联调)</b></td>
                     <td><code>MOCK_STATUS\n</code></td>
                     <td>回传固定联调状态 JSON（免鉴权）</td>
@@ -346,6 +352,15 @@ $tcpPort = 8888;
                 <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=weather&city=北京</span>
             </div>
             <p>公网天气代理接口（免强制鉴权，带 10 分钟本地缓存与故障兜底）。</p>
+        </div>
+
+        <div class="endpoint-card">
+            <div class="endpoint-title">
+                <span class="badge-method badge-get" style="color:#6fd08f;border-color:#6fd08f;background:rgba(80,200,120,0.15)">POST</span>
+                <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=message</span>
+            </div>
+            <p>给管家离线留言（需 Header <code>X-API-Key</code>，每日上限 10 次，不触发 AI，自动追加时间戳并注入记忆末尾，在下一次亮屏吐槽时呼应）。</p>
+            <pre>POST Body: {"message": "今天跑步5公里，累并快乐着"}</pre>
             <pre>{
   "province": "北京市",
   "city": "北京",

@@ -183,6 +183,62 @@ function handleTcpRequest($sock, $raw) {
         return;
     }
 
+    // 留言指令：MSG <KEY> <留言内容> 或 {"action":"msg","key":"...","msg":"..."}
+    if ($action === 'MSG' || $action === 'MESSAGE') {
+        $msgContent = '';
+        if ($raw[0] === '{') {
+            $json = @json_decode($raw, true);
+            $key = isset($json['key']) ? trim($json['key']) : '';
+            $msgContent = isset($json['msg']) ? trim($json['msg']) : (isset($json['message']) ? trim($json['message']) : '');
+        } else {
+            $parts3 = preg_split('/\s+/', trim($raw), 3);
+            $key = isset($parts3[1]) ? trim($parts3[1]) : '';
+            $msgContent = isset($parts3[2]) ? trim($parts3[2]) : '';
+        }
+
+        if ($key === '') {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+        $owner = getDeskKeyOwner($key);
+        if (!$owner) {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+        if ($msgContent === '') {
+            @fwrite($sock, "ERR 400 EMPTY MESSAGE\n");
+            return;
+        }
+
+        $userId = (int)$owner['user_id'];
+        $pdo = null;
+        try { $pdo = getDB(); } catch (Throwable $e) {}
+        if (!$pdo) {
+            @fwrite($sock, "ERR 500 DB ERROR\n");
+            return;
+        }
+
+        $msgContent = mb_substr(preg_replace('/[\r\n\t]+/', ' ', $msgContent), 0, 200, 'UTF-8');
+        $today = date('Y-m-d');
+        $st = $pdo->prepare("SELECT COUNT(*) FROM `pn_desk_memories` WHERE `user_id` = ? AND `role` = 'user' AND `content` LIKE '%用户留言]%' AND DATE(`created_at`) = ?");
+        $st->execute(array($userId, $today));
+        $count = (int)$st->fetchColumn();
+        if ($count >= 10) {
+            @fwrite($sock, "ERR 429 DAILY MESSAGE LIMIT REACHED\n");
+            return;
+        }
+
+        $nowStr = date('Y-m-d H:i');
+        $stored = "[{$nowStr} 用户留言]: {$msgContent}";
+        $st = $pdo->prepare("INSERT INTO `pn_desk_memories` (`user_id`, `role`, `content`, `content_len`, `created_at`) VALUES (?, 'user', ?, ?, NOW())");
+        $st->execute(array($userId, $stored, mb_strlen($stored, 'UTF-8')));
+
+        $remain = max(0, 10 - ($count + 1));
+        @fwrite($sock, "OK MESSAGE RECORDED (REMAIN: {$remain})\n");
+        return;
+    }
+
+
     $isMock = in_array($action, array('MOCK_STATUS', 'MOCK_ROAST'), true);
 
     if ($isMock) {
@@ -322,11 +378,19 @@ function handleTcpRequest($sock, $raw) {
                          "1. 输出字数绝对不能超过 30 个汉字。\n" .
                          "2. 严禁包含任何表情符号 (Emoji)、换行符、引号（\" 或 '）、Markdown 格式。\n" .
                          "3. 字符必须在常用中文 GB2312 编码范围内（硬件屏幕不支持生僻字）。\n" .
-                         "4. 只输出这一句话本身，不要加任何前后缀、解释或客套。"
+                         "4. 只输出这一句话本身，不要加任何前后缀、解释或客套。\n" .
+                         "5. 用户可能会在离线时留下便利贴留言（带有时间点与 [用户留言] 标记）。如果历史上下文中有用户的近期留言，请在管家人设下自然呼应该留言（可调侃、吐槽或关心），但仍必须严格遵循上述 30 字与格式铁律。"
         );
 
         foreach ($memories as $m) {
-            $messages[] = array('role' => $m['role'], 'content' => $m['content']);
+            $role = $m['role'];
+            $content = $m['content'];
+            $count = count($messages);
+            if ($count > 0 && $messages[$count - 1]['role'] === $role && $role === 'user') {
+                $messages[$count - 1]['content'] .= "\n" . $content;
+            } else {
+                $messages[] = array('role' => $role, 'content' => $content);
+            }
         }
 
         $currentUserPrompt = "[用户管家风格偏好]: {$persona}\n" .
