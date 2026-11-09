@@ -587,21 +587,21 @@ function handleWeather() {
     }
 
     header('Content-Type: application/json; charset=utf-8');
-    header('Cache-Control: public, max-age=300');
+    header('Cache-Control: private, max-age=1800');
     echo $json;
     exit;
 }
 
 /**
- * 代理获取 uapis.cn 天气数据（带 10 分钟本地缓存与故障降级）
+ * 代理获取 uapis.cn 天气数据（带 30 分钟本地缓存，过北京时间凌晨 01:00 强制失效）
  */
 function fetchWeatherProxy($cityOrCode = '') {
         $cityOrCode = trim((string)$cityOrCode);
         $cacheKey = 'pn_weather_' . md5($cityOrCode);
         $cacheFile = sys_get_temp_dir() . '/' . $cacheKey . '.json';
 
-        // 10 分钟本地缓存（600 秒）
-        if (is_file($cacheFile) && (time() - filemtime($cacheFile) < 600)) {
+        // 30 分钟本地缓存（1800 秒），过北京时间凌晨 01:00 强制失效
+        if (function_exists('isDeskCacheFresh') ? isDeskCacheFresh($cacheFile, 1800) : (is_file($cacheFile) && (time() - filemtime($cacheFile) < 1800))) {
             $cached = @file_get_contents($cacheFile);
             if ($cached && strlen($cached) > 20) {
                 return trim($cached);
@@ -738,21 +738,20 @@ function handleProgrammerToday() {
     }
 
     header('Content-Type: application/json; charset=utf-8');
-    header('Cache-Control: public, max-age=1800');
+    header('Cache-Control: private, max-age=1800');
     echo $json;
     exit;
 }
 
 /**
- * 代理获取 uapis.cn 程序员历史上的今天（带 1 小时本地缓存与故障降级）
+ * 代理获取 uapis.cn 程序员历史上的今天（带本地缓存，过北京时间凌晨 01:00 强制失效）
  */
 function fetchProgrammerTodayProxy() {
-    $today = date('m-d');
-    $cacheKey = 'pn_programmer_today_' . $today;
+    $cacheKey = 'pn_programmer_today';
     $cacheFile = sys_get_temp_dir() . '/' . $cacheKey . '.json';
 
-    // 1 小时本地缓存（3600 秒），极速响应并降低上游开销
-    if (is_file($cacheFile) && (time() - filemtime($cacheFile) < 3600)) {
+    // 本地缓存最长 24 小时（86400 秒），过北京时间凌晨 01:00 强制失效（预留 00:00~01:00 供服务商更新）
+    if (function_exists('isDeskCacheFresh') ? isDeskCacheFresh($cacheFile, 86400) : (is_file($cacheFile) && (time() - filemtime($cacheFile) < 86400))) {
         $cached = @file_get_contents($cacheFile);
         if ($cached && strlen($cached) > 20) {
             return trim($cached);

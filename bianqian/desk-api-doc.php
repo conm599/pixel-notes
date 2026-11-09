@@ -212,7 +212,7 @@ $tcpPort = 8888;
             <li><b>免 HTTP/TLS 协议栈的同端口明文 TCP 直连（首选）</b>：单片机直接通过 Raw TCP Socket 连接 <code>8888</code> 端口，发单行指令即收紧凑 JSON，单次耗时压缩至 10~50ms，节约 80% 单片机堆内存。</li>
             <li><b>客户端主动拉取（Pull-Only）</b>：无需维护长连接 WebSocket，极简轮询，ESP32 可以在传输完毕后立即进入 Deep Sleep 低功耗休眠。</li>
             <li><b>安全字符集与 30 字截断</b>：吐槽文本强制转换为 <b>GB2312 字符集</b>并自动截断至 30 字内，无 Emoji/换行符，防墨水屏点阵乱码。</li>
-            <li><b>同端口公网天气代理</b>：集成 <code>WEATHER</code> 代理指令与 10 分钟本地缓存，无需单片机二次发起网络请求或维护第三方 Token。</li>
+            <li><b>同端口公网天气代理</b>：集成 <code>WEATHER</code> 代理指令与 30 分钟本地缓存（过北京时间凌晨 01:00 自动失效），无需单片机二次发起网络请求或维护第三方 Token。</li>
             <li><b>3 级安全防误触遗忘机制</b>：管家吐槽支持上下文继承；若想换人设重新开始，提供严密的 3 级安全邮箱验证码清空通道。</li>
         </ul>
     </section>
@@ -286,7 +286,7 @@ $tcpPort = 8888;
                 <tr>
                     <td><b>同端口代理天气</b></td>
                     <td><code>WEATHER &lt;API_KEY&gt; [city|adcode]\n</code></td>
-                    <td>需携带有效 Desk Key（保护第三方积分额度），代理 uapis 天气服务并带 10 分钟本地缓存，回传紧凑天气 JSON 并断开</td>
+                    <td>需携带有效 Desk Key（保护第三方积分额度），代理 uapis 天气服务并带 30 分钟本地缓存（过北京时间凌晨 01:00 自动失效），回传紧凑天气 JSON 并断开</td>
                     <td><b>&lt;0.05s</b> (缓存命中)</td>
                 </tr>
                 <tr>
@@ -298,7 +298,7 @@ $tcpPort = 8888;
                 <tr>
                     <td><b>程序员历史今天</b></td>
                     <td><code>PROGRAMMER_TODAY &lt;API_KEY&gt;\n</code> (或 <code>HISTORY &lt;API_KEY&gt;\n</code>)</td>
-                    <td>需携带有效 Desk Key，同端口代理 uapis 程序员历史事件集（带 1 小时本地缓存），回传完整事件 JSON 并断开</td>
+                    <td>需携带有效 Desk Key，同端口代理 uapis 程序员历史事件集（带本地缓存（过北京时间凌晨 01:00 自动失效）），回传完整事件 JSON 并断开</td>
                     <td><b>&lt;0.05s</b> (缓存命中)</td>
                 </tr>
                 <tr>
@@ -357,7 +357,7 @@ $tcpPort = 8888;
                 <span class="badge-method badge-get">GET</span>
                 <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=weather&city=北京</span>
             </div>
-            <p>公网天气代理接口（需 Header <code>X-API-Key</code> 或 <code>?key=...</code>，保护第三方额度，带 10 分钟本地缓存与故障兜底）。</p>
+            <p>公网天气代理接口（需 Header <code>X-API-Key</code> 或 <code>?key=...</code>，保护第三方额度，带 30 分钟本地缓存（过北京时间凌晨 01:00 自动失效）与故障兜底）。</p>
         </div>
 
         <div class="endpoint-card">

@@ -440,6 +440,49 @@ function getUapisApiKey() {
 }
 
 /**
+ * 检查桌面屏公网代理缓存是否仍然有效
+ * 规则：
+ * 1. 文件必须存在且未过期；
+ * 2. 存活时间不能超过 $maxTtlSeconds（天气 30 分钟 = 1800 秒，程序员历史最长 86400 秒）；
+ * 3. 必须在最近的一个「北京时间凌晨 01:00」之后生成；凡跨越凌晨 01:00 的旧缓存立即失效（为上游服务商预留 00:00~01:00 更新窗口）。
+ */
+function isDeskCacheFresh($cacheFile, $maxTtlSeconds) {
+    if (!is_file($cacheFile)) {
+        return false;
+    }
+    $mtime = @filemtime($cacheFile);
+    if (!$mtime) {
+        return false;
+    }
+
+    $now = time();
+    // 1. 超过常规 TTL 直接失效
+    if (($now - $mtime) > $maxTtlSeconds) {
+        return false;
+    }
+
+    // 2. 计算最近的一个「北京时间凌晨 01:00」的时间戳（强制采用 UTC+8 计算，跨时区稳定）
+    $bjNow = $now + 8 * 3600;
+    $bjHour = (int)gmdate('G', $bjNow);
+    $bjDate = gmdate('Y-m-d', $bjNow);
+
+    if ($bjHour >= 1) {
+        // 当前处于今天 01:00 之后，最近的 01:00 就是今天的 01:00
+        $last01Am = strtotime($bjDate . ' 01:00:00 +0800');
+    } else {
+        // 当前处于今天 00:00 ~ 00:59，最近的 01:00 是昨天的 01:00
+        $last01Am = strtotime($bjDate . ' 01:00:00 +0800 -1 day');
+    }
+
+    // 若缓存创建时间早于最近的凌晨 01:00，说明跨越了 01:00 更新点，强制失效
+    if ($mtime < $last01Am) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
  * 当前配额周期标签（北京时间每天 8:00 重置：8点后算新周期）
  */
 function aiPeriodNow() {
