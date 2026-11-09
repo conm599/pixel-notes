@@ -151,28 +151,46 @@ function handleTcpRequest($sock, $raw) {
         $key = isset($parts[1]) ? trim($parts[1]) : '';
     }
 
-    // 天气代理指令（同端口明文 TCP 代理 uapis.cn 天气服务）
+    // 天气代理指令（同端口明文 TCP 代理 uapis.cn 天气服务，需校验 Desk Key 防刷）
+    // 格式: WEATHER <KEY> [city|adcode] 或 {"action":"weather","key":"...","city":"..."}
     if ($action === 'WEATHER') {
         $cityOrCode = '';
         if ($raw[0] === '{') {
             $json = @json_decode($raw, true);
+            $key = isset($json['key']) ? trim($json['key']) : '';
             if (!empty($json['adcode'])) {
                 $cityOrCode = trim((string)$json['adcode']);
             } elseif (!empty($json['city'])) {
                 $cityOrCode = trim((string)$json['city']);
             }
         } else {
-            // 支持: WEATHER | WEATHER 北京 | WEATHER 110000 | WEATHER pn_desk_xxxx 北京
+            // 支持: WEATHER <KEY> | WEATHER <KEY> 北京 | WEATHER <KEY> 110000
             $tokens = preg_split('/\s+/', trim($raw));
             array_shift($tokens); // 去掉 "WEATHER"
-            foreach ($tokens as $token) {
-                if (strpos($token, 'pn_desk_') === 0) {
-                    $key = $token;
-                } else {
-                    $cityOrCode = $token;
+            if (!empty($tokens)) {
+                $key = array_shift($tokens);
+                if (!empty($tokens)) {
+                    $cityOrCode = implode(' ', $tokens);
                 }
             }
         }
+
+        if ($key === '') {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+        $owner = getDeskKeyOwner($key);
+        if (!$owner) {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+
+        try {
+            $pdo = getDB();
+            if ($pdo) {
+                $pdo->prepare("UPDATE `pn_api_keys` SET `last_used_at` = NOW() WHERE `id` = ?")->execute(array((int)$owner['id']));
+            }
+        } catch (Throwable $e) {}
 
         $weatherJson = fetchWeatherProxy($cityOrCode);
         if ($weatherJson !== null) {
@@ -183,8 +201,34 @@ function handleTcpRequest($sock, $raw) {
         return;
     }
 
-    // 程序员历史上的今天代理指令（同端口明文 TCP）
+    // 程序员历史上的今天代理指令（同端口明文 TCP，需校验 Desk Key 防刷）
+    // 格式: PROGRAMMER_TODAY <KEY> | HISTORY <KEY> 或 {"action":"history","key":"..."}
     if ($action === 'PROGRAMMER_TODAY' || $action === 'HISTORY' || $action === 'DEV_TODAY') {
+        if ($raw[0] === '{') {
+            $json = @json_decode($raw, true);
+            $key = isset($json['key']) ? trim($json['key']) : '';
+        } else {
+            $tokens = preg_split('/\s+/', trim($raw));
+            $key = isset($tokens[1]) ? trim($tokens[1]) : '';
+        }
+
+        if ($key === '') {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+        $owner = getDeskKeyOwner($key);
+        if (!$owner) {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+
+        try {
+            $pdo = getDB();
+            if ($pdo) {
+                $pdo->prepare("UPDATE `pn_api_keys` SET `last_used_at` = NOW() WHERE `id` = ?")->execute(array((int)$owner['id']));
+            }
+        } catch (Throwable $e) {}
+
         $historyJson = fetchProgrammerTodayProxy();
         if ($historyJson !== null) {
             @fwrite($sock, $historyJson . "\n");
@@ -601,16 +645,36 @@ function fetchWeatherProxy($cityOrCode = '') {
         }
     }
 
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
+    if (!empty($uapisKey)) {
+        $headers[] = 'Authorization: Bearer ' . $uapisKey;
+    }
+
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 6);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'PixelNotes-DeskScreen/1.0');
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     $resp = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
+
+    // 若 Key 失效或未生效（401），尝试无 Key 访客兜底
+    if ($code === 401 && !empty($uapisKey)) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('User-Agent: PixelNotes-DeskScreen/1.0'));
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+    }
 
     if ($code === 200 && !empty($resp)) {
         $data = json_decode($resp, true);
@@ -648,16 +712,36 @@ function fetchProgrammerTodayProxy() {
     }
 
     $url = 'https://uapis.cn/api/v1/history/programmer/today';
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
+    if (!empty($uapisKey)) {
+        $headers[] = 'Authorization: Bearer ' . $uapisKey;
+    }
+
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 6);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'PixelNotes-DeskScreen/1.0');
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     $resp = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
+
+    // 若 Key 失效或未生效（401），尝试无 Key 访客兜底
+    if ($code === 401 && !empty($uapisKey)) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('User-Agent: PixelNotes-DeskScreen/1.0'));
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+    }
 
     if ($code === 200 && !empty($resp)) {
         $data = json_decode($resp, true);

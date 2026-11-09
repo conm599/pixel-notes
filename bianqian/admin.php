@@ -18,6 +18,50 @@ if (!isAdminUser()) {
     exit;
 }
 
+// ===== 测试 uapis.cn 连通性（GET，仅管理员） =====
+if (isset($_GET['op']) && $_GET['op'] === 'test_uapis') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    $testKey = trim(isset($_GET['key']) ? (string)$_GET['key'] : '');
+    if ($testKey === '') {
+        $testKey = getUapisApiKey();
+    }
+
+    $url = 'https://uapis.cn/api/v1/misc/weather?city=' . urlencode('北京');
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
+    if ($testKey !== '') {
+        $headers[] = 'Authorization: Bearer ' . $testKey;
+    }
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code === 200 && !empty($resp)) {
+        $data = json_decode($resp, true);
+        if ($data && (isset($data['weather']) || isset($data['temperature']))) {
+            $msg = 'Key 验证成功，uapis.cn 正常响应！测试天气：' . ($data['weather'] ?? '') . '，气温：' . ($data['temperature'] ?? '') . '℃';
+            echo json_encode(array('success' => true, 'message' => $msg), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+
+    if ($code === 401 || (is_string($resp) && strpos($resp, 'INVALID_API_KEY') !== false)) {
+        echo json_encode(array('success' => false, 'message' => 'Key 无效或已失效（uapis.cn 返回 INVALID_API_KEY）'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $errDetail = $code ? "HTTP {$code}" : "网络超时或连接失败";
+    echo json_encode(array('success' => false, 'message' => '测试失败: ' . $errDetail), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 // ===== 用户搜索（AI 密钥「推送到账号」选择器用，2026-09-27） =====
 // GET 只读 + 管理员会话双重门槛；按用户名/邮箱前中缀模糊匹配，最多 8 条
 if (isset($_GET['op']) && $_GET['op'] === 'search_users') {
@@ -165,6 +209,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $saved = true;
             } catch (Exception $e) { $error = '调整失败：' . $e->getMessage(); }
         }
+    } elseif (isset($_POST['op']) && $_POST['op'] === 'uapis_save') {
+        $ukey = trim(isset($_POST['uapis_key']) ? (string)$_POST['uapis_key'] : '');
+        setSetting('uapis_api_key', $ukey);
+        $saved = true;
     } elseif (isset($_POST['op']) && $_POST['op'] === 'smtp_save') {
         $host = trim(isset($_POST['smtp_host']) ? (string)$_POST['smtp_host'] : '');
         $port = (int)(isset($_POST['smtp_port']) ? $_POST['smtp_port'] : 465);
@@ -212,6 +260,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+$curUapisKey = getUapisApiKey();
 $curBase  = getSetting('ai_base_url', '');
 $curModel = getSetting('ai_model', '');
 $curKey   = getSetting('ai_api_key', '');
@@ -442,6 +491,34 @@ $imgDefaultQuota = (int)suite_cfg('tuchang_user_quota', 20 * 1024 * 1024);   // 
         <?php endif; ?>
 
         <div class="toolbar" style="margin-top:28px;">
+            <span class="toolbar-title"><i class="ic ic-gear"></i> 桌面状态屏 & 第三方 API 配置 (uapis.cn)</span>
+            <div class="toolbar-actions">
+                <span class="md-hint">用于天气代理与程序员历史上的今天接口认证</span>
+            </div>
+        </div>
+
+        <form method="post" class="ai-admin-form" autocomplete="off">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+            <input type="hidden" name="op" value="uapis_save">
+            <div class="form-row">
+                <div class="form-group" style="flex:1;min-width:320px;">
+                    <label class="form-label">uapis.cn API Key</label>
+                    <input type="text" name="uapis_key" id="uapisKeyInput" class="form-input" 
+                           value="<?= htmlspecialchars($curUapisKey) ?>" 
+                           placeholder="ATutxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" maxlength="64">
+                    <div class="md-hint">每个月系统赠送 3,500 积分。程序员历史接口免费；天气接口每次调用消耗 2 积分（每月约可调用 1,750 次）。后端已做本地文件缓存与降级兜底。</div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;">
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="ic ic-save-pink"></i> 保存第三方 Key</button>
+                    <button type="button" id="btnTestUapis" class="btn btn-outline btn-sm"><i class="ic ic-plug"></i> 测试 uapis.cn 连通性</button>
+                    <span id="uapisTestResult" class="md-hint"></span>
+                </div>
+            </div>
+        </form>
+
+        <div class="toolbar" style="margin-top:28px;">
             <span class="toolbar-title">📧 邮件服务（SMTP）与注册邮箱白名单</span>
             <div class="toolbar-actions">
                 <span class="md-hint">用于注册/登录/找回密码的验证码邮件</span>
@@ -636,6 +713,6 @@ $imgDefaultQuota = (int)suite_cfg('tuchang_user_quota', 20 * 1024 * 1024);   // 
 
     <div id="toast" class="toast" style="display:none;"></div>
 
-    <script src="js/admin.js?v=6"></script>
+    <script src="js/admin.js?v=7"></script>
 </body>
 </html>

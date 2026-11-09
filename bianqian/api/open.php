@@ -80,12 +80,8 @@ if ($endpoint === 'reload_tcp') {
 
 // 鉴权检查
 $isMockEndpoint = in_array($endpoint, array('mock/status', 'mock_status', 'mock/roast', 'mock_roast'), true);
-$isPublicEndpoint = in_array($endpoint, array('weather', 'programmer_today', 'history', 'dev_today'), true);
 
-if ($isPublicEndpoint) {
-    // 公用辅助接口（天气、程序员历史等）免强制鉴权；若传入有效 Key 则自动绑定 owner 并记录最后活跃
-    $owner = $apiKey !== '' ? getDeskKeyOwner($apiKey) : null;
-} elseif ($isMockEndpoint) {
+if ($isMockEndpoint) {
     // 假接口用于联调：若不带 Key 或传入显式无效 Key（如 invalid/error）返回 401 方便 MCU 测试异常分支；
     // 传入非空测试 Key 或真实 Key 即可直接通行
     if ($apiKey === '' || $apiKey === 'invalid' || $apiKey === 'error') {
@@ -96,7 +92,7 @@ if ($isPublicEndpoint) {
     }
     $owner = getDeskKeyOwner($apiKey);
 } else {
-    // 真实生产接口：严格校验有效 Key
+    // 真实生产接口（状态、吐槽、天气、程序员历史、留言等）：严格校验有效 Key，防止第三方积分被滥用
     $owner = getDeskKeyOwner($apiKey);
     if (!$owner) {
         http_response_code(401);
@@ -621,16 +617,36 @@ function fetchWeatherProxy($cityOrCode = '') {
             }
         }
 
+        $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+        $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
+        if (!empty($uapisKey)) {
+            $headers[] = 'Authorization: Bearer ' . $uapisKey;
+        }
+
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 6);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'PixelNotes-DeskScreen/1.0');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         $resp = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+
+        // 若 Key 失效或未生效（401），尝试无 Key 访客兜底
+        if ($code === 401 && !empty($uapisKey)) {
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array('User-Agent: PixelNotes-DeskScreen/1.0'));
+            $resp = curl_exec($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+        }
 
         if ($code === 200 && !empty($resp)) {
             $data = json_decode($resp, true);
@@ -744,16 +760,36 @@ function fetchProgrammerTodayProxy() {
     }
 
     $url = 'https://uapis.cn/api/v1/history/programmer/today';
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
+    if (!empty($uapisKey)) {
+        $headers[] = 'Authorization: Bearer ' . $uapisKey;
+    }
+
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 6);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'PixelNotes-DeskScreen/1.0');
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     $resp = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
+
+    // 若 Key 失效或未生效（401），尝试无 Key 访客兜底
+    if ($code === 401 && !empty($uapisKey)) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('User-Agent: PixelNotes-DeskScreen/1.0'));
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+    }
 
     if ($code === 200 && !empty($resp)) {
         $data = json_decode($resp, true);

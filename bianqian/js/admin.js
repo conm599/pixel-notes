@@ -47,6 +47,32 @@
     });
   });
 
+  // 测试 uapis.cn 连通性
+  var uapisBtn = document.getElementById('btnTestUapis');
+  var uapisOut = document.getElementById('uapisTestResult');
+  var uapisInput = document.getElementById('uapisKeyInput');
+  if (uapisBtn) {
+    uapisBtn.addEventListener('click', async function () {
+      var key = uapisInput ? uapisInput.value.trim() : '';
+      uapisBtn.disabled = true;
+      uapisBtn.textContent = '⏳ 测试中...';
+      uapisOut.textContent = '';
+      try {
+        var resp = await fetch('admin.php?op=test_uapis&key=' + encodeURIComponent(key), {
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        if (resp.status === 401) { window.location.href = 'login.php'; return; }
+        var r = await resp.json();
+        uapisOut.textContent = r.success ? '✅ ' + (r.message || '连接成功') : '❌ ' + (r.message || '连接失败');
+      } catch (e) {
+        uapisOut.textContent = '❌ 网络错误，无法连接测试接口';
+      }
+      uapisBtn.disabled = false;
+      uapisBtn.innerHTML = '<i class="ic ic-plug"></i> 测试 uapis.cn 连通性';
+    });
+  }
+
   // 测试发信
   var mailBtn = document.getElementById('btnTestMail');
   var mailOut = document.getElementById('mailResult');

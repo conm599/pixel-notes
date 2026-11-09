@@ -380,6 +380,15 @@ function ensureTables(&$error = null) {
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlDeskMemories));
         }
 
+        // 自愈：初始化第三方接口 API Key（uapis_api_key）
+        try {
+            $stUapis = $pdo->prepare("SELECT svalue FROM `pn_settings` WHERE `skey` = 'uapis_api_key'");
+            $stUapis->execute();
+            if ($stUapis->fetchColumn() === false) {
+                $pdo->prepare("INSERT INTO `pn_settings` (`skey`, `svalue`, `updated_at`) VALUES ('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0', NOW())")->execute();
+            }
+        } catch (Throwable $e) {}
+
         $done = true;
         return true;
     } catch (PDOException $e) {
@@ -421,6 +430,13 @@ function setSetting($key, $value) {
     } catch (Exception $e) {
         return false;
     }
+}
+
+/**
+ * 获取第三方接口 API Key（uapis.cn，用于天气与程序员历史等服务）
+ */
+function getUapisApiKey() {
+    return getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0');
 }
 
 /**

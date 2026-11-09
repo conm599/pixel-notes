@@ -285,8 +285,8 @@ $tcpPort = 8888;
                 </tr>
                 <tr>
                     <td><b>同端口代理天气</b></td>
-                    <td><code>WEATHER [city|adcode]\n</code></td>
-                    <td>代理 uapis 天气服务并带 10 分钟本地缓存，回传紧凑天气 JSON 并断开</td>
+                    <td><code>WEATHER &lt;API_KEY&gt; [city|adcode]\n</code></td>
+                    <td>需携带有效 Desk Key（保护第三方积分额度），代理 uapis 天气服务并带 10 分钟本地缓存，回传紧凑天气 JSON 并断开</td>
                     <td><b>&lt;0.05s</b> (缓存命中)</td>
                 </tr>
                 <tr>
@@ -297,8 +297,8 @@ $tcpPort = 8888;
                 </tr>
                 <tr>
                     <td><b>程序员历史今天</b></td>
-                    <td><code>PROGRAMMER_TODAY\n</code> (或 <code>HISTORY\n</code>)</td>
-                    <td>同端口代理 uapis 程序员历史事件集（带 1 小时本地缓存），回传完整事件 JSON 并断开</td>
+                    <td><code>PROGRAMMER_TODAY &lt;API_KEY&gt;\n</code> (或 <code>HISTORY &lt;API_KEY&gt;\n</code>)</td>
+                    <td>需携带有效 Desk Key，同端口代理 uapis 程序员历史事件集（带 1 小时本地缓存），回传完整事件 JSON 并断开</td>
                     <td><b>&lt;0.05s</b> (缓存命中)</td>
                 </tr>
                 <tr>
@@ -318,10 +318,10 @@ $tcpPort = 8888;
 
         <h3>天气指令参数示例</h3>
         <ul>
-            <li><code>WEATHER 北京\n</code>：按中文城市名精准查询；</li>
-            <li><code>WEATHER 110000\n</code>：按 6 位行政区划代码查询（优先度高于城市名）；</li>
-            <li><code>WEATHER\n</code>：无参数时自动按服务器公网出口 IP 进行地理定位；</li>
-            <li><code>{"action":"weather","city":"上海"}\n</code>：亦兼容标准 JSON 格式。</li>
+            <li><code>WEATHER &lt;API_KEY&gt; 北京\n</code>：携带密钥按中文城市名精准查询；</li>
+            <li><code>WEATHER &lt;API_KEY&gt; 110000\n</code>：携带密钥按 6 位行政区划代码查询；</li>
+            <li><code>WEATHER &lt;API_KEY&gt;\n</code>：无城市参数时自动按服务器公网出口 IP 进行地理定位；</li>
+            <li><code>{"action":"weather","key":"&lt;API_KEY&gt;","city":"上海"}\n</code>：亦兼容标准 JSON 格式。</li>
         </ul>
     </section>
 
@@ -357,7 +357,7 @@ $tcpPort = 8888;
                 <span class="badge-method badge-get">GET</span>
                 <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=weather&city=北京</span>
             </div>
-            <p>公网天气代理接口（免强制鉴权，带 10 分钟本地缓存与故障兜底）。</p>
+            <p>公网天气代理接口（需 Header <code>X-API-Key</code> 或 <code>?key=...</code>，保护第三方额度，带 10 分钟本地缓存与故障兜底）。</p>
         </div>
 
         <div class="endpoint-card">
@@ -417,9 +417,9 @@ void fetchWeatherTcp(const char* city = "北京") {
     WiFiClient client;
     if (client.connect(SERVER_IP, SERVER_PORT, 5000)) {
         if (city && strlen(city) > 0) {
-            client.printf("WEATHER %s\n", city);
+            client.printf("WEATHER %s %s\n", API_KEY, city);
         } else {
-            client.print("WEATHER\n");
+            client.printf("WEATHER %s\n", API_KEY);
         }
         String line = client.readStringUntil('\n');
         client.stop();
