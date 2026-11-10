@@ -67,8 +67,17 @@ if ($endpoint === 'reload_tcp') {
         } elseif (function_exists('shell_exec')) {
             @shell_exec('pkill -f tcp_server.php');
         }
-        usleep(300000);
+        usleep(800000);
         ensureDeskTcpServerRunning(8888);
+        // 探活确保 8888 端口已进入 LISTEN 就绪状态
+        for ($i = 0; $i < 5; $i++) {
+            usleep(200000);
+            $testSock = @fsockopen('127.0.0.1', 8888, $errno, $errstr, 0.2);
+            if ($testSock) {
+                @fclose($testSock);
+                break;
+            }
+        }
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode(array('success' => true, 'message' => 'TCP server reloaded'));
         exit;
