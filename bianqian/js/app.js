@@ -5180,25 +5180,19 @@
 
           books.forEach(function (b) {
             var card = mkEl('div');
-            card.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid ' + (b.is_current ? 'var(--accent2)' : 'var(--border-color)') + ';border-radius:4px;gap:8px;';
+            card.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border-color);border-radius:4px;gap:8px;';
 
             var info = mkEl('div');
             info.style.cssText = 'flex:1;min-width:0;';
             var tRow = mkEl('div');
-            tRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+            tRow.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
             var numBadge = mkEl('span', '', '#' + (b.i || 1));
-            numBadge.style.cssText = 'font-size:10px;font-family:monospace;background:rgba(74,240,255,0.15);color:var(--accent2);padding:1px 5px;border-radius:3px;font-weight:bold;';
+            numBadge.style.cssText = 'font-size:10px;font-family:monospace;background:rgba(74,240,255,0.15);color:var(--accent2);padding:1px 6px;border-radius:3px;font-weight:bold;';
             tRow.appendChild(numBadge);
 
             var bName = mkEl('b', '', b.title);
-            bName.style.cssText = 'font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;';
+            bName.style.cssText = 'font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;';
             tRow.appendChild(bName);
-
-            if (b.is_current) {
-              var curBadge = mkEl('span', '', '🟢 推送中');
-              curBadge.style.cssText = 'font-size:10px;background:rgba(0,255,136,0.15);color:#00ff88;border:1px solid #00ff88;padding:1px 5px;border-radius:3px;';
-              tRow.appendChild(curBadge);
-            }
             info.appendChild(tRow);
 
             var subRow = mkEl('div');
@@ -5209,37 +5203,10 @@
             var actRow = mkEl('div');
             actRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
 
-            if (!b.is_current) {
-              var pushBtn = mkBtn('📲 推送到设备');
-              pushBtn.className = 'btn btn-outline btn-xs';
-              pushBtn.style.cssText = 'font-size:10px;padding:2px 6px;';
-              pushBtn.addEventListener('click', async function () {
-                pushBtn.disabled = true;
-                pushBtn.textContent = '⏳ 推送中...';
-                try {
-                  var r = await fetch('api/user_key.php?action=shelf_push', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ book_id: b.book_id })
-                  });
-                  var res = await r.json();
-                  if (res.success) {
-                    showToast(res.message || '已成功推送到 MCU 设备！');
-                    renderShelfList(res.books, res.current);
-                  } else {
-                    showToast(res.message || '推送失败', 'error');
-                  }
-                } catch (e) {
-                  showToast('网络错误', 'error');
-                }
-              });
-              actRow.appendChild(pushBtn);
-            }
-
             var delBtn = mkBtn('🗑️');
             delBtn.className = 'btn btn-outline btn-xs';
             delBtn.title = '从书架移出';
-            delBtn.style.cssText = 'font-size:10px;padding:2px 6px;color:var(--danger);border-color:var(--danger);';
+            delBtn.style.cssText = 'font-size:11px;padding:3px 8px;color:var(--danger);border-color:var(--danger);';
             delBtn.addEventListener('click', async function () {
               if (!confirm('确定将《' + b.title + '》从 MCU 书架移出吗？')) return;
               delBtn.disabled = true;
