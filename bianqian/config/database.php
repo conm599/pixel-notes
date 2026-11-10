@@ -85,9 +85,9 @@ date_default_timezone_set(suite_cfg('app_timezone', 'Asia/Shanghai'));
  * 确保明文 TCP 服务随 PHP 请求自愈拉起
  * 端口默认 8888，已在监听则 0.05s 内退出，未监听则后台静默拉起
  */
-function ensureDeskTcpServerRunning($port = 8888) {
+function ensureDeskTcpServerRunning($port = 8888, $force = false) {
     static $checked = false;
-    if ($checked) return;
+    if ($checked && !$force) return;
     $checked = true;
 
     // CLI 模式下（如 tcp_server.php 本身）不重复拉起

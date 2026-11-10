@@ -321,8 +321,8 @@ $tcpPort = 8888;
                 </tr>
                 <tr>
                     <td><b>番茄单章拉取 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
-                    <td><code>CHAPTER &lt;API_KEY&gt; &lt;N&gt; [PAGE]\n</code></td>
-                    <td>只拉取某章节切片（首屏更快），回传单页 JSON 并断开</td>
+                    <td><code>CHAPTER &lt;API_KEY&gt; &lt;N&gt; [PAGE] [1-10序号或ID]\n</code></td>
+                    <td>只拉取某章节切片（首屏更快）。中转层智能补齐：缺省书目自动取当前/第一本，也支持直接传书架序号 1~10；缺省页码默认第 1 页</td>
                     <td>~0.6s</td>
                 </tr>
                 <tr>
@@ -333,8 +333,8 @@ $tcpPort = 8888;
                 </tr>
                 <tr>
                     <td><b>番茄章节目录 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
-                    <td><code>CHAPTERS &lt;API_KEY&gt; &lt;BOOK&gt; [OFF] [LIM]\n</code></td>
-                    <td>获取某书章节目录列表与总章数</td>
+                    <td><code>CHAPTERS &lt;API_KEY&gt; [1-10序号或ID] [OFF] [LIM]\n</code></td>
+                    <td>获取章节目录列表与总章数。缺省书目自动取当前/第一本，支持传 1~10</td>
                     <td>&lt;0.1s</td>
                 </tr>
                 <tr>

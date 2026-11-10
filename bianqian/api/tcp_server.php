@@ -385,6 +385,98 @@ function handleTcpRequest($sock, $raw) {
                 return;
             }
 
+            // 4. 按章取页（CHAPTER）：支持 CHAPTER <KEY> <N> [PAGE] [序号1-10 或 BOOK_ID]
+            // 注意：上游服务源码中 CHAPTER 指令强制要求 4 个参数：CHAPTER <KEY> <N> <PAGE> <BOOK_ID>，
+            // 且漏掉了 fallback 到 PICK 当前书的逻辑，若缺少 BOOK_ID 会直接报错 NO_BOOK。
+            // 因此中转层自动解析用户书架，缺省时自动补齐 PAGE 与真实 BOOK_ID，彻底修复该问题！
+            if ($action === 'CHAPTER') {
+                $reqChapter = 1;
+                $reqPage = 1;
+                $reqBookArg = '';
+                if ($raw[0] === '{') {
+                    $reqChapter = isset($json['n']) ? max(1, (int)$json['n']) : (isset($json['chapter']) ? max(1, (int)$json['chapter']) : 1);
+                    $reqPage = isset($json['page']) ? max(1, (int)$json['page']) : 1;
+                    $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                } else {
+                    $tokens = preg_split('/\s+/', trim($raw));
+                    // tokens: [0]=>CHAPTER, [1]=>KEY, [2]=>N, [3]=>PAGE or BOOK, [4]=>BOOK
+                    $reqChapter = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
+                    $tok3 = isset($tokens[3]) ? trim($tokens[3]) : '';
+                    $tok4 = isset($tokens[4]) ? trim($tokens[4]) : '';
+
+                    if ($tok4 !== '') {
+                        $reqPage = max(1, (int)$tok3);
+                        $reqBookArg = $tok4;
+                    } elseif ($tok3 !== '') {
+                        if (strlen($tok3) > 10) {
+                            $reqPage = 1;
+                            $reqBookArg = $tok3;
+                        } else {
+                            $reqPage = max(1, (int)$tok3);
+                            $reqBookArg = '';
+                        }
+                    }
+                }
+
+                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
+                if (!$targetBook) {
+                    $emptyNotice = json_encode(array(
+                        'error'  => '没有可用书目',
+                        'code'   => 400,
+                        'reason' => 'NO_BOOK'
+                    ), JSON_UNESCAPED_UNICODE) . "\n";
+                    @fwrite($sock, $emptyNotice);
+                    return;
+                }
+
+                $realBookId = $targetBook['book_id'];
+                $upstreamCmd = "CHAPTER {$fqKey} {$reqChapter} {$reqPage} {$realBookId}";
+                forwardFanqieTcp($sock, $upstreamCmd);
+                return;
+            }
+
+            // 5. 章节目录列表（CHAPTERS）：支持 CHAPTERS <KEY> [序号1-10 或 BOOK_ID] [OFFSET] [LIMIT]
+            if ($action === 'CHAPTERS') {
+                $reqBookArg = '';
+                $reqOffset = 0;
+                $reqLimit = 20;
+                if ($raw[0] === '{') {
+                    $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                    $reqOffset = isset($json['offset']) ? (int)$json['offset'] : 0;
+                    $reqLimit = isset($json['limit']) ? (int)$json['limit'] : 20;
+                } else {
+                    $tokens = preg_split('/\s+/', trim($raw));
+                    $reqBookArg = isset($tokens[2]) ? trim($tokens[2]) : '';
+                    $reqOffset = isset($tokens[3]) ? (int)$tokens[3] : 0;
+                    $reqLimit = isset($tokens[4]) ? (int)$tokens[4] : 20;
+                }
+
+                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
+                $realBookId = $targetBook ? $targetBook['book_id'] : $reqBookArg;
+
+                $upstreamCmd = "CHAPTERS {$fqKey}" . ($realBookId !== '' ? " {$realBookId}" : "") . " {$reqOffset} {$reqLimit}";
+                forwardFanqieTcp($sock, $upstreamCmd);
+                return;
+            }
+
+            // 6. 书籍信息（INFO）：支持 INFO <KEY> [序号1-10 或 BOOK_ID]
+            if ($action === 'INFO') {
+                $reqBookArg = '';
+                if ($raw[0] === '{') {
+                    $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                } else {
+                    $tokens = preg_split('/\s+/', trim($raw));
+                    $reqBookArg = isset($tokens[2]) ? trim($tokens[2]) : '';
+                }
+
+                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
+                $realBookId = $targetBook ? $targetBook['book_id'] : $reqBookArg;
+
+                $upstreamCmd = "INFO {$fqKey}" . ($realBookId !== '' ? " {$realBookId}" : "");
+                forwardFanqieTcp($sock, $upstreamCmd);
+                return;
+            }
+
             // 其它指令按标准转发
             if ($raw[0] === '{') {
                 switch ($action) {

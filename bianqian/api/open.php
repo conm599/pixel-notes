@@ -68,7 +68,7 @@ if ($endpoint === 'reload_tcp') {
             @shell_exec('pkill -f tcp_server.php');
         }
         usleep(800000);
-        ensureDeskTcpServerRunning(8888);
+        ensureDeskTcpServerRunning(8888, true);
         // 探活确保 8888 端口已进入 LISTEN 就绪状态
         for ($i = 0; $i < 5; $i++) {
             usleep(200000);
@@ -1038,6 +1038,23 @@ function handleNovelProxy($owner) {
         }
     }
 
+    // 6. 按章阅读（chapter）或目录（chapters）或书籍信息（info）或选书（pick）
+    if (in_array($action, array('chapter', 'chapters', 'info', 'pick'), true)) {
+        $reqBook = isset($_GET['book']) ? trim((string)$_GET['book']) : (isset($_GET['book_id']) ? trim((string)$_GET['book_id']) : '');
+        $targetNovel = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBook) : null;
+        if ($targetNovel) {
+            $_GET['book'] = $targetNovel['book_id'];
+        }
+        if ($action === 'chapter') {
+            if (!isset($_GET['page']) || (int)$_GET['page'] <= 0) {
+                $_GET['page'] = 1;
+            }
+            if (!isset($_GET['n']) || (int)$_GET['n'] <= 0) {
+                $_GET['n'] = 1;
+            }
+        }
+    }
+
     // 处理 POST 请求（透传单行指令或 REST 提交）
     if ($method === 'POST') {
         $input = file_get_contents('php://input');
@@ -1055,13 +1072,36 @@ function handleNovelProxy($owner) {
 
             // 替换或补齐 Key 为上游 Key
             $tokens = preg_split('/\s+/', $rawCmd);
-            $subAct = array_shift($tokens);
+            $subAct = strtoupper(array_shift($tokens));
             if (!empty($tokens) && (strpos($tokens[0], 'pn_desk_') === 0 || strlen($tokens[0]) >= 16)) {
                 $tokens[0] = $fqKey;
             } else {
                 array_unshift($tokens, $fqKey);
             }
-            $finalCmd = $subAct . ' ' . implode(' ', $tokens);
+            if ($subAct === 'CHAPTER') {
+                $n = isset($tokens[1]) ? max(1, (int)$tokens[1]) : 1;
+                $tok2 = isset($tokens[2]) ? trim($tokens[2]) : '';
+                $tok3 = isset($tokens[3]) ? trim($tokens[3]) : '';
+                $p = 1;
+                $b = '';
+                if ($tok3 !== '') {
+                    $p = max(1, (int)$tok2);
+                    $b = $tok3;
+                } elseif ($tok2 !== '') {
+                    if (strlen($tok2) > 10) {
+                        $p = 1;
+                        $b = $tok2;
+                    } else {
+                        $p = max(1, (int)$tok2);
+                        $b = '';
+                    }
+                }
+                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $b) : null;
+                $realBookId = $targetBook ? $targetBook['book_id'] : $b;
+                $finalCmd = "CHAPTER {$fqKey} {$n} {$p} {$realBookId}";
+            } else {
+                $finalCmd = $subAct . ' ' . implode(' ', $tokens);
+            }
 
             $url = $fqHost . '/api/v1/mcu/cmd';
             $ch = curl_init($url);
