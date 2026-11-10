@@ -238,6 +238,43 @@ function handleTcpRequest($sock, $raw) {
         return;
     }
 
+    // 一言代理指令（同端口明文 TCP，不缓存，每次实时获取随机名言名句）
+    // 格式: SAYING <KEY> | HITOKOTO <KEY> | QUOTE <KEY> 或 {"action":"saying","key":"..."}
+    if ($action === 'SAYING' || $action === 'HITOKOTO' || $action === 'QUOTE') {
+        if ($raw[0] === '{') {
+            $json = @json_decode($raw, true);
+            $key = isset($json['key']) ? trim($json['key']) : '';
+        } else {
+            $tokens = preg_split('/\s+/', trim($raw));
+            $key = isset($tokens[1]) ? trim($tokens[1]) : '';
+        }
+
+        if ($key === '') {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+        $owner = getDeskKeyOwner($key);
+        if (!$owner) {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+
+        try {
+            $pdo = getDB();
+            if ($pdo) {
+                $pdo->prepare("UPDATE `pn_api_keys` SET `last_used_at` = NOW() WHERE `id` = ?")->execute(array((int)$owner['id']));
+            }
+        } catch (Throwable $e) {}
+
+        $sayingJson = fetchSayingProxy();
+        if ($sayingJson !== null) {
+            @fwrite($sock, $sayingJson . "\n");
+        } else {
+            @fwrite($sock, "ERR 503 SERVICE UNAVAILABLE\n");
+        }
+        return;
+    }
+
 
     // 留言指令：MSG <KEY> <留言内容> 或 {"action":"msg","key":"...","msg":"..."}
     if ($action === 'MSG' || $action === 'MESSAGE') {
@@ -754,6 +791,52 @@ function fetchProgrammerTodayProxy() {
     if (is_file($cacheFile)) {
         $stale = @file_get_contents($cacheFile);
         if ($stale) return trim($stale);
+    }
+
+    return null;
+}
+
+/**
+ * 代理获取 uapis.cn 一言（不缓存，每次实时获取随机名言名句）
+ */
+function fetchSayingProxy() {
+    $url = 'https://uapis.cn/api/v1/saying';
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
+    if (!empty($uapisKey)) {
+        $headers[] = 'Authorization: Bearer ' . $uapisKey;
+    }
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    // 若 Key 失效或未生效（401），尝试无 Key 访客兜底
+    if ($code === 401 && !empty($uapisKey)) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('User-Agent: PixelNotes-DeskScreen/1.0'));
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+    }
+
+    if ($code === 200 && !empty($resp)) {
+        $data = json_decode($resp, true);
+        if ($data && (isset($data['text']) || isset($data['hitokoto']))) {
+            return trim($resp);
+        }
     }
 
     return null;

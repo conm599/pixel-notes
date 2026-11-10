@@ -248,6 +248,7 @@ void fetchDeskRoast() {
 | **Mock 状态** | `MOCK_STATUS\n` | 直接回传固定 Mock 状态 JSON（免 Key） | <0.1s |
 | **Mock 吐槽** | `MOCK_ROAST\n` | 逐字流式吐出固定 Mock 吐槽文本（免 Key） | ~1.6s |
 | **获取天气** | `WEATHER <KEY> [city\|adcode]\n` | 需有效 Key 防刷，同端口明文 TCP 代理 uapis 天气数据（30分钟缓存（过北京时间凌晨 01:00 自动失效），紧凑 JSON 回传），完毕自动断开 | **<0.05s** (缓存命中) |
+| **随机一言** | `SAYING <KEY>\n` | 需有效 Key 防刷，同端口明文 TCP 代理 uapis 一言（**不缓存**，实时随机金句，紧凑 JSON 回传），完毕自动断开 | **~0.15s** (实时直连) |
 
 > 异常应答：若鉴权失败直接返回 `ERR 401 UNAUTHORIZED\n`，若触发限流返回 `ERR 429 TOO MANY REQUESTS\n`。
 

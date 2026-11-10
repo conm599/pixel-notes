@@ -139,6 +139,12 @@ switch ($endpoint) {
         handleProgrammerToday();
         break;
 
+    case 'saying':
+    case 'hitokoto':
+    case 'quote':
+        handleSaying();
+        break;
+
     case 'message':
     case 'leave_message':
         handleOpenLeaveMessage($owner, $pdo);
@@ -802,6 +808,71 @@ function fetchProgrammerTodayProxy() {
     if (is_file($cacheFile)) {
         $stale = @file_get_contents($cacheFile);
         if ($stale) return trim($stale);
+    }
+
+    return null;
+}
+
+/**
+ * 处理一言端点 (HTTP，实时请求不缓存)
+ * GET /api/open.php?endpoint=saying
+ */
+function handleSaying() {
+    $json = fetchSayingProxy();
+    if ($json === null) {
+        http_response_code(503);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array('error' => 'Service unavailable', 'message' => '一言服务暂不可用'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    echo $json;
+    exit;
+}
+
+/**
+ * 代理获取 uapis.cn 一言（不缓存，每次实时获取随机名言名句）
+ */
+function fetchSayingProxy() {
+    $url = 'https://uapis.cn/api/v1/saying';
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
+    if (!empty($uapisKey)) {
+        $headers[] = 'Authorization: Bearer ' . $uapisKey;
+    }
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    // 若 Key 失效或未生效（401），尝试无 Key 访客兜底
+    if ($code === 401 && !empty($uapisKey)) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('User-Agent: PixelNotes-DeskScreen/1.0'));
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+    }
+
+    if ($code === 200 && !empty($resp)) {
+        $data = json_decode($resp, true);
+        if ($data && (isset($data['text']) || isset($data['hitokoto']))) {
+            return trim($resp);
+        }
     }
 
     return null;

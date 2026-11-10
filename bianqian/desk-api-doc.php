@@ -302,6 +302,12 @@ $tcpPort = 8888;
                     <td><b>&lt;0.05s</b> (缓存命中)</td>
                 </tr>
                 <tr>
+                    <td><b>随机一言名句</b></td>
+                    <td><code>SAYING &lt;API_KEY&gt;\n</code> (或 <code>HITOKOTO\n</code>)</td>
+                    <td>需携带有效 Desk Key，同端口代理 uapis 一言（<b>不缓存</b>，每次调用实时获取随机金句），回传紧凑 JSON 并断开</td>
+                    <td><b>~0.15s</b> (实时直连)</td>
+                </tr>
+                <tr>
                     <td><b>Mock 状态 (联调)</b></td>
                     <td><code>MOCK_STATUS\n</code></td>
                     <td>回传固定联调状态 JSON（免鉴权）</td>
@@ -358,6 +364,18 @@ $tcpPort = 8888;
                 <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=weather&city=北京</span>
             </div>
             <p>公网天气代理接口（需 Header <code>X-API-Key</code> 或 <code>?key=...</code>，保护第三方额度，带 30 分钟本地缓存（过北京时间凌晨 01:00 自动失效）与故障兜底）。</p>
+        </div>
+
+        <div class="endpoint-card">
+            <div class="endpoint-title">
+                <span class="badge-method badge-get">GET</span>
+                <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=saying</span>
+            </div>
+            <p>随机一言代理接口（需 Header <code>X-API-Key</code>，<b>不缓存</b>，每次调用即时返回最新随机语录/名言名句）。</p>
+            <pre>GET 响应示例:
+{
+  "text": "时光再美，怎如初见。"
+}</pre>
         </div>
 
         <div class="endpoint-card">
