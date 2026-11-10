@@ -309,9 +309,15 @@ $tcpPort = 8888;
                 </tr>
                 <tr>
                     <td><b>番茄小说取页 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
-                    <td><code>NOVEL &lt;API_KEY&gt; &lt;PAGE&gt;\n</code></td>
-                    <td>分页取小说正文（每页固定 300 字，UTF-8，剔除非 GB2312 字符，安全不爆 SRAM，回传 <code>{"title":...,"page":1,"pages":...,"text":...}\n</code>）</td>
-                    <td><b>&lt;0.08s</b> (预热命中)</td>
+                    <td><code>NOVEL &lt;API_KEY&gt; &lt;PAGE&gt;\n</code> (或 JSON <code>{"action":"novel","key":"...","page":1}</code>)</td>
+                    <td><b>ESP32-C3 极简阅读核心</b>：Web 端搜索并加入书架（最多 10 本），点击【推送到设备】即生效。MCU 仅需发单行指令，服务端按固定 300 字/页切片（文本严格 &lt;1KB，纯 UTF-8 剔除非 GB2312 字符无 Emoji，绝不爆 8KB 接收环形缓冲与 79KB 空闲堆），回传 <code>{"title":...,"page":1,"pages":...,"text":...}\n</code>。断电续读仅需将 4 字节页码写入 NVS。</td>
+                    <td><b>~0.08s</b></td>
+                </tr>
+                <tr>
+                    <td><b>MCU 查书架 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>NOVEL_SHELF &lt;API_KEY&gt;\n</code> (或 <code>BOOKS\n</code>)</td>
+                    <td>回传当前用户在 Web 端所管理的最多 10 本书单及当前正在推送的书号与书名</td>
+                    <td><b>&lt;0.05s</b></td>
                 </tr>
                 <tr>
                     <td><b>番茄单章拉取 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>

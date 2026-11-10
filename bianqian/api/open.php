@@ -910,6 +910,126 @@ function handleNovelProxy($owner) {
         $action = 'status';
     }
 
+    $userId = (int)$owner['user_id'];
+
+    // 1. 获取用户 MCU 书架列表（最多 10 本）
+    if ($action === 'shelf' || $action === 'bookshelf') {
+        $books = function_exists('getUserNovels') ? getUserNovels($userId) : array();
+        $current = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        echo json_encode(array(
+            'ok' => true,
+            'total' => count($books),
+            'max' => 10,
+            'current' => $current,
+            'books' => $books
+        ), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    // 2. 添加书籍到书架（上限 10 本）
+    if ($action === 'shelf_add') {
+        $bId = isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '';
+        $bTitle = isset($_REQUEST['title']) ? trim((string)$_REQUEST['title']) : '';
+        $bAuthor = isset($_REQUEST['author']) ? trim((string)$_REQUEST['author']) : '';
+        $bCover = isset($_REQUEST['cover_url']) ? trim((string)$_REQUEST['cover_url']) : '';
+        $bChaps = isset($_REQUEST['chapters']) ? (int)$_REQUEST['chapters'] : 0;
+        $bPages = isset($_REQUEST['pages']) ? (int)$_REQUEST['pages'] : 0;
+
+        if ($bId === '' || $bTitle === '') {
+            http_response_code(400);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array('ok' => false, 'error' => 'book_id 和 title 不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // 若缺少 chapters 或 pages，轻量向上游补全获取
+        if ($bChaps <= 0 || $bPages <= 0) {
+            $infoUrl = $fqHost . '/api/v1/mcu/info?book=' . urlencode($bId);
+            $ch = curl_init($infoUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 4);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array('X-API-Key: ' . $fqKey));
+            $infoResp = @curl_exec($ch);
+            @curl_close($ch);
+            if ($infoResp) {
+                $infoJson = @json_decode($infoResp, true);
+                if ($infoJson && is_array($infoJson)) {
+                    if (!empty($infoJson['chapters'])) $bChaps = (int)$infoJson['chapters'];
+                    if (!empty($infoJson['pages'])) $bPages = (int)$infoJson['pages'];
+                    if (empty($bAuthor) && !empty($infoJson['author'])) $bAuthor = trim((string)$infoJson['author']);
+                }
+            }
+        }
+
+        $res = function_exists('addUserNovel') ? addUserNovel($userId, $bId, $bTitle, $bAuthor, $bChaps, $bPages, $bCover) : array('ok' => false, 'error' => '功能未初始化');
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+        if (!empty($res['ok'])) {
+            echo json_encode($res, JSON_UNESCAPED_UNICODE);
+        } else {
+            http_response_code(400);
+            echo json_encode($res, JSON_UNESCAPED_UNICODE);
+        }
+        exit;
+    }
+
+    // 3. 从书架移除书籍
+    if ($action === 'shelf_remove') {
+        $bId = isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '';
+        if ($bId === '') {
+            http_response_code(400);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array('ok' => false, 'error' => 'book_id 不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $res = function_exists('removeUserNovel') ? removeUserNovel($userId, $bId) : array('ok' => false);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($res, JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    // 4. 推送到 MCU（设为当前激活书籍）
+    if ($action === 'push_mcu' || $action === 'set_current') {
+        $bId = isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '';
+        if ($bId === '') {
+            http_response_code(400);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array('ok' => false, 'error' => 'book_id 不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $res = function_exists('setCurrentUserNovel') ? setCurrentUserNovel($userId, $bId) : array('ok' => false);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($res, JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    // 5. 若请求正文阅读且未指定 book，自动带上当前激活的书籍
+    if ($action === 'novel') {
+        if (!isset($_GET['book']) || trim((string)$_GET['book']) === '') {
+            $curNovel = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
+            if (!$curNovel) {
+                header('Content-Type: application/json; charset=utf-8');
+                header('Cache-Control: no-store, no-cache, must-revalidate');
+                echo json_encode(array(
+                    'title' => '未选书籍',
+                    'page' => 1,
+                    'pages' => 1,
+                    'text' => '书架暂无小说。请先在网页端搜索并添加书籍到书架（最多10本），并点击【推送到设备】。'
+                ), JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $_GET['book'] = $curNovel['book_id'];
+        }
+        // 记录页码
+        $reqPage = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+        if (function_exists('updateUserNovelPage')) {
+            updateUserNovelPage($userId, $_GET['book'], $reqPage);
+        }
+    }
+
     // 处理 POST 请求（透传单行指令或 REST 提交）
     if ($method === 'POST') {
         $input = file_get_contents('php://input');

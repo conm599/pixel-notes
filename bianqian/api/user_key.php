@@ -95,8 +95,22 @@ switch ($action) {
             } catch (Throwable $e) {}
         }
 
+        $novelBooks = function_exists('getUserNovels') ? getUserNovels($userId) : array();
+        $currentNovel = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
+        $isAdmin = false;
+        if ($pdo) {
+            try {
+                $stAdmin = $pdo->prepare("SELECT is_admin FROM `pn_users` WHERE `id` = ?");
+                $stAdmin->execute(array($userId));
+                $isAdmin = ((int)$stAdmin->fetchColumn() === 1);
+            } catch (Throwable $e) {}
+        }
+
         echo json_encode(array(
             'success'          => true,
+            'is_admin'         => $isAdmin,
+            'novel_books'      => $novelBooks,
+            'current_novel'    => $currentNovel,
             'has_key'          => $keyRow !== null,
             'api_key'          => $keyRow ? $keyRow['api_key'] : '',
             'persona'          => ($keyRow && !empty($keyRow['persona'])) ? $keyRow['persona'] : '嘴硬心软、爱吐槽的桌面管家',
@@ -288,6 +302,155 @@ switch ($action) {
             'deleted' => $deletedCount,
             'message' => "已彻底遗忘过往记忆（已清理 {$deletedCount} 条对话上下文），桌面管家将重新开始！"
         ), JSON_UNESCAPED_UNICODE);
+        break;
+
+    // 小说书架管理：查询当前书架
+    case 'shelf_list':
+        $novelBooks = function_exists('getUserNovels') ? getUserNovels($userId) : array();
+        $currentNovel = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
+        echo json_encode(array(
+            'success' => true,
+            'total'   => count($novelBooks),
+            'max'     => 10,
+            'current' => $currentNovel,
+            'books'   => $novelBooks
+        ), JSON_UNESCAPED_UNICODE);
+        break;
+
+    // 小说书架管理：站内搜索番茄小说（仅限管理员权限）
+    case 'shelf_search':
+        $pdo = getDB();
+        $isAdmin = false;
+        if ($pdo) {
+            $stA = $pdo->prepare("SELECT is_admin FROM `pn_users` WHERE `id` = ?");
+            $stA->execute(array($userId));
+            $isAdmin = ((int)$stA->fetchColumn() === 1);
+        }
+        if (!$isAdmin) {
+            http_response_code(403);
+            echo json_encode(array('success' => false, 'message' => '小说搜索服务当前仅限管理员使用'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $q = isset($_GET['q']) ? trim((string)$_GET['q']) : (isset($input['q']) ? trim((string)$input['q']) : '');
+        if ($q === '') {
+            echo json_encode(array('success' => true, 'items' => array()), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+        $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
+        $searchUrl = $fqHost . '/api/v1/search?q=' . urlencode($q) . '&pages=1';
+        $ch = curl_init($searchUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('X-API-Key: ' . $fqKey));
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $items = array();
+        if ($code === 200 && !empty($resp)) {
+            $dec = json_decode($resp, true);
+            if ($dec && isset($dec['data']['items']) && is_array($dec['data']['items'])) {
+                $items = $dec['data']['items'];
+            } elseif ($dec && isset($dec['books']) && is_array($dec['books'])) {
+                $items = $dec['books'];
+            }
+        }
+
+        echo json_encode(array('success' => true, 'items' => $items), JSON_UNESCAPED_UNICODE);
+        break;
+
+    // 小说书架管理：添加小说到书架（限制最多 10 本）
+    case 'shelf_add':
+        $bookId = isset($input['book_id']) ? trim((string)$input['book_id']) : (isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '');
+        $title  = isset($input['title']) ? trim((string)$input['title']) : (isset($_REQUEST['title']) ? trim((string)$_REQUEST['title']) : '');
+        $author = isset($input['author']) ? trim((string)$input['author']) : (isset($_REQUEST['author']) ? trim((string)$_REQUEST['author']) : '');
+        $chaps  = isset($input['chapters']) ? (int)$input['chapters'] : 0;
+        $pages  = isset($input['pages']) ? (int)$input['pages'] : 0;
+
+        if ($bookId === '' || $title === '') {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => '书籍ID或标题不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // 若缺少章节或页数，尝试向上游 info 接口补全
+        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+        $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
+        if ($chaps <= 0 || $pages <= 0) {
+            $infoUrl = $fqHost . '/api/v1/mcu/info?book=' . urlencode($bookId);
+            $ch = curl_init($infoUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 4);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array('X-API-Key: ' . $fqKey));
+            $infoResp = @curl_exec($ch);
+            @curl_close($ch);
+            if ($infoResp) {
+                $infoJson = @json_decode($infoResp, true);
+                if ($infoJson && is_array($infoJson)) {
+                    if (!empty($infoJson['chapters'])) $chaps = (int)$infoJson['chapters'];
+                    if (!empty($infoJson['pages'])) $pages = (int)$infoJson['pages'];
+                    if (empty($author) && !empty($infoJson['author'])) $author = trim((string)$infoJson['author']);
+                }
+            }
+        }
+
+        $res = function_exists('addUserNovel') ? addUserNovel($userId, $bookId, $title, $author, $chaps, $pages) : array('ok' => false, 'error' => '功能未初始化');
+        if (!empty($res['ok'])) {
+            echo json_encode(array(
+                'success' => true,
+                'message' => '已成功添加《' . $title . '》到书架！',
+                'books'   => getUserNovels($userId),
+                'current' => getCurrentUserNovel($userId)
+            ), JSON_UNESCAPED_UNICODE);
+        } else {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => $res['error'] ?? '添加失败'), JSON_UNESCAPED_UNICODE);
+        }
+        break;
+
+    // 小说书架管理：移出书架
+    case 'shelf_remove':
+        $bookId = isset($input['book_id']) ? trim((string)$input['book_id']) : (isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '');
+        if ($bookId === '') {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => '书籍ID不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $res = function_exists('removeUserNovel') ? removeUserNovel($userId, $bookId) : array('ok' => false);
+        echo json_encode(array(
+            'success' => !empty($res['ok']),
+            'message' => !empty($res['ok']) ? '已从书架移出' : '移出失败',
+            'books'   => getUserNovels($userId),
+            'current' => getCurrentUserNovel($userId)
+        ), JSON_UNESCAPED_UNICODE);
+        break;
+
+    // 小说书架管理：推送到 MCU（设为当前激活书籍）
+    case 'shelf_push':
+    case 'shelf_set_current':
+        $bookId = isset($input['book_id']) ? trim((string)$input['book_id']) : (isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '');
+        if ($bookId === '') {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => '书籍ID不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $res = function_exists('setCurrentUserNovel') ? setCurrentUserNovel($userId, $bookId) : array('ok' => false);
+        if (!empty($res['ok'])) {
+            echo json_encode(array(
+                'success' => true,
+                'message' => '已成功推送《' . ($res['title'] ?? '') . '》至 MCU 设备端！',
+                'books'   => getUserNovels($userId),
+                'current' => getCurrentUserNovel($userId)
+            ), JSON_UNESCAPED_UNICODE);
+        } else {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => $res['error'] ?? '推送失败'), JSON_UNESCAPED_UNICODE);
+        }
         break;
 
     default:

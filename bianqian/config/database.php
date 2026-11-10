@@ -304,6 +304,26 @@ function ensureTables(&$error = null) {
             KEY `idx_user_time` (`user_id`, `created_at`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
+        // 用户 MCU 小说书架（最多 10 本，推送到桌面状态屏 / MCU）
+        $sqlUserNovels = "CREATE TABLE IF NOT EXISTS `pn_user_novels` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `user_id` INT UNSIGNED NOT NULL,
+            `book_id` VARCHAR(64) NOT NULL,
+            `title` VARCHAR(255) NOT NULL,
+            `author` VARCHAR(100) NOT NULL DEFAULT '',
+            `cover_url` VARCHAR(500) NOT NULL DEFAULT '',
+            `is_current` TINYINT(1) NOT NULL DEFAULT 0,
+            `total_chapters` INT UNSIGNED NOT NULL DEFAULT 0,
+            `total_pages` INT UNSIGNED NOT NULL DEFAULT 0,
+            `current_page` INT UNSIGNED NOT NULL DEFAULT 1,
+            `sort_order` INT NOT NULL DEFAULT 0,
+            `created_at` DATETIME NOT NULL,
+            `updated_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_user_book` (`user_id`, `book_id`),
+            KEY `idx_user` (`user_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
         // 自愈：给已有 pn_notes 表补充 sort_order / share 列（兼容旧表）
         // 使用临时静默模式，不抛出任何异常
         $oldMode = $pdo->getAttribute(PDO::ATTR_ERRMODE);
@@ -366,6 +386,7 @@ function ensureTables(&$error = null) {
             $pdo->exec($sqlAiActions);
             $pdo->exec($sqlApiKeys);
             $pdo->exec($sqlDeskMemories);
+            $pdo->exec($sqlUserNovels);
         } catch (PDOException $e) {
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlUsers));
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlNotes));
@@ -378,6 +399,7 @@ function ensureTables(&$error = null) {
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlAiActions));
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlApiKeys));
             $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlDeskMemories));
+            $pdo->exec(str_replace('utf8mb4', 'utf8', $sqlUserNovels));
         }
 
         // 自愈：初始化第三方接口 API Key（uapis_api_key）
@@ -786,3 +808,174 @@ function touchUserLoginDate($userId) {
  * 确保明文 TCP 服务随 PHP 请求自愈拉起
  * 端口默认 8888，已在监听则 0.05s 快速跳过，未监听则后台静默拉起
  */
+
+
+/**
+ * 获取用户的 MCU 小说书架列表（最多 10 本）
+ */
+function getUserNovels($userId) {
+    try {
+        $pdo = getDB();
+        $st = $pdo->prepare("SELECT * FROM `pn_user_novels` WHERE `user_id` = ? ORDER BY `is_current` DESC, `sort_order` ASC, `id` DESC LIMIT 10");
+        $st->execute(array((int)$userId));
+        return $st->fetchAll();
+    } catch (Exception $e) {
+        return array();
+    }
+}
+
+/**
+ * 获取用户当前激活推送到 MCU 的小说
+ */
+function getCurrentUserNovel($userId) {
+    try {
+        $pdo = getDB();
+        $st = $pdo->prepare("SELECT * FROM `pn_user_novels` WHERE `user_id` = ? AND `is_current` = 1 LIMIT 1");
+        $st->execute(array((int)$userId));
+        $cur = $st->fetch();
+        if ($cur) return $cur;
+
+        // 若没有明确激活的，取第一本并自动设为激活
+        $st = $pdo->prepare("SELECT * FROM `pn_user_novels` WHERE `user_id` = ? ORDER BY `sort_order` ASC, `id` DESC LIMIT 1");
+        $st->execute(array((int)$userId));
+        $first = $st->fetch();
+        if ($first) {
+            $pdo->prepare("UPDATE `pn_user_novels` SET `is_current` = 1 WHERE `id` = ?")->execute(array((int)$first['id']));
+            $first['is_current'] = 1;
+            return $first;
+        }
+        return null;
+    } catch (Exception $e) {
+        return null;
+    }
+}
+
+/**
+ * 添加书籍到用户书架（限制最多 10 本）
+ */
+function addUserNovel($userId, $bookId, $title, $author = '', $chapters = 0, $pages = 0, $coverUrl = '') {
+    try {
+        $pdo = getDB();
+        $userId = (int)$userId;
+        $bookId = trim((string)$bookId);
+        $title  = trim((string)$title);
+        $author = trim((string)$author);
+        $chapters = max(0, (int)$chapters);
+        $pages = max(0, (int)$pages);
+
+        if ($bookId === '' || $title === '') {
+            return array('ok' => false, 'error' => '书籍ID或标题不能为空');
+        }
+
+        // 检查该书是否已在书架中
+        $st = $pdo->prepare("SELECT id FROM `pn_user_novels` WHERE `user_id` = ? AND `book_id` = ?");
+        $st->execute(array($userId, $bookId));
+        $existId = $st->fetchColumn();
+
+        if (!$existId) {
+            // 检查数量上限（最多 10 本）
+            $stCount = $pdo->prepare("SELECT COUNT(*) FROM `pn_user_novels` WHERE `user_id` = ?");
+            $stCount->execute(array($userId));
+            $count = (int)$stCount->fetchColumn();
+            if ($count >= 10) {
+                return array('ok' => false, 'error' => '书架最多添加 10 本书，请先移出一本后再添加');
+            }
+
+            // 若当前书架为空，新添加的书自动激活推送到 MCU
+            $isCurrent = ($count === 0) ? 1 : 0;
+            $ins = $pdo->prepare("INSERT INTO `pn_user_novels` 
+                (`user_id`, `book_id`, `title`, `author`, `cover_url`, `is_current`, `total_chapters`, `total_pages`, `current_page`, `sort_order`, `created_at`, `updated_at`) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NOW(), NOW())");
+            $ins->execute(array($userId, $bookId, $title, $author, $coverUrl, $isCurrent, $chapters, $pages));
+            $newId = (int)$pdo->lastInsertId();
+        } else {
+            // 已存在则更新元数据
+            $up = $pdo->prepare("UPDATE `pn_user_novels` SET `title` = ?, `author` = ?, `total_chapters` = IF(? > 0, ?, total_chapters), `total_pages` = IF(? > 0, ?, total_pages), `updated_at` = NOW() WHERE `id` = ?");
+            $up->execute(array($title, $author, $chapters, $chapters, $pages, $pages, (int)$existId));
+            $newId = (int)$existId;
+        }
+
+        return array('ok' => true, 'id' => $newId, 'book_id' => $bookId, 'title' => $title);
+    } catch (Exception $e) {
+        return array('ok' => false, 'error' => $e->getMessage());
+    }
+}
+
+/**
+ * 从书架移出书籍
+ */
+function removeUserNovel($userId, $bookId) {
+    try {
+        $pdo = getDB();
+        $userId = (int)$userId;
+        $bookId = trim((string)$bookId);
+
+        $st = $pdo->prepare("SELECT is_current FROM `pn_user_novels` WHERE `user_id` = ? AND `book_id` = ?");
+        $st->execute(array($userId, $bookId));
+        $isCurrent = (int)$st->fetchColumn();
+
+        $del = $pdo->prepare("DELETE FROM `pn_user_novels` WHERE `user_id` = ? AND `book_id` = ?");
+        $del->execute(array($userId, $bookId));
+
+        // 若移除的是当前激活的书，自动激活书架中的另一本
+        if ($isCurrent === 1) {
+            $next = $pdo->prepare("SELECT id FROM `pn_user_novels` WHERE `user_id` = ? ORDER BY `sort_order` ASC, `id` DESC LIMIT 1");
+            $next->execute(array($userId));
+            $nextId = $next->fetchColumn();
+            if ($nextId) {
+                $pdo->prepare("UPDATE `pn_user_novels` SET `is_current` = 1 WHERE `id` = ?")->execute(array((int)$nextId));
+            }
+        }
+        return array('ok' => true);
+    } catch (Exception $e) {
+        return array('ok' => false, 'error' => $e->getMessage());
+    }
+}
+
+/**
+ * 设置某本书为当前激活推送到 MCU 的书
+ */
+function setCurrentUserNovel($userId, $bookId) {
+    try {
+        $pdo = getDB();
+        $userId = (int)$userId;
+        $bookId = trim((string)$bookId);
+
+        $st = $pdo->prepare("SELECT id, title FROM `pn_user_novels` WHERE `user_id` = ? AND `book_id` = ?");
+        $st->execute(array($userId, $bookId));
+        $target = $st->fetch();
+        if (!$target) {
+            return array('ok' => false, 'error' => '该书籍不在您的书架中');
+        }
+
+        $pdo->prepare("UPDATE `pn_user_novels` SET `is_current` = 0 WHERE `user_id` = ?")->execute(array($userId));
+        $pdo->prepare("UPDATE `pn_user_novels` SET `is_current` = 1, `updated_at` = NOW() WHERE `id` = ?")->execute(array((int)$target['id']));
+
+        // 轻量触发上游 PICK 指令开启预热
+        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+        $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
+        $pickUrl = $fqHost . '/api/v1/mcu/pick?book=' . urlencode($bookId);
+        $ch = curl_init($pickUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('X-API-Key: ' . $fqKey));
+        @curl_exec($ch);
+        @curl_close($ch);
+
+        return array('ok' => true, 'book_id' => $bookId, 'title' => $target['title']);
+    } catch (Exception $e) {
+        return array('ok' => false, 'error' => $e->getMessage());
+    }
+}
+
+/**
+ * 记录用户读到的页码
+ */
+function updateUserNovelPage($userId, $bookId, $page) {
+    try {
+        $pdo = getDB();
+        $st = $pdo->prepare("UPDATE `pn_user_novels` SET `current_page` = ?, `updated_at` = NOW() WHERE `user_id` = ? AND `book_id` = ?");
+        $st->execute(array(max(1, (int)$page), (int)$userId, trim((string)$bookId)));
+    } catch (Throwable $e) {}
+}

@@ -250,7 +250,7 @@ function handleTcpRequest($sock, $raw) {
     // 指令支持：NOVEL, CHAPTER, SEARCH, CHAPTERS, BOOKS, PICK, INFO, DL, TASK, NOVEL_STATUS, FQ_STATUS, FQ
     $novelActions = array(
         'NOVEL', 'CHAPTER', 'SEARCH', 'CHAPTERS', 'BOOKS', 'PICK',
-        'INFO', 'DL', 'TASK', 'NOVEL_STATUS', 'FQ_STATUS', 'FQ'
+        'INFO', 'DL', 'TASK', 'NOVEL_STATUS', 'FQ_STATUS', 'FQ', 'NOVEL_SHELF', 'SHELF'
     );
     if (in_array($action, $novelActions, true)) {
         if ($raw[0] === '{') {
@@ -300,16 +300,98 @@ function handleTcpRequest($sock, $raw) {
                 $upstreamCmd = strtoupper($realSubAct) . " " . $fqKey . (!empty($subTokens) ? " " . implode(' ', $subTokens) : "");
             }
         } else {
+            $userId = (int)$owner['user_id'];
+
+            // 1. 获取书架列表（BOOKS 或 NOVEL_SHELF，返回用户保存在 Web 端的 10 本书）
+            if ($action === 'BOOKS' || $action === 'NOVEL_SHELF' || $action === 'SHELF') {
+                $userBooks = function_exists('getUserNovels') ? getUserNovels($userId) : array();
+                $cur = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
+                $resList = array();
+                foreach ($userBooks as $ub) {
+                    $resList[] = array(
+                        'id' => $ub['book_id'],
+                        'title' => $ub['title'],
+                        'author' => $ub['author'],
+                        'is_current' => (int)$ub['is_current'],
+                        'page' => (int)$ub['current_page'],
+                        'pages' => (int)$ub['total_pages'],
+                    );
+                }
+                $shelfData = array(
+                    'total' => count($resList),
+                    'current' => $cur ? $cur['book_id'] : '',
+                    'current_title' => $cur ? $cur['title'] : '',
+                    'books' => $resList
+                );
+                @fwrite($sock, json_encode($shelfData, JSON_UNESCAPED_UNICODE) . "\n");
+                return;
+            }
+
+            // 2. 切换当前阅读书籍（PICK 或 NOVEL_PICK）
+            if ($action === 'PICK' || $action === 'NOVEL_PICK') {
+                $targetBook = '';
+                if ($raw[0] === '{') {
+                    $targetBook = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                } else {
+                    $tokens = preg_split('/\s+/', trim($raw));
+                    $targetBook = isset($tokens[2]) ? trim($tokens[2]) : '';
+                }
+                if ($targetBook !== '') {
+                    if (function_exists('setCurrentUserNovel')) {
+                        setCurrentUserNovel($userId, $targetBook);
+                    }
+                }
+                $upstreamCmd = "PICK {$fqKey} {$targetBook}";
+                forwardFanqieTcp($sock, $upstreamCmd);
+                return;
+            }
+
+            // 3. 取页正文（NOVEL）：若未显式传 book_id，自动以当前推送到 MCU 的书为准
+            if ($action === 'NOVEL') {
+                $reqPage = 1;
+                $reqBook = '';
+                if ($raw[0] === '{') {
+                    $reqPage = isset($json['page']) ? max(1, (int)$json['page']) : 1;
+                    $reqBook = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                } else {
+                    $tokens = preg_split('/\s+/', trim($raw));
+                    $reqPage = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
+                    $reqBook = isset($tokens[3]) ? trim($tokens[3]) : '';
+                }
+
+                if ($reqBook === '') {
+                    $cur = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
+                    if (!$cur) {
+                        $emptyNotice = json_encode(array(
+                            'title' => '未选书籍',
+                            'page'  => 1,
+                            'pages' => 1,
+                            'text'  => '书架暂无小说。请先在网页端搜索并添加书籍到书架（最多10本），并点击【推送到设备】。'
+                        ), JSON_UNESCAPED_UNICODE) . "\n";
+                        @fwrite($sock, $emptyNotice);
+                        return;
+                    }
+                    $reqBook = $cur['book_id'];
+                }
+
+                // 记录页码
+                if (function_exists('updateUserNovelPage')) {
+                    updateUserNovelPage($userId, $reqBook, $reqPage);
+                }
+
+                $upstreamCmd = "NOVEL {$fqKey} {$reqPage} {$reqBook}";
+                forwardFanqieTcp($sock, $upstreamCmd);
+                return;
+            }
+
+            // 其它指令按标准转发
             if ($raw[0] === '{') {
                 switch ($action) {
-                    case 'NOVEL':
-                        $p = isset($json['page']) ? (int)$json['page'] : 1;
-                        $upstreamCmd = "NOVEL {$fqKey} {$p}";
-                        break;
                     case 'CHAPTER':
                         $n = isset($json['n']) ? (int)$json['n'] : 1;
                         $p = isset($json['page']) ? (int)$json['page'] : 1;
-                        $upstreamCmd = "CHAPTER {$fqKey} {$n} {$p}";
+                        $b = isset($json['book']) ? trim($json['book']) : '';
+                        $upstreamCmd = "CHAPTER {$fqKey} {$n} {$p}" . ($b !== '' ? " {$b}" : "");
                         break;
                     case 'SEARCH':
                         $q = isset($json['q']) ? trim($json['q']) : (isset($json['keyword']) ? trim($json['keyword']) : '');
@@ -320,15 +402,6 @@ function handleTcpRequest($sock, $raw) {
                         $off = isset($json['offset']) ? (int)$json['offset'] : 0;
                         $lim = isset($json['limit']) ? (int)$json['limit'] : 20;
                         $upstreamCmd = "CHAPTERS {$fqKey} {$book} {$off} {$lim}";
-                        break;
-                    case 'BOOKS':
-                        $off = isset($json['offset']) ? (int)$json['offset'] : 0;
-                        $lim = isset($json['limit']) ? (int)$json['limit'] : 20;
-                        $upstreamCmd = "BOOKS {$fqKey} {$off} {$lim}";
-                        break;
-                    case 'PICK':
-                        $book = isset($json['book']) ? trim($json['book']) : '';
-                        $upstreamCmd = "PICK {$fqKey} {$book}";
                         break;
                     case 'INFO':
                         $book = isset($json['book']) ? trim($json['book']) : '';

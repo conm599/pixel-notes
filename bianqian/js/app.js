@@ -4820,6 +4820,52 @@
 
     body.appendChild(memGroup);
 
+    // ============== 📚 MCU 小说书架（最多 10 本 · 推送到桌面屏） ==============
+    var shelfGroup = mkEl('div');
+    shelfGroup.style.cssText = 'border-top:1px dashed var(--border-color);padding-top:14px;margin-bottom:14px;display:none;';
+
+    var shelfHead = mkEl('div');
+    shelfHead.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
+    var shelfTitle = mkEl('div', '', '📚 MCU 小说书架 (推送到设备 · 最多10本)');
+    shelfTitle.style.cssText = 'font-size:12px;color:var(--accent2);font-weight:bold;';
+    var shelfBadge = mkEl('span', '', '0 / 10 本');
+    shelfBadge.style.cssText = 'font-size:11px;color:#8a8ab0;';
+    shelfHead.appendChild(shelfTitle);
+    shelfHead.appendChild(shelfBadge);
+    shelfGroup.appendChild(shelfHead);
+
+    var shelfDesc = mkEl('div');
+    shelfDesc.style.cssText = 'font-size:11px;color:#8a8ab0;line-height:1.5;margin-bottom:10px;';
+    shelfDesc.textContent = '在网页端搜索番茄小说并加入书架（上限 10 本）。点击【推送到设备】即设为当前激活书籍，单片机发送 NOVEL 指令分页拉取（单页 300 字，自动纯净切片，不超 8KB 环形缓冲）。';
+    shelfGroup.appendChild(shelfDesc);
+
+    // 搜索输入栏
+    var searchRow = mkEl('div');
+    searchRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+    var searchInput = mkEl('input', 'form-input');
+    searchInput.type = 'text';
+    searchInput.placeholder = '搜索番茄站内小说（如：凡人、仙逆、我师兄...）';
+    searchInput.style.cssText = 'flex:1;font-size:12px;';
+    var searchBtn = mkBtn('🔍 搜小说');
+    searchBtn.className = 'btn btn-outline btn-sm';
+    searchBtn.style.fontSize = '11px';
+    searchBtn.style.flexShrink = '0';
+    searchRow.appendChild(searchInput);
+    searchRow.appendChild(searchBtn);
+    shelfGroup.appendChild(searchRow);
+
+    // 搜索结果展示框
+    var searchResultBox = mkEl('div');
+    searchResultBox.style.cssText = 'display:none;max-height:160px;overflow-y:auto;background:rgba(0,0,0,0.25);border:1px solid rgba(74,240,255,0.2);border-radius:4px;padding:6px;margin-bottom:10px;display:flex;flex-direction:column;gap:5px;';
+    shelfGroup.appendChild(searchResultBox);
+
+    // 书架卡片列表
+    var shelfListBox = mkEl('div');
+    shelfListBox.style.cssText = 'display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;';
+    shelfGroup.appendChild(shelfListBox);
+
+    body.appendChild(shelfGroup);
+
     // 接入指引与完整文档入口
     var guideBox = mkEl('div');
     guideBox.style.cssText = 'background:rgba(74,240,255,0.06);border:1px solid var(--accent2);padding:12px 14px;font-size:11px;line-height:1.7;color:#8a8ab0;border-radius:4px;';
@@ -5116,6 +5162,189 @@
       if (d.api_base) {
         var baseCode = document.getElementById('deskApiBaseVal');
         if (baseCode) baseCode.textContent = d.api_base;
+      }
+
+      // 渲染小说书架模块（仅管理员开放）
+      if (d.is_admin) {
+        shelfGroup.style.display = '';
+
+        function renderShelfList(books, current) {
+          shelfBadge.textContent = (books ? books.length : 0) + ' / 10 本';
+          shelfListBox.innerHTML = '';
+          if (!books || books.length === 0) {
+            var emptyHint = mkEl('div', '', '书架为空，请在上方搜索番茄小说并加入书架（最多10本）。');
+            emptyHint.style.cssText = 'font-size:11px;color:#8a8ab0;padding:12px;text-align:center;border:1px dashed var(--border-color);border-radius:4px;';
+            shelfListBox.appendChild(emptyHint);
+            return;
+          }
+
+          books.forEach(function (b) {
+            var card = mkEl('div');
+            card.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid ' + (b.is_current ? 'var(--accent2)' : 'var(--border-color)') + ';border-radius:4px;gap:8px;';
+
+            var info = mkEl('div');
+            info.style.cssText = 'flex:1;min-width:0;';
+            var tRow = mkEl('div');
+            tRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+            var bName = mkEl('b', '', b.title);
+            bName.style.cssText = 'font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;';
+            tRow.appendChild(bName);
+
+            if (b.is_current) {
+              var curBadge = mkEl('span', '', '🟢 推送中');
+              curBadge.style.cssText = 'font-size:10px;background:rgba(0,255,136,0.15);color:#00ff88;border:1px solid #00ff88;padding:1px 5px;border-radius:3px;';
+              tRow.appendChild(curBadge);
+            }
+            info.appendChild(tRow);
+
+            var subRow = mkEl('div');
+            subRow.style.cssText = 'font-size:10px;color:#8a8ab0;margin-top:2px;';
+            subRow.textContent = (b.author ? '作者: ' + b.author + ' · ' : '') + '当前读至: 第 ' + (b.current_page || 1) + ' 页' + (b.total_pages ? ' / 共 ' + b.total_pages + ' 页' : '');
+            info.appendChild(subRow);
+
+            var actRow = mkEl('div');
+            actRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
+
+            if (!b.is_current) {
+              var pushBtn = mkBtn('📲 推送到设备');
+              pushBtn.className = 'btn btn-outline btn-xs';
+              pushBtn.style.cssText = 'font-size:10px;padding:2px 6px;';
+              pushBtn.addEventListener('click', async function () {
+                pushBtn.disabled = true;
+                pushBtn.textContent = '⏳ 推送中...';
+                try {
+                  var r = await fetch('api/user_key.php?action=shelf_push', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ book_id: b.book_id })
+                  });
+                  var res = await r.json();
+                  if (res.success) {
+                    showToast(res.message || '已成功推送到 MCU 设备！');
+                    renderShelfList(res.books, res.current);
+                  } else {
+                    showToast(res.message || '推送失败', 'error');
+                  }
+                } catch (e) {
+                  showToast('网络错误', 'error');
+                }
+              });
+              actRow.appendChild(pushBtn);
+            }
+
+            var delBtn = mkBtn('🗑️');
+            delBtn.className = 'btn btn-outline btn-xs';
+            delBtn.title = '从书架移出';
+            delBtn.style.cssText = 'font-size:10px;padding:2px 6px;color:var(--danger);border-color:var(--danger);';
+            delBtn.addEventListener('click', async function () {
+              if (!confirm('确定将《' + b.title + '》从 MCU 书架移出吗？')) return;
+              delBtn.disabled = true;
+              try {
+                var r = await fetch('api/user_key.php?action=shelf_remove', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ book_id: b.book_id })
+                });
+                var res = await r.json();
+                if (res.success) {
+                  showToast('已从书架移出');
+                  renderShelfList(res.books, res.current);
+                } else {
+                  showToast('移出失败', 'error');
+                }
+              } catch (e) {
+                showToast('网络错误', 'error');
+              }
+            });
+            actRow.appendChild(delBtn);
+
+            card.appendChild(info);
+            card.appendChild(actRow);
+            shelfListBox.appendChild(card);
+          });
+        }
+
+        renderShelfList(d.novel_books, d.current_novel);
+
+        // 搜书事件处理
+        async function doSearchNovel() {
+          var kw = searchInput.value.trim();
+          if (!kw) {
+            showToast('请输入小说名称或作者', 'error');
+            searchInput.focus();
+            return;
+          }
+          searchBtn.disabled = true;
+          searchBtn.textContent = '⏳ 搜索中...';
+          searchResultBox.style.display = '';
+          searchResultBox.innerHTML = '<div style="font-size:11px;color:#8a8ab0;padding:8px;text-align:center;">🔍 正在番茄站内搜索，请稍候...</div>';
+          try {
+            var resp = await fetch('api/user_key.php?action=shelf_search&q=' + encodeURIComponent(kw));
+            var res = await resp.json();
+            if (res.success && res.items && res.items.length > 0) {
+              searchResultBox.innerHTML = '';
+              res.items.slice(0, 8).forEach(function (item) {
+                var itRow = mkEl('div');
+                itRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:rgba(255,255,255,0.04);border-radius:3px;gap:8px;font-size:11px;';
+                var itInfo = mkEl('div');
+                itInfo.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                itInfo.innerHTML = '<b style="color:var(--accent2);">' + item.title + '</b>' + (item.author ? ' <span style="color:#8a8ab0;">(' + item.author + ')</span>' : '');
+
+                var addBtn = mkBtn('➕ 加书架');
+                addBtn.className = 'btn btn-primary btn-xs';
+                addBtn.style.cssText = 'font-size:10px;padding:2px 8px;flex-shrink:0;';
+                addBtn.addEventListener('click', async function () {
+                  addBtn.disabled = true;
+                  addBtn.textContent = '添加中...';
+                  try {
+                    var r = await fetch('api/user_key.php?action=shelf_add', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        book_id: item.book_id || item.id,
+                        title: item.title,
+                        author: item.author || ''
+                      })
+                    });
+                    var addRes = await r.json();
+                    if (addRes.success) {
+                      showToast(addRes.message || '已添加到书架！');
+                      renderShelfList(addRes.books, addRes.current);
+                      addBtn.textContent = '已添加';
+                    } else {
+                      showToast(addRes.message || '添加失败', 'error');
+                      addBtn.disabled = false;
+                      addBtn.textContent = '➕ 加书架';
+                    }
+                  } catch (e) {
+                    showToast('添加失败：网络错误', 'error');
+                    addBtn.disabled = false;
+                    addBtn.textContent = '➕ 加书架';
+                  }
+                });
+
+                itRow.appendChild(itInfo);
+                itRow.appendChild(addBtn);
+                searchResultBox.appendChild(itRow);
+              });
+            } else {
+              searchResultBox.innerHTML = '<div style="font-size:11px;color:#8a8ab0;padding:8px;text-align:center;">未找到相关小说，请尝试缩短或更换关键词。</div>';
+            }
+          } catch (e) {
+            searchResultBox.innerHTML = '<div style="font-size:11px;color:var(--danger);padding:8px;text-align:center;">搜索失败：网络连接异常</div>';
+          } finally {
+            searchBtn.disabled = false;
+            searchBtn.textContent = '🔍 搜小说';
+          }
+        }
+
+        searchBtn.addEventListener('click', doSearchNovel);
+        searchInput.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            doSearchNovel();
+          }
+        });
       }
     }).catch(function () {});
   }
