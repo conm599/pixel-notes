@@ -302,84 +302,85 @@ function handleTcpRequest($sock, $raw) {
         } else {
             $userId = (int)$owner['user_id'];
 
-            // 1. 获取书架列表（BOOKS 或 NOVEL_SHELF，返回用户保存在 Web 端的 10 本书）
-            if ($action === 'BOOKS' || $action === 'NOVEL_SHELF' || $action === 'SHELF') {
+            // 1. 获取推送到设备的 10 本书单（BOOKS / NOVEL_SHELF / SHELF / NOVEL_LIST）
+            if ($action === 'BOOKS' || $action === 'NOVEL_SHELF' || $action === 'SHELF' || $action === 'NOVEL_LIST') {
                 $userBooks = function_exists('getUserNovels') ? getUserNovels($userId) : array();
                 $cur = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
                 $resList = array();
                 foreach ($userBooks as $ub) {
                     $resList[] = array(
-                        'id' => $ub['book_id'],
-                        'title' => $ub['title'],
+                        'i'      => (int)($ub['i'] ?? 1),
+                        'id'     => $ub['book_id'],
+                        'title'  => $ub['title'],
                         'author' => $ub['author'],
-                        'is_current' => (int)$ub['is_current'],
-                        'page' => (int)$ub['current_page'],
-                        'pages' => (int)$ub['total_pages'],
+                        'page'   => (int)$ub['current_page'],
+                        'pages'  => (int)$ub['total_pages'],
                     );
                 }
                 $shelfData = array(
-                    'total' => count($resList),
+                    'total'   => count($resList),
                     'current' => $cur ? $cur['book_id'] : '',
-                    'current_title' => $cur ? $cur['title'] : '',
-                    'books' => $resList
+                    'books'   => $resList
                 );
                 @fwrite($sock, json_encode($shelfData, JSON_UNESCAPED_UNICODE) . "\n");
                 return;
             }
 
-            // 2. 切换当前阅读书籍（PICK 或 NOVEL_PICK）
+            // 2. 选定当前书籍（PICK / NOVEL_PICK）：支持序号 1~10 或 book_id
             if ($action === 'PICK' || $action === 'NOVEL_PICK') {
-                $targetBook = '';
+                $targetArg = '';
                 if ($raw[0] === '{') {
-                    $targetBook = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                    $targetArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
                 } else {
                     $tokens = preg_split('/\s+/', trim($raw));
-                    $targetBook = isset($tokens[2]) ? trim($tokens[2]) : '';
+                    $targetArg = isset($tokens[2]) ? trim($tokens[2]) : '';
                 }
-                if ($targetBook !== '') {
+                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $targetArg) : null;
+                if ($targetBook) {
                     if (function_exists('setCurrentUserNovel')) {
-                        setCurrentUserNovel($userId, $targetBook);
+                        setCurrentUserNovel($userId, $targetBook['book_id']);
                     }
+                    $upstreamCmd = "PICK {$fqKey} {$targetBook['book_id']}";
+                    forwardFanqieTcp($sock, $upstreamCmd);
+                } else {
+                    @fwrite($sock, "ERR 404 NOVEL NOT FOUND\n");
                 }
-                $upstreamCmd = "PICK {$fqKey} {$targetBook}";
-                forwardFanqieTcp($sock, $upstreamCmd);
                 return;
             }
 
-            // 3. 取页正文（NOVEL）：若未显式传 book_id，自动以当前推送到 MCU 的书为准
+            // 3. 取页正文（NOVEL）：支持 NOVEL <KEY> <PAGE> [序号1-10 或 BOOK_ID]
             if ($action === 'NOVEL') {
                 $reqPage = 1;
-                $reqBook = '';
+                $reqBookArg = '';
                 if ($raw[0] === '{') {
                     $reqPage = isset($json['page']) ? max(1, (int)$json['page']) : 1;
-                    $reqBook = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                    $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
                 } else {
                     $tokens = preg_split('/\s+/', trim($raw));
                     $reqPage = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
-                    $reqBook = isset($tokens[3]) ? trim($tokens[3]) : '';
+                    $reqBookArg = isset($tokens[3]) ? trim($tokens[3]) : '';
                 }
 
-                if ($reqBook === '') {
-                    $cur = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
-                    if (!$cur) {
-                        $emptyNotice = json_encode(array(
-                            'title' => '未选书籍',
-                            'page'  => 1,
-                            'pages' => 1,
-                            'text'  => '书架暂无小说。请先在网页端搜索并添加书籍到书架（最多10本），并点击【推送到设备】。'
-                        ), JSON_UNESCAPED_UNICODE) . "\n";
-                        @fwrite($sock, $emptyNotice);
-                        return;
-                    }
-                    $reqBook = $cur['book_id'];
+                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
+                if (!$targetBook) {
+                    $emptyNotice = json_encode(array(
+                        'title' => '书架为空',
+                        'page'  => 1,
+                        'pages' => 1,
+                        'text'  => '您的书架暂无小说。请先在网页端搜索并加入书架（最多10本），将自动全部推送到设备！'
+                    ), JSON_UNESCAPED_UNICODE) . "\n";
+                    @fwrite($sock, $emptyNotice);
+                    return;
                 }
 
-                // 记录页码
+                $realBookId = $targetBook['book_id'];
+
+                // 记录阅读进度
                 if (function_exists('updateUserNovelPage')) {
-                    updateUserNovelPage($userId, $reqBook, $reqPage);
+                    updateUserNovelPage($userId, $realBookId, $reqPage);
                 }
 
-                $upstreamCmd = "NOVEL {$fqKey} {$reqPage} {$reqBook}";
+                $upstreamCmd = "NOVEL {$fqKey} {$reqPage} {$realBookId}";
                 forwardFanqieTcp($sock, $upstreamCmd);
                 return;
             }

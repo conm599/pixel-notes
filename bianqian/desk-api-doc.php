@@ -308,16 +308,16 @@ $tcpPort = 8888;
                     <td><b>~0.15s</b> (实时直连)</td>
                 </tr>
                 <tr>
-                    <td><b>番茄小说取页 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
-                    <td><code>NOVEL &lt;API_KEY&gt; &lt;PAGE&gt;\n</code> (或 JSON <code>{"action":"novel","key":"...","page":1}</code>)</td>
-                    <td><b>ESP32-C3 极简阅读核心</b>：Web 端搜索并加入书架（最多 10 本），点击【推送到设备】即生效。MCU 仅需发单行指令，服务端按固定 300 字/页切片（文本严格 &lt;1KB，纯 UTF-8 剔除非 GB2312 字符无 Emoji，绝不爆 8KB 接收环形缓冲与 79KB 空闲堆），回传 <code>{"title":...,"page":1,"pages":...,"text":...}\n</code>。断电续读仅需将 4 字节页码写入 NVS。</td>
-                    <td><b>~0.08s</b></td>
+                    <td><b>1. 拉取 10 本书单 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>BOOKS &lt;API_KEY&gt;\n</code> (或 <code>NOVEL_SHELF\n</code>)</td>
+                    <td><b>第一级：全量获取推送到设备的 10 本书单菜单</b>。回传单行紧凑 JSON（仅 300~500 字节，远低于 1200 字节静态缓冲）：<code>{"total":3,"books":[{"i":1,"id":"...","title":"凡人修仙","page":2,"pages":7753},{"i":2,...}]}</code>。设备端以此渲染列表菜单，按键上下选择想看哪本。</td>
+                    <td><b>&lt;0.05s</b></td>
                 </tr>
                 <tr>
-                    <td><b>MCU 查书架 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
-                    <td><code>NOVEL_SHELF &lt;API_KEY&gt;\n</code> (或 <code>BOOKS\n</code>)</td>
-                    <td>回传当前用户在 Web 端所管理的最多 10 本书单及当前正在推送的书号与书名</td>
-                    <td><b>&lt;0.05s</b></td>
+                    <td><b>2. 进入正文阅读 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>NOVEL &lt;API_KEY&gt; &lt;PAGE&gt; [序号1-10]\n</code></td>
+                    <td><b>第二级：点进选中的书读正文（300 字切片）</b>。例如读第 2 本书第 1 页发 <code>NOVEL &lt;KEY&gt; 1 2\n</code>（单片机只需记整数序号 1~10！）。服务端固定按 300 字切片（单包 ~800 字节，严格 &lt;1KB，纯 UTF-8 剔除非 GB2312 字符无 Emoji，绝不爆 8KB 环形缓冲与 79KB 空闲堆），回传 <code>{"title":...,"page":1,"pages":...,"text":...}\n</code>。断电续读仅需将 <code>book_i</code> 和 <code>page</code> 写入 NVS。</td>
+                    <td><b>~0.08s</b></td>
                 </tr>
                 <tr>
                     <td><b>番茄单章拉取 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>

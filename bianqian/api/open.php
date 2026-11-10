@@ -1006,27 +1006,26 @@ function handleNovelProxy($owner) {
         exit;
     }
 
-    // 5. 若请求正文阅读且未指定 book，自动带上当前激活的书籍
+    // 5. 正文阅读取页（NOVEL：支持序号 1~10 或 book_id）
     if ($action === 'novel') {
-        if (!isset($_GET['book']) || trim((string)$_GET['book']) === '') {
-            $curNovel = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
-            if (!$curNovel) {
-                header('Content-Type: application/json; charset=utf-8');
-                header('Cache-Control: no-store, no-cache, must-revalidate');
-                echo json_encode(array(
-                    'title' => '未选书籍',
-                    'page' => 1,
-                    'pages' => 1,
-                    'text' => '书架暂无小说。请先在网页端搜索并添加书籍到书架（最多10本），并点击【推送到设备】。'
-                ), JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-            $_GET['book'] = $curNovel['book_id'];
+        $reqBook = isset($_GET['book']) ? trim((string)$_GET['book']) : '';
+        $targetNovel = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBook) : null;
+        if (!$targetNovel) {
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store, no-cache, must-revalidate');
+            echo json_encode(array(
+                'title' => '书架为空',
+                'page' => 1,
+                'pages' => 1,
+                'text' => '您的书架暂无小说。请先在网页端搜索并加入书架（最多10本），将自动全部推送到设备！'
+            ), JSON_UNESCAPED_UNICODE);
+            exit;
         }
-        // 记录页码
-        $reqPage = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+
+        $_GET['book'] = $targetNovel['book_id'];
+        $reqPage = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
         if (function_exists('updateUserNovelPage')) {
-            updateUserNovelPage($userId, $_GET['book'], $reqPage);
+            updateUserNovelPage($userId, $targetNovel['book_id'], $reqPage);
         }
     }
 

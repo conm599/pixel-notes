@@ -4826,7 +4826,7 @@
 
     var shelfHead = mkEl('div');
     shelfHead.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
-    var shelfTitle = mkEl('div', '', '📚 MCU 小说书架 (推送到设备 · 最多10本)');
+    var shelfTitle = mkEl('div', '', '📚 MCU 小说书架 (已全部同步至设备 · 最多10本)');
     shelfTitle.style.cssText = 'font-size:12px;color:var(--accent2);font-weight:bold;';
     var shelfBadge = mkEl('span', '', '0 / 10 本');
     shelfBadge.style.cssText = 'font-size:11px;color:#8a8ab0;';
@@ -4836,7 +4836,7 @@
 
     var shelfDesc = mkEl('div');
     shelfDesc.style.cssText = 'font-size:11px;color:#8a8ab0;line-height:1.5;margin-bottom:10px;';
-    shelfDesc.textContent = '在网页端搜索番茄小说并加入书架（上限 10 本）。点击【推送到设备】即设为当前激活书籍，单片机发送 NOVEL 指令分页拉取（单页 300 字，自动纯净切片，不超 8KB 环形缓冲）。';
+    shelfDesc.textContent = '书架中的小说已全部自动推送到您的 MCU 设备！在单片机/桌面屏上打开小说 APP，即可看到这 10 本书的列表菜单，上下按键自由选书阅读，无需在设备端搜索。单片机发送 BOOKS 获取书单，发送 NOVEL 获取单页 300 字切片。';
     shelfGroup.appendChild(shelfDesc);
 
     // 搜索输入栏
@@ -5186,8 +5186,12 @@
             info.style.cssText = 'flex:1;min-width:0;';
             var tRow = mkEl('div');
             tRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+            var numBadge = mkEl('span', '', '#' + (b.i || 1));
+            numBadge.style.cssText = 'font-size:10px;font-family:monospace;background:rgba(74,240,255,0.15);color:var(--accent2);padding:1px 5px;border-radius:3px;font-weight:bold;';
+            tRow.appendChild(numBadge);
+
             var bName = mkEl('b', '', b.title);
-            bName.style.cssText = 'font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;';
+            bName.style.cssText = 'font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;';
             tRow.appendChild(bName);
 
             if (b.is_current) {

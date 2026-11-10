@@ -811,17 +811,50 @@ function touchUserLoginDate($userId) {
 
 
 /**
- * 获取用户的 MCU 小说书架列表（最多 10 本）
+ * 获取用户的 MCU 小说书架列表（最多 10 本，已全部推送到设备）
  */
 function getUserNovels($userId) {
     try {
         $pdo = getDB();
-        $st = $pdo->prepare("SELECT * FROM `pn_user_novels` WHERE `user_id` = ? ORDER BY `is_current` DESC, `sort_order` ASC, `id` DESC LIMIT 10");
+        $st = $pdo->prepare("SELECT * FROM `pn_user_novels` WHERE `user_id` = ? ORDER BY `sort_order` ASC, `id` ASC LIMIT 10");
         $st->execute(array((int)$userId));
-        return $st->fetchAll();
+        $rows = $st->fetchAll();
+        $idx = 1;
+        foreach ($rows as &$r) {
+            $r['i'] = $idx++; // 序号 1~10，方便单片机直接用数字选书
+        }
+        unset($r);
+        return $rows;
     } catch (Exception $e) {
         return array();
     }
+}
+
+/**
+ * 根据序号 (1~10) 或 book_id 定位书架中的某本书
+ */
+function getUserNovelByIdOrIndex($userId, $arg) {
+    $novels = getUserNovels($userId);
+    if (empty($novels)) return null;
+
+    $arg = trim((string)$arg);
+    if ($arg === '') {
+        return getCurrentUserNovel($userId) ?: $novels[0];
+    }
+
+    // 若是 1~10 整数，按书架序号索引
+    if (ctype_digit($arg) && (int)$arg >= 1 && (int)$arg <= count($novels)) {
+        return $novels[(int)$arg - 1];
+    }
+
+    // 按 book_id 匹配
+    foreach ($novels as $n) {
+        if ($n['book_id'] === $arg) {
+            return $n;
+        }
+    }
+
+    return getCurrentUserNovel($userId) ?: $novels[0];
 }
 
 /**
