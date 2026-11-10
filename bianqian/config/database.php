@@ -389,6 +389,20 @@ function ensureTables(&$error = null) {
             }
         } catch (Throwable $e) {}
 
+        // 自愈：初始化番茄小说服务配置（fanqie_host, fanqie_key，仅限管理员代理）
+        try {
+            $stFqH = $pdo->prepare("SELECT svalue FROM `pn_settings` WHERE `skey` = 'fanqie_host'");
+            $stFqH->execute();
+            if ($stFqH->fetchColumn() === false) {
+                $pdo->prepare("INSERT INTO `pn_settings` (`skey`, `svalue`, `updated_at`) VALUES ('fanqie_host', 'http://111.170.163.248:53223', NOW())")->execute();
+            }
+            $stFqK = $pdo->prepare("SELECT svalue FROM `pn_settings` WHERE `skey` = 'fanqie_key'");
+            $stFqK->execute();
+            if ($stFqK->fetchColumn() === false) {
+                $pdo->prepare("INSERT INTO `pn_settings` (`skey`, `svalue`, `updated_at`) VALUES ('fanqie_key', '5b42436aea8a5296e40b4b95d2ed2ad7', NOW())")->execute();
+            }
+        } catch (Throwable $e) {}
+
         $done = true;
         return true;
     } catch (PDOException $e) {
@@ -437,6 +451,21 @@ function setSetting($key, $value) {
  */
 function getUapisApiKey() {
     return getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+}
+
+/**
+ * 获取番茄小说代理服务配置（仅限管理员代理使用）
+ */
+function getFanqieHost() {
+    $host = trim(getSetting('fanqie_host', 'http://111.170.163.248:53223'));
+    if ($host === '') {
+        $host = 'http://111.170.163.248:53223';
+    }
+    return rtrim($host, '/');
+}
+
+function getFanqieKey() {
+    return trim(getSetting('fanqie_key', '5b42436aea8a5296e40b4b95d2ed2ad7'));
 }
 
 /**

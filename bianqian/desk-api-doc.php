@@ -308,6 +308,48 @@ $tcpPort = 8888;
                     <td><b>~0.15s</b> (实时直连)</td>
                 </tr>
                 <tr>
+                    <td><b>番茄小说取页 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>NOVEL &lt;API_KEY&gt; &lt;PAGE&gt;\n</code></td>
+                    <td>分页取小说正文（每页固定 300 字，UTF-8，剔除非 GB2312 字符，安全不爆 SRAM，回传 <code>{"title":...,"page":1,"pages":...,"text":...}\n</code>）</td>
+                    <td><b>&lt;0.08s</b> (预热命中)</td>
+                </tr>
+                <tr>
+                    <td><b>番茄单章拉取 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>CHAPTER &lt;API_KEY&gt; &lt;N&gt; [PAGE]\n</code></td>
+                    <td>只拉取某章节切片（首屏更快），回传单页 JSON 并断开</td>
+                    <td>~0.6s</td>
+                </tr>
+                <tr>
+                    <td><b>番茄站内搜索 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>SEARCH &lt;API_KEY&gt; &lt;关键词&gt;\n</code></td>
+                    <td>番茄站内搜索书籍（返回 <code>book_id</code> / <code>title</code> / <code>author</code> 等）</td>
+                    <td>~2.2s</td>
+                </tr>
+                <tr>
+                    <td><b>番茄章节目录 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>CHAPTERS &lt;API_KEY&gt; &lt;BOOK&gt; [OFF] [LIM]\n</code></td>
+                    <td>获取某书章节目录列表与总章数</td>
+                    <td>&lt;0.1s</td>
+                </tr>
+                <tr>
+                    <td><b>番茄选中预热 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>PICK &lt;API_KEY&gt; &lt;BOOK&gt;\n</code></td>
+                    <td>选中书籍并在服务端后台开启全本预热，以便翻页实现毫秒级响应</td>
+                    <td>&lt;0.1s</td>
+                </tr>
+                <tr>
+                    <td><b>番茄服务状态 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>NOVEL_STATUS &lt;API_KEY&gt;\n</code></td>
+                    <td>查询上游番茄下载服务在线状态（设备数、当前预热书、总调用等）</td>
+                    <td>&lt;0.08s</td>
+                </tr>
+                <tr>
+                    <td><b>Mock 小说正文 (联调)</b></td>
+                    <td><code>MOCK_NOVEL [PAGE]\n</code></td>
+                    <td>固定样例小说正文，免鉴权用于设备端分页/字库渲染联调</td>
+                    <td>&lt;0.05s</td>
+                </tr>
+                <tr>
                     <td><b>Mock 状态 (联调)</b></td>
                     <td><code>MOCK_STATUS\n</code></td>
                     <td>回传固定联调状态 JSON（免鉴权）</td>
@@ -364,6 +406,21 @@ $tcpPort = 8888;
                 <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=weather&city=北京</span>
             </div>
             <p>公网天气代理接口（需 Header <code>X-API-Key</code> 或 <code>?key=...</code>，保护第三方额度，带 30 分钟本地缓存（过北京时间凌晨 01:00 自动失效）与故障兜底）。</p>
+        </div>
+
+        <div class="endpoint-card">
+            <div class="endpoint-title">
+                <span class="badge-method badge-get">GET</span>
+                <span class="endpoint-url"><?php echo htmlspecialchars($openApiBase); ?>?endpoint=novel&action=novel&page=1</span>
+            </div>
+            <p><b>番茄小说阅读与搜索代理（<span style="color:#ff4d4f;font-weight:bold;">仅限管理员</span>）</b>：需 Header <code>X-API-Key: &lt;管理员DeskKey&gt;</code>。支持 <code>action=novel</code>（取页阅读，单页 300 字）、<code>action=search&q=凡人</code>（站内搜索）、<code>action=chapter&n=12&page=1</code>（单章分页）、<code>action=chapters&book=xxx</code>（目录）、<code>action=pick&book=xxx</code>（预热当前书）、<code>action=status</code>（服务状态）。非管理员调用返回 HTTP 403。</p>
+            <pre>GET ?endpoint=novel&action=novel&page=1 响应示例:
+{
+  "title": "凡人修仙：我的身体状态每日刷新",
+  "page": 1,
+  "pages": 3169,
+  "text": "第1章 身体状态会被强制刷新 ...（单页 300 字纯净文本，剔除非 GB2312 字符）..."
+}</pre>
         </div>
 
         <div class="endpoint-card">

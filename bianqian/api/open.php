@@ -145,6 +145,11 @@ switch ($endpoint) {
         handleSaying();
         break;
 
+    case 'novel':
+    case 'fanqie':
+        handleNovelProxy($owner);
+        break;
+
     case 'message':
     case 'leave_message':
         handleOpenLeaveMessage($owner, $pdo);
@@ -876,4 +881,146 @@ function fetchSayingProxy() {
     }
 
     return null;
+}
+
+
+/**
+ * 处理番茄小说服务 HTTP 代理（仅限管理员访问）
+ * GET /api/open.php?endpoint=novel&action=...
+ */
+function handleNovelProxy($owner) {
+    // 权限严格拦截：仅限管理员使用
+    if (!$owner || empty($owner['is_admin']) || (int)$owner['is_admin'] !== 1) {
+        http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array(
+            'error' => 'Forbidden',
+            'message' => '当前小说代理服务仅限管理员使用'
+        ), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+    $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
+
+    $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper($_SERVER['REQUEST_METHOD']) : 'GET';
+    $action = isset($_GET['action']) ? strtolower(trim((string)$_GET['action'])) : '';
+
+    if ($action === '') {
+        $action = 'status';
+    }
+
+    // 处理 POST 请求（透传单行指令或 REST 提交）
+    if ($method === 'POST') {
+        $input = file_get_contents('php://input');
+        if ($action === 'cmd' || (isset($_GET['cmd']) && $_GET['cmd'] !== '')) {
+            $rawCmd = trim($input);
+            if ($rawCmd === '' && isset($_POST['cmd'])) {
+                $rawCmd = trim((string)$_POST['cmd']);
+            }
+            if ($rawCmd === '') {
+                http_response_code(400);
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(array('error' => 'Bad Request', 'message' => 'Empty cmd'), JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // 替换或补齐 Key 为上游 Key
+            $tokens = preg_split('/\s+/', $rawCmd);
+            $subAct = array_shift($tokens);
+            if (!empty($tokens) && (strpos($tokens[0], 'pn_desk_') === 0 || strlen($tokens[0]) >= 16)) {
+                $tokens[0] = $fqKey;
+            } else {
+                array_unshift($tokens, $fqKey);
+            }
+            $finalCmd = $subAct . ' ' . implode(' ', $tokens);
+
+            $url = $fqHost . '/api/v1/mcu/cmd';
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $finalCmd);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+                'Content-Type: text/plain',
+                'X-API-Key: ' . $fqKey
+            ));
+            $resp = curl_exec($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store, no-cache, must-revalidate');
+            if ($code >= 200 && $code < 300 && !empty($resp)) {
+                echo $resp;
+            } else {
+                http_response_code($code > 0 ? $code : 502);
+                echo $resp ?: json_encode(array('error' => 'Bad Gateway', 'message' => '上游服务响应异常'), JSON_UNESCAPED_UNICODE);
+            }
+            exit;
+        }
+
+        // 其它 POST 路由（如 /downloads 提交下载任务）
+        $upstreamPath = ($action === 'downloads' || $action === 'download') ? '/api/v1/downloads' : ('/api/v1/' . ltrim($action, '/'));
+        $url = $fqHost . $upstreamPath;
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $input);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            'Content-Type: application/json',
+            'X-API-Key: ' . $fqKey
+        ));
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        if ($code > 0) http_response_code($code);
+        echo $resp ?: json_encode(array('error' => 'Bad Gateway'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    // GET 请求转发：收集所有参数（剔除本站内部参数）
+    $query = $_GET;
+    unset($query['endpoint'], $query['action'], $query['api_key'], $query['key']);
+
+    if ($action === 'search') {
+        $upstreamPath = '/api/v1/search';
+    } elseif (in_array($action, array('status', 'books', 'novel', 'chapter', 'chapters', 'pick', 'info', 'dl', 'task'), true)) {
+        $upstreamPath = '/api/v1/mcu/' . $action;
+    } else {
+        $upstreamPath = '/api/v1/' . ltrim($action, '/');
+    }
+
+    $url = $fqHost . $upstreamPath;
+    if (!empty($query)) {
+        $url .= (strpos($url, '?') === false ? '?' : '&') . http_build_query($query);
+    }
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+        'User-Agent: PixelNotes-NovelProxy/1.0',
+        'X-API-Key: ' . $fqKey
+    ));
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    if ($code >= 200 && $code < 300 && !empty($resp)) {
+        echo $resp;
+    } else {
+        http_response_code($code > 0 ? $code : 502);
+        echo $resp ?: json_encode(array('error' => 'Bad Gateway', 'message' => '小说代理服务上游响应异常'), JSON_UNESCAPED_UNICODE);
+    }
+    exit;
 }

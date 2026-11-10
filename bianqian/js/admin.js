@@ -73,6 +73,35 @@
     });
   }
 
+  // 测试番茄小说服务连通性
+  var fqBtn = document.getElementById('btnTestFanqie');
+  var fqOut = document.getElementById('fanqieTestResult');
+  var fqHostInput = document.getElementById('fanqieHostInput');
+  var fqKeyInput = document.getElementById('fanqieKeyInput');
+  if (fqBtn) {
+    fqBtn.addEventListener('click', async function () {
+      var host = fqHostInput ? fqHostInput.value.trim() : '';
+      var key = fqKeyInput ? fqKeyInput.value.trim() : '';
+      fqBtn.disabled = true;
+      fqBtn.textContent = '⏳ 测试中...';
+      fqOut.textContent = '';
+      try {
+        var url = 'admin.php?op=test_fanqie&host=' + encodeURIComponent(host) + '&key=' + encodeURIComponent(key);
+        var resp = await fetch(url, {
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        if (resp.status === 401) { window.location.href = 'login.php'; return; }
+        var r = await resp.json();
+        fqOut.textContent = r.success ? '✅ ' + (r.message || '连接成功') : '❌ ' + (r.message || '连接失败');
+      } catch (e) {
+        fqOut.textContent = '❌ 网络错误，无法连接测试接口';
+      }
+      fqBtn.disabled = false;
+      fqBtn.innerHTML = '<i class="ic ic-plug"></i> 测试番茄服务连通性';
+    });
+  }
+
   // 测试发信
   var mailBtn = document.getElementById('btnTestMail');
   var mailOut = document.getElementById('mailResult');

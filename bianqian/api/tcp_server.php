@@ -238,6 +238,128 @@ function handleTcpRequest($sock, $raw) {
         return;
     }
 
+    // 番茄小说服务免鉴权联调指令
+    if ($action === 'MOCK_NOVEL') {
+        $tokens = preg_split('/\s+/', trim($raw));
+        $page = isset($tokens[1]) ? (int)$tokens[1] : 1;
+        forwardFanqieTcp($sock, "MOCK_NOVEL {$page}");
+        return;
+    }
+
+    // 番茄小说服务代理指令（仅限管理员，带 Desk Key）
+    // 指令支持：NOVEL, CHAPTER, SEARCH, CHAPTERS, BOOKS, PICK, INFO, DL, TASK, NOVEL_STATUS, FQ_STATUS, FQ
+    $novelActions = array(
+        'NOVEL', 'CHAPTER', 'SEARCH', 'CHAPTERS', 'BOOKS', 'PICK',
+        'INFO', 'DL', 'TASK', 'NOVEL_STATUS', 'FQ_STATUS', 'FQ'
+    );
+    if (in_array($action, $novelActions, true)) {
+        if ($raw[0] === '{') {
+            $json = @json_decode($raw, true);
+            $key = isset($json['key']) ? trim($json['key']) : '';
+        } else {
+            $tokens = preg_split('/\s+/', trim($raw));
+            $key = isset($tokens[1]) ? trim($tokens[1]) : '';
+        }
+
+        if ($key === '') {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+        $owner = getDeskKeyOwner($key);
+        if (!$owner) {
+            @fwrite($sock, "ERR 401 UNAUTHORIZED\n");
+            return;
+        }
+        // 权限严格拦截：仅限管理员使用小说代理服务
+        if (empty($owner['is_admin']) || (int)$owner['is_admin'] !== 1) {
+            @fwrite($sock, "ERR 403 ADMIN ONLY\n");
+            return;
+        }
+
+        try {
+            $pdo = getDB();
+            if ($pdo) {
+                $pdo->prepare("UPDATE `pn_api_keys` SET `last_used_at` = NOW() WHERE `id` = ?")->execute(array((int)$owner['id']));
+            }
+        } catch (Throwable $e) {}
+
+        $fqKey = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
+
+        if ($action === 'NOVEL_STATUS' || $action === 'FQ_STATUS') {
+            $upstreamCmd = "STATUS " . $fqKey;
+        } elseif ($action === 'FQ') {
+            // 格式: FQ <KEY> <SUB_CMD> [ARGS...]
+            if ($raw[0] === '{') {
+                $sub = isset($json['cmd']) ? trim($json['cmd']) : 'status';
+                $upstreamCmd = strtoupper($sub) . " " . $fqKey;
+            } else {
+                $parts = preg_split('/\s+/', trim($raw), 3);
+                $subCmd = isset($parts[2]) ? trim($parts[2]) : 'STATUS';
+                $subTokens = preg_split('/\s+/', $subCmd);
+                $realSubAct = array_shift($subTokens);
+                $upstreamCmd = strtoupper($realSubAct) . " " . $fqKey . (!empty($subTokens) ? " " . implode(' ', $subTokens) : "");
+            }
+        } else {
+            if ($raw[0] === '{') {
+                switch ($action) {
+                    case 'NOVEL':
+                        $p = isset($json['page']) ? (int)$json['page'] : 1;
+                        $upstreamCmd = "NOVEL {$fqKey} {$p}";
+                        break;
+                    case 'CHAPTER':
+                        $n = isset($json['n']) ? (int)$json['n'] : 1;
+                        $p = isset($json['page']) ? (int)$json['page'] : 1;
+                        $upstreamCmd = "CHAPTER {$fqKey} {$n} {$p}";
+                        break;
+                    case 'SEARCH':
+                        $q = isset($json['q']) ? trim($json['q']) : (isset($json['keyword']) ? trim($json['keyword']) : '');
+                        $upstreamCmd = "SEARCH {$fqKey} {$q}";
+                        break;
+                    case 'CHAPTERS':
+                        $book = isset($json['book']) ? trim($json['book']) : '';
+                        $off = isset($json['offset']) ? (int)$json['offset'] : 0;
+                        $lim = isset($json['limit']) ? (int)$json['limit'] : 20;
+                        $upstreamCmd = "CHAPTERS {$fqKey} {$book} {$off} {$lim}";
+                        break;
+                    case 'BOOKS':
+                        $off = isset($json['offset']) ? (int)$json['offset'] : 0;
+                        $lim = isset($json['limit']) ? (int)$json['limit'] : 20;
+                        $upstreamCmd = "BOOKS {$fqKey} {$off} {$lim}";
+                        break;
+                    case 'PICK':
+                        $book = isset($json['book']) ? trim($json['book']) : '';
+                        $upstreamCmd = "PICK {$fqKey} {$book}";
+                        break;
+                    case 'INFO':
+                        $book = isset($json['book']) ? trim($json['book']) : '';
+                        $upstreamCmd = "INFO {$fqKey} {$book}";
+                        break;
+                    case 'DL':
+                        $book = isset($json['book']) ? trim($json['book']) : '';
+                        $range = isset($json['chapters']) ? trim($json['chapters']) : '';
+                        $upstreamCmd = "DL {$fqKey} {$book} {$range}";
+                        break;
+                    case 'TASK':
+                        $tid = isset($json['task_id']) ? trim($json['task_id']) : (isset($json['id']) ? trim($json['id']) : '');
+                        $upstreamCmd = "TASK {$fqKey} {$tid}";
+                        break;
+                    default:
+                        $upstreamCmd = "{$action} {$fqKey}";
+                        break;
+                }
+            } else {
+                $tokens = preg_split('/\s+/', trim($raw));
+                $cmdName = array_shift($tokens);
+                array_shift($tokens); // 去掉客户端传入的 key
+                $rest = implode(' ', $tokens);
+                $upstreamCmd = $cmdName . " " . $fqKey . ($rest !== '' ? " " . $rest : "");
+            }
+        }
+
+        forwardFanqieTcp($sock, $upstreamCmd);
+        return;
+    }
+
     // 一言代理指令（同端口明文 TCP，不缓存，每次实时获取随机名言名句）
     // 格式: SAYING <KEY> | HITOKOTO <KEY> | QUOTE <KEY> 或 {"action":"saying","key":"..."}
     if ($action === 'SAYING' || $action === 'HITOKOTO' || $action === 'QUOTE') {
@@ -840,4 +962,44 @@ function fetchSayingProxy() {
     }
 
     return null;
+}
+
+
+/**
+ * 转发 TCP 指令至上游番茄小说服务（单端口 TCP 明文单行模式）
+ */
+function forwardFanqieTcp($sock, $upstreamCmd) {
+    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+    $parsed = parse_url($fqHost);
+    $host = isset($parsed['host']) ? $parsed['host'] : '111.170.163.248';
+    $port = isset($parsed['port']) ? (int)$parsed['port'] : 53223;
+
+    $fp = @fsockopen($host, $port, $errno, $errstr, 4);
+    if (!$fp) {
+        @fwrite($sock, "ERR 503 NOVEL SERVICE UNAVAILABLE\n");
+        return;
+    }
+
+    stream_set_timeout($fp, 12);
+    @fwrite($fp, trim($upstreamCmd) . "\n");
+
+    $resp = '';
+    while (!feof($fp)) {
+        $chunk = @fgets($fp, 8192);
+        if ($chunk === false) break;
+        $resp .= $chunk;
+        if (strpos($resp, "\n") !== false) {
+            break;
+        }
+    }
+    @fclose($fp);
+
+    if ($resp !== '') {
+        if (substr($resp, -1) !== "\n") {
+            $resp .= "\n";
+        }
+        @fwrite($sock, $resp);
+    } else {
+        @fwrite($sock, "ERR 504 UPSTREAM TIMEOUT\n");
+    }
 }

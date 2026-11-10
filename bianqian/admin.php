@@ -62,6 +62,54 @@ if (isset($_GET['op']) && $_GET['op'] === 'test_uapis') {
     exit;
 }
 
+// ===== 测试番茄小说上游连通性（GET，仅管理员） =====
+if (isset($_GET['op']) && $_GET['op'] === 'test_fanqie') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    $testHost = trim(isset($_GET['host']) ? (string)$_GET['host'] : '');
+    $testKey  = trim(isset($_GET['key']) ? (string)$_GET['key'] : '');
+    if ($testHost === '') {
+        $testHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+    }
+    if ($testKey === '') {
+        $testKey = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
+    }
+
+    $url = rtrim($testHost, '/') . '/api/v1/health';
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+        'User-Agent: PixelNotes-Admin/1.0',
+        'X-API-Key: ' . $testKey
+    ));
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code === 200 && !empty($resp)) {
+        $data = json_decode($resp, true);
+        if ($data && (!empty($data['ok']) || isset($data['data']))) {
+            $info = isset($data['data']) ? $data['data'] : array();
+            $devs = isset($info['devices']) ? $info['devices'] : 0;
+            $files = isset($info['library_files']) ? $info['library_files'] : 0;
+            $msg = "连通成功！番茄小说服务正常在线（可用设备: {$devs} 台，已缓存书籍: {$files} 本）";
+            echo json_encode(array('success' => true, 'message' => $msg), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+
+    if ($code === 401) {
+        echo json_encode(array('success' => false, 'message' => '密钥无效（上游番茄服务返回 401 Unauthorized）'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $errDetail = $code ? "HTTP {$code}" : "网络超时或连接失败";
+    echo json_encode(array('success' => false, 'message' => '测试失败: ' . $errDetail), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 // ===== 用户搜索（AI 密钥「推送到账号」选择器用，2026-09-27） =====
 // GET 只读 + 管理员会话双重门槛；按用户名/邮箱前中缀模糊匹配，最多 8 条
 if (isset($_GET['op']) && $_GET['op'] === 'search_users') {
@@ -213,6 +261,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ukey = trim(isset($_POST['uapis_key']) ? (string)$_POST['uapis_key'] : '');
         setSetting('uapis_api_key', $ukey);
         $saved = true;
+    } elseif (isset($_POST['op']) && $_POST['op'] === 'fanqie_save') {
+        $fHost = trim(isset($_POST['fanqie_host']) ? (string)$_POST['fanqie_host'] : '');
+        $fKey  = trim(isset($_POST['fanqie_key']) ? (string)$_POST['fanqie_key'] : '');
+        if ($fHost === '') $fHost = 'http://111.170.163.248:53223';
+        setSetting('fanqie_host', $fHost);
+        setSetting('fanqie_key', $fKey);
+        $saved = true;
     } elseif (isset($_POST['op']) && $_POST['op'] === 'smtp_save') {
         $host = trim(isset($_POST['smtp_host']) ? (string)$_POST['smtp_host'] : '');
         $port = (int)(isset($_POST['smtp_port']) ? $_POST['smtp_port'] : 465);
@@ -261,6 +316,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $curUapisKey = getUapisApiKey();
+$curFanqieHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+$curFanqieKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
 $curBase  = getSetting('ai_base_url', '');
 $curModel = getSetting('ai_model', '');
 $curKey   = getSetting('ai_api_key', '');
@@ -519,6 +576,41 @@ $imgDefaultQuota = (int)suite_cfg('tuchang_user_quota', 20 * 1024 * 1024);   // 
         </form>
 
         <div class="toolbar" style="margin-top:28px;">
+            <span class="toolbar-title"><i class="ic ic-gear"></i> 📚 番茄小说代理服务配置（仅限管理员代理）</span>
+            <div class="toolbar-actions">
+                <span class="md-hint">提供番茄站内小说搜索、分页阅读（单页 300 字 GB2312 净化）、整本/单章下载。非管理员调用直接 403 阻断</span>
+            </div>
+        </div>
+
+        <form method="post" class="ai-admin-form" autocomplete="off">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+            <input type="hidden" name="op" value="fanqie_save">
+            <div class="form-row">
+                <div class="form-group" style="flex:1;min-width:280px;">
+                    <label class="form-label">上游服务地址 (HTTP / TCP 同端口)</label>
+                    <input type="text" name="fanqie_host" id="fanqieHostInput" class="form-input" 
+                           value="<?= htmlspecialchars($curFanqieHost) ?>" 
+                           placeholder="http://111.170.163.248:53223" maxlength="128">
+                    <div class="md-hint">番茄服务多路复用地址，支持 HTTP REST 与明文 TCP 单行协议。</div>
+                </div>
+                <div class="form-group" style="flex:1;min-width:280px;">
+                    <label class="form-label">上游访问密钥 (API Key)</label>
+                    <input type="text" name="fanqie_key" id="fanqieKeyInput" class="form-input" 
+                           value="<?= htmlspecialchars($curFanqieKey) ?>" 
+                           placeholder="5b42436aea8a5296e40b4b95d2ed2ad7" maxlength="64">
+                    <div class="md-hint">外部程序调用上游所需的 Bearer / X-API-Key 凭证。</div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;">
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="ic ic-save-pink"></i> 保存小说配置</button>
+                    <button type="button" id="btnTestFanqie" class="btn btn-outline btn-sm"><i class="ic ic-plug"></i> 测试番茄服务连通性</button>
+                    <span id="fanqieTestResult" class="md-hint"></span>
+                </div>
+            </div>
+        </form>
+
+        <div class="toolbar" style="margin-top:28px;">
             <span class="toolbar-title">📧 邮件服务（SMTP）与注册邮箱白名单</span>
             <div class="toolbar-actions">
                 <span class="md-hint">用于注册/登录/找回密码的验证码邮件</span>
@@ -713,6 +805,6 @@ $imgDefaultQuota = (int)suite_cfg('tuchang_user_quota', 20 * 1024 * 1024);   // 
 
     <div id="toast" class="toast" style="display:none;"></div>
 
-    <script src="js/admin.js?v=7"></script>
+    <script src="js/admin.js?v=8"></script>
 </body>
 </html>
