@@ -276,7 +276,7 @@ $tcpPort = 8888;
                     <td><b>获取管家吐槽</b></td>
                     <td><code>ROAST &lt;API_KEY&gt;\n</code></td>
                     <td>以 0.1s/字 逐字流式向 Socket 吐出纯文本，传输完毕追加 <code>\n</code> 并断开（模型接口限流放宽至<b>每分钟最多 2 次</b>）</td>
-                    <td>~4-6s</td>
+                    <td>~4-6s (带思考推理模型约 20-30s，单片机请设 60s 超时)</td>
                 </tr>
                 <tr>
                     <td><b>同端口代理天气</b></td>
@@ -527,6 +527,8 @@ void fetchWeatherTcp(const char* city = "北京") {
 void fetchRoastTcp() {
     WiFiClient client;
     if (client.connect(SERVER_IP, SERVER_PORT, 5000)) {
+        // 重要：大模型思维链(CoT)思考与高峰排队首字耗时(TTFT)可能达 20~30s，读取超时务必设为 60s 以上，切勿过早超时！
+        client.setTimeout(60000);
         client.printf("ROAST %s\n", API_KEY);
         Serial.print("管家吐槽: ");
         
