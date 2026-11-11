@@ -5168,6 +5168,285 @@
       if (d.is_admin) {
         shelfGroup.style.display = '';
 
+
+        function openNovelChapterModal(book, onUpdate) {
+          var overlay = mkEl('div');
+          overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;padding:12px;backdrop-filter:blur(5px);';
+
+          var modal = mkEl('div');
+          modal.style.cssText = 'background:#131325;border:1px solid rgba(74,240,255,0.4);border-radius:8px;box-shadow:0 12px 36px rgba(0,0,0,0.7);width:100%;max-width:860px;height:88vh;display:flex;flex-direction:column;overflow:hidden;color:#fff;';
+
+          var mHead = mkEl('div');
+          mHead.style.cssText = 'padding:12px 16px;border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.02);flex-shrink:0;';
+          var mTitle = mkEl('div', '', '📖 《' + book.title + '》 章节与页码对照 · 在线跳转阅读');
+          mTitle.style.cssText = 'font-size:14px;font-weight:bold;color:var(--accent2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          var closeBtn = mkBtn('✕');
+          closeBtn.className = 'btn btn-outline btn-xs';
+          closeBtn.style.cssText = 'padding:2px 8px;font-size:12px;color:#aaa;border-color:var(--border-color);';
+          closeBtn.onclick = function () { overlay.remove(); };
+          mHead.appendChild(mTitle);
+          mHead.appendChild(closeBtn);
+          modal.appendChild(mHead);
+
+          var toolBar = mkEl('div');
+          toolBar.style.cssText = 'padding:8px 16px;background:rgba(0,0,0,0.3);border-bottom:1px solid var(--border-color);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11px;flex-shrink:0;';
+
+          var infoSpan = mkEl('div');
+          infoSpan.style.cssText = 'color:#a0a0cf;display:flex;gap:12px;align-items:center;flex-wrap:wrap;';
+          infoSpan.innerHTML = '<span>作者: <b>' + (book.author || '未知') + '</b></span>' +
+            '<span>总章数: <b id="nmTotalChaps" style="color:var(--accent2);">' + (book.total_chapters || '...') + '</b> 章</span>' +
+            '<span>总页数: <b id="nmTotalPages" style="color:var(--accent2);">' + (book.total_pages || '...') + '</b> 页</span>' +
+            '<span style="background:rgba(74,240,255,0.15);color:var(--accent2);padding:2px 8px;border-radius:3px;font-weight:bold;">设备当前: 第 <b id="nmCurPage">' + (book.current_page || 1) + '</b> 页</span>';
+
+          var jumpRow = mkEl('div');
+          jumpRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+          var jumpInput = mkEl('input', 'form-input');
+          jumpInput.type = 'number';
+          jumpInput.min = '1';
+          jumpInput.placeholder = '输入页码';
+          jumpInput.style.cssText = 'width:75px;font-size:11px;padding:3px 6px;height:24px;';
+          var jumpBtn = mkBtn('跳转看');
+          jumpBtn.className = 'btn btn-primary btn-xs';
+          jumpBtn.style.cssText = 'padding:3px 10px;font-size:11px;';
+
+          jumpRow.appendChild(mkEl('span', '', '跳页:'));
+          jumpRow.appendChild(jumpInput);
+          jumpRow.appendChild(jumpBtn);
+          toolBar.appendChild(infoSpan);
+          toolBar.appendChild(jumpRow);
+          modal.appendChild(toolBar);
+
+          var mBody = mkEl('div');
+          mBody.style.cssText = 'flex:1;min-height:0;display:flex;overflow:hidden;';
+
+          var leftPane = mkEl('div');
+          leftPane.style.cssText = 'width:290px;border-right:1px solid var(--border-color);display:flex;flex-direction:column;background:rgba(0,0,0,0.18);flex-shrink:0;';
+
+          var searchChapBox = mkEl('div');
+          searchChapBox.style.cssText = 'padding:8px 10px;border-bottom:1px solid var(--border-color);';
+          var searchChapInput = mkEl('input', 'form-input');
+          searchChapInput.placeholder = '🔍 搜索章号 (如 5 或 第5章)';
+          searchChapInput.style.cssText = 'width:100%;font-size:11px;padding:4px 8px;';
+          searchChapBox.appendChild(searchChapInput);
+          leftPane.appendChild(searchChapBox);
+
+          var chapListBox = mkEl('div');
+          chapListBox.style.cssText = 'flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:3px;';
+          leftPane.appendChild(chapListBox);
+          mBody.appendChild(leftPane);
+
+          var rightPane = mkEl('div');
+          rightPane.style.cssText = 'flex:1;display:flex;flex-direction:column;padding:12px;overflow:hidden;background:#0d0d18;min-width:0;';
+
+          var readHeader = mkEl('div');
+          readHeader.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px dashed var(--border-color);margin-bottom:8px;flex-shrink:0;';
+          var readTitle = mkEl('div', '', '正文切片预览');
+          readTitle.style.cssText = 'font-size:13px;font-weight:bold;color:var(--accent2);';
+          var readMeta = mkEl('div', '', '载入中…');
+          readMeta.style.cssText = 'font-size:11px;color:#8a8ab0;';
+          readHeader.appendChild(readTitle);
+          readHeader.appendChild(readMeta);
+          rightPane.appendChild(readHeader);
+
+          var readContent = mkEl('div');
+          readContent.style.cssText = 'flex:1;overflow-y:auto;background:rgba(0,0,0,0.35);border:1px solid var(--border-color);border-radius:4px;padding:14px;font-size:13px;line-height:1.8;color:#d8d8ee;white-space:pre-wrap;word-break:break-word;';
+          readContent.textContent = '正在获取章节列表与阅读进度…';
+          rightPane.appendChild(readContent);
+
+          var readFoot = mkEl('div');
+          readFoot.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:8px;border-top:1px solid var(--border-color);flex-shrink:0;gap:8px;flex-wrap:wrap;';
+
+          var pageNav = mkEl('div');
+          pageNav.style.cssText = 'display:flex;gap:8px;align-items:center;';
+          var prevBtn = mkBtn('⬅ 上一页');
+          prevBtn.className = 'btn btn-outline btn-xs';
+          prevBtn.style.cssText = 'padding:3px 10px;font-size:11px;';
+          var nextBtn = mkBtn('下一页 ➡');
+          nextBtn.className = 'btn btn-outline btn-xs';
+          nextBtn.style.cssText = 'padding:3px 10px;font-size:11px;';
+          var curPageDisplay = mkEl('span', '', '第 1 页');
+          curPageDisplay.style.cssText = 'font-size:11px;color:#8a8ab0;font-weight:bold;';
+          pageNav.appendChild(prevBtn);
+          pageNav.appendChild(curPageDisplay);
+          pageNav.appendChild(nextBtn);
+
+          var syncBtn = mkBtn('📌 设为设备阅读进度');
+          syncBtn.className = 'btn btn-primary btn-xs';
+          syncBtn.style.cssText = 'padding:4px 12px;font-size:11px;font-weight:bold;';
+          syncBtn.title = '将当前正在看的页码同步到单片机，MCU 下次翻页将从此页继续';
+
+          readFoot.appendChild(pageNav);
+          readFoot.appendChild(syncBtn);
+          rightPane.appendChild(readFoot);
+          mBody.appendChild(rightPane);
+          modal.appendChild(mBody);
+          overlay.appendChild(modal);
+          document.body.appendChild(overlay);
+
+          overlay.onclick = function (e) {
+            if (e.target === overlay) overlay.remove();
+          };
+
+          var activePage = Number(book.current_page) || 1;
+          var totalPages = Number(book.total_pages) || 1;
+          var allChapters = [];
+
+          function renderChapterList(filterText) {
+            chapListBox.innerHTML = '';
+            var ft = (filterText || '').trim().toLowerCase();
+            var filtered = allChapters.filter(function (c) {
+              if (!ft) return true;
+              return String(c.n).indexOf(ft) >= 0 || c.title.toLowerCase().indexOf(ft) >= 0 || String(c.page).indexOf(ft) >= 0;
+            });
+
+            if (filtered.length === 0) {
+              var emptyEl = mkEl('div', '', '无匹配章节');
+              emptyEl.style.cssText = 'padding:12px;text-align:center;color:#666;font-size:11px;';
+              chapListBox.appendChild(emptyEl);
+              return;
+            }
+
+            filtered.forEach(function (c) {
+              var row = mkEl('div');
+              var isReading = (activePage >= c.page && activePage <= c.page_end);
+              row.style.cssText = 'padding:6px 10px;border-radius:4px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:6px;transition:all 0.15s;font-size:11px;' +
+                (isReading ? 'background:rgba(74,240,255,0.18);border:1px solid rgba(74,240,255,0.4);' : 'background:rgba(255,255,255,0.03);border:1px solid transparent;');
+
+              var lPart = mkEl('div');
+              lPart.style.cssText = 'display:flex;align-items:center;gap:6px;min-width:0;';
+              var cNum = mkEl('b', '', c.title);
+              cNum.style.cssText = 'color:' + (isReading ? 'var(--accent2)' : '#fff') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+              lPart.appendChild(cNum);
+
+              if (isReading) {
+                var flag = mkEl('span', '', '📍');
+                flag.style.fontSize = '10px';
+                lPart.appendChild(flag);
+              }
+
+              var rPart = mkEl('div');
+              rPart.style.cssText = 'font-size:10px;color:#8a8ab0;flex-shrink:0;';
+              rPart.textContent = '第 ' + c.page + (c.page_end > c.page ? ' ~ ' + c.page_end : '') + ' 页';
+
+              row.appendChild(lPart);
+              row.appendChild(rPart);
+
+              row.onmouseenter = function () {
+                if (!isReading) row.style.background = 'rgba(255,255,255,0.08)';
+              };
+              row.onmouseleave = function () {
+                if (!isReading) row.style.background = 'rgba(255,255,255,0.03)';
+              };
+
+              row.onclick = function () {
+                loadPageText(c.page);
+              };
+
+              chapListBox.appendChild(row);
+            });
+          }
+
+          async function loadPageText(pg) {
+            pg = Math.max(1, pg);
+            activePage = pg;
+            curPageDisplay.textContent = '第 ' + pg + ' 页';
+            readMeta.textContent = '正在加载第 ' + pg + ' 页切片…';
+            readContent.style.opacity = '0.5';
+
+            try {
+              var r = await fetch('api/user_key.php?action=shelf_read&book_id=' + encodeURIComponent(book.book_id) + '&page=' + pg);
+              var res = await r.json();
+              if (res.success && res.text) {
+                readContent.textContent = res.text;
+                totalPages = res.pages || totalPages;
+                readTitle.textContent = res.chapter_title || ('第 ' + (res.chapter || 1) + ' 章');
+                readMeta.textContent = '第 ' + res.page + ' / ' + totalPages + ' 页 (单片机切片)';
+                curPageDisplay.textContent = '第 ' + res.page + ' / ' + totalPages + ' 页';
+                prevBtn.disabled = (res.page <= 1);
+                nextBtn.disabled = (res.page >= totalPages);
+                renderChapterList(searchChapInput.value);
+              } else {
+                readContent.textContent = '加载失败: ' + (res.message || '未知错误');
+                readMeta.textContent = '加载失败';
+              }
+            } catch (e) {
+              readContent.textContent = '网络错误，无法获取正文';
+              readMeta.textContent = '网络异常';
+            } finally {
+              readContent.style.opacity = '1';
+            }
+          }
+
+          prevBtn.onclick = function () {
+            if (activePage > 1) loadPageText(activePage - 1);
+          };
+          nextBtn.onclick = function () {
+            if (activePage < totalPages) loadPageText(activePage + 1);
+          };
+
+          jumpBtn.onclick = function () {
+            var val = parseInt(jumpInput.value, 10);
+            if (!val || val < 1) {
+              showToast('请输入有效页码', 'error');
+              return;
+            }
+            loadPageText(val);
+          };
+
+          searchChapInput.oninput = function () {
+            renderChapterList(searchChapInput.value);
+          };
+
+          syncBtn.onclick = async function () {
+            syncBtn.disabled = true;
+            syncBtn.textContent = '正在同步…';
+            try {
+              var r = await fetch('api/user_key.php?action=shelf_set_page', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ book_id: book.book_id, page: activePage })
+              });
+              var res = await r.json();
+              if (res.success) {
+                showToast('已成功将《' + book.title + '》进度同步至第 ' + activePage + ' 页！设备下次翻页将从此页继续。');
+                book.current_page = activePage;
+                var nmCur = document.getElementById('nmCurPage');
+                if (nmCur) nmCur.textContent = activePage;
+                if (onUpdate && typeof onUpdate === 'function') {
+                  onUpdate(res.books, res.current);
+                }
+              } else {
+                showToast(res.message || '同步失败', 'error');
+              }
+            } catch (e) {
+              showToast('网络错误，同步失败', 'error');
+            } finally {
+              syncBtn.disabled = false;
+              syncBtn.textContent = '📌 设为设备阅读进度';
+            }
+          };
+
+          async function initData() {
+            try {
+              var r = await fetch('api/user_key.php?action=shelf_chapters&book_id=' + encodeURIComponent(book.book_id));
+              var res = await r.json();
+              if (res.success) {
+                allChapters = res.chapters || [];
+                totalPages = res.total_pages || totalPages;
+                var nmCh = document.getElementById('nmTotalChaps');
+                if (nmCh) nmCh.textContent = res.total_chapters;
+                var nmPg = document.getElementById('nmTotalPages');
+                if (nmPg) nmPg.textContent = res.total_pages;
+                renderChapterList();
+              }
+            } catch (e) {}
+
+            loadPageText(activePage);
+          }
+
+          initData();
+        }
+
         function renderShelfList(books, current) {
           shelfBadge.textContent = (books ? books.length : 0) + ' / 10 本';
           shelfListBox.innerHTML = '';
@@ -5180,7 +5459,22 @@
 
           books.forEach(function (b) {
             var card = mkEl('div');
-            card.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border-color);border-radius:4px;gap:8px;';
+            card.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border-color);border-radius:4px;gap:8px;cursor:pointer;transition:all 0.15s;';
+            card.title = '单击查看《' + b.title + '》章节与页码对照，在线跳转阅读与进度同步';
+            card.onmouseenter = function () {
+              card.style.borderColor = 'var(--accent2)';
+              card.style.background = 'rgba(74,240,255,0.08)';
+            };
+            card.onmouseleave = function () {
+              card.style.borderColor = 'var(--border-color)';
+              card.style.background = 'rgba(255,255,255,0.03)';
+            };
+            card.onclick = function (e) {
+              if (e.target.closest('button')) return;
+              openNovelChapterModal(b, function(newBooks, newCurrent) {
+                renderShelfList(newBooks, newCurrent);
+              });
+            };
 
             var info = mkEl('div');
             info.style.cssText = 'flex:1;min-width:0;';
@@ -5203,11 +5497,24 @@
             var actRow = mkEl('div');
             actRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
 
+            var readBtn = mkBtn('📖 章节/页码');
+            readBtn.className = 'btn btn-outline btn-xs';
+            readBtn.style.cssText = 'font-size:11px;padding:3px 8px;color:var(--accent2);border-color:rgba(74,240,255,0.4);';
+            readBtn.title = '单击查看章节与页码对照表，支持在线跳转看';
+            readBtn.onclick = function (e) {
+              e.stopPropagation();
+              openNovelChapterModal(b, function(newBooks, newCurrent) {
+                renderShelfList(newBooks, newCurrent);
+              });
+            };
+            actRow.appendChild(readBtn);
+
             var delBtn = mkBtn('🗑️');
             delBtn.className = 'btn btn-outline btn-xs';
             delBtn.title = '从书架移出';
             delBtn.style.cssText = 'font-size:11px;padding:3px 8px;color:var(--danger);border-color:var(--danger);';
-            delBtn.addEventListener('click', async function () {
+            delBtn.addEventListener('click', async function (e) {
+              e.stopPropagation();
               if (!confirm('【警告】确定将《' + b.title + '》从 MCU 书架移出吗？\n\n移出后，该书的阅读进度也将被永久清除，且设备端将无法继续同步！')) return;
               delBtn.disabled = true;
               try {

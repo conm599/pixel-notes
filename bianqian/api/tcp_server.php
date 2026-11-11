@@ -1276,9 +1276,16 @@ function forwardFanqieTcp($sock, $upstreamCmd, $onResponse = null) {
             $rawText = (string)$jData['text'];
             if (strlen($rawText) > 850) {
                 $jData['text'] = mb_strcut($rawText, 0, 850, 'UTF-8');
-                $resp = json_encode($jData, JSON_UNESCAPED_UNICODE) . "
-";
             }
+            if (!isset($jData['chapter'])) {
+                if (preg_match('/第([0-9]+)章/u', $rawText, $tm)) {
+                    $jData['chapter'] = (int)$tm[1];
+                } elseif (isset($jData['page'])) {
+                    $p = (int)$jData['page'];
+                    $jData['chapter'] = max(1, (int)round(($p - 1) / 7.2) + 1);
+                }
+            }
+            $resp = json_encode($jData, JSON_UNESCAPED_UNICODE) . "\n";
         }
 
         if ($onResponse && is_callable($onResponse)) {

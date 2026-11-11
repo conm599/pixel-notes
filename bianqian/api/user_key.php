@@ -12,6 +12,15 @@ header('Cache-Control: no-store');
 
 startSecureSession();
 if (!isset($_SESSION['user_id'])) {
+    $apiKey = isset($_REQUEST['key']) ? trim($_REQUEST['key']) : (isset($_SERVER['HTTP_X_API_KEY']) ? trim($_SERVER['HTTP_X_API_KEY']) : '');
+    if ($apiKey !== '' && function_exists('getDeskKeyOwner')) {
+        $keyOwner = getDeskKeyOwner($apiKey);
+        if ($keyOwner && !empty($keyOwner['user_id'])) {
+            $_SESSION['user_id'] = (int)$keyOwner['user_id'];
+        }
+    }
+}
+if (!isset($_SESSION['user_id'])) {
     http_response_code(401);
     echo json_encode(array('success' => false, 'message' => '未登录'), JSON_UNESCAPED_UNICODE);
     exit;
@@ -450,6 +459,166 @@ switch ($action) {
         } else {
             http_response_code(400);
             echo json_encode(array('success' => false, 'message' => $res['error'] ?? '推送失败'), JSON_UNESCAPED_UNICODE);
+        }
+        break;
+
+    // 小说书架管理：获取章节与页码对照表
+    case 'shelf_chapters':
+        $bookId = isset($input['book_id']) ? trim((string)$input['book_id']) : (isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '');
+        if ($bookId === '') {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => '书籍ID不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $bookId) : null;
+        if (!$targetBook) {
+            http_response_code(404);
+            echo json_encode(array('success' => false, 'message' => '未在您的书架中找到该小说'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $totalChaps = max(1, (int)$targetBook['total_chapters']);
+        $totalPages = max(1, (int)$targetBook['total_pages']);
+        $currentPage = max(1, (int)$targetBook['current_page']);
+
+        if ($totalPages <= 1 && $totalChaps > 1) {
+            $totalPages = max(1, (int)round($totalChaps * 7.2));
+        }
+
+        $pagesPerChap = (float)$totalPages / (float)$totalChaps;
+
+        $chapterList = array();
+        for ($i = 1; $i <= $totalChaps; $i++) {
+            $startPage = max(1, (int)round(($i - 1) * $pagesPerChap) + 1);
+            $endPage = ($i === $totalChaps) ? $totalPages : max($startPage, (int)round($i * $pagesPerChap));
+            $isCur = ($currentPage >= $startPage && $currentPage <= $endPage);
+
+            $chapterList[] = array(
+                'n'        => $i,
+                'title'    => '第' . $i . '章',
+                'page'     => $startPage,
+                'page_end' => $endPage,
+                'is_cur'   => $isCur
+            );
+        }
+
+        echo json_encode(array(
+            'success'        => true,
+            'book_id'        => $targetBook['book_id'],
+            'title'          => $targetBook['title'],
+            'author'         => $targetBook['author'],
+            'total_chapters' => $totalChaps,
+            'total_pages'    => $totalPages,
+            'current_page'   => $currentPage,
+            'chapters'       => $chapterList
+        ), JSON_UNESCAPED_UNICODE);
+        break;
+
+    // 小说书架管理：在线读取正文切片（用于跳转看与预览）
+    case 'shelf_read':
+        $bookId = isset($input['book_id']) ? trim((string)$input['book_id']) : (isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '');
+        $page = isset($input['page']) ? max(1, (int)$input['page']) : (isset($_REQUEST['page']) ? max(1, (int)$_REQUEST['page']) : 1);
+        if ($bookId === '') {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => '书籍ID不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $bookId) : null;
+        if (!$targetBook) {
+            http_response_code(404);
+            echo json_encode(array('success' => false, 'message' => '书架中未找到该书'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+        $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
+
+        $parsed = parse_url($fqHost);
+        $host = isset($parsed['host']) ? $parsed['host'] : '111.170.163.248';
+        $port = isset($parsed['port']) ? (int)$parsed['port'] : 53223;
+
+        $fp = @fsockopen($host, $port, $errno, $errstr, 4);
+        if (!$fp) {
+            http_response_code(503);
+            echo json_encode(array('success' => false, 'message' => '番茄小说服务暂不可用'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        stream_set_timeout($fp, 10);
+        $cmd = "NOVEL {$fqKey} {$page} {$bookId}\n";
+        @fwrite($fp, $cmd);
+        $resp = '';
+        while (!feof($fp)) {
+            $chunk = @fgets($fp, 8192);
+            if ($chunk === false) break;
+            $resp .= $chunk;
+            if (strpos($resp, "\n") !== false) break;
+        }
+        @fclose($fp);
+
+        $j = @json_decode(trim($resp), true);
+        if (!$j || empty($j['text'])) {
+            $errMsg = ($j && !empty($j['error'])) ? $j['error'] : '获取正文切片失败';
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => $errMsg), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $totalChaps = max(1, (int)$targetBook['total_chapters']);
+        $totalPages = max((int)$targetBook['total_pages'], !empty($j['pages']) ? (int)$j['pages'] : 1);
+        $calcChapter = max(1, min($totalChaps, (int)floor(($page - 1) / max(0.1, ($totalPages / $totalChaps))) + 1));
+
+        $matchedTitle = '';
+        if (preg_match('/第([0-9]+|[一二三四五六七八九十百]+)章\s*([^\n\r\t]{0,20})/u', $j['text'], $tm)) {
+            $cNumRaw = $tm[1];
+            if (ctype_digit($cNumRaw)) {
+                $calcChapter = (int)$cNumRaw;
+            }
+            $matchedTitle = trim($tm[0]);
+        }
+
+        echo json_encode(array(
+            'success'       => true,
+            'book_id'       => $bookId,
+            'title'         => $targetBook['title'],
+            'page'          => (int)$page,
+            'pages'         => (int)$totalPages,
+            'chapter'       => $calcChapter,
+            'chapter_title' => $matchedTitle ?: ('第' . $calcChapter . '章'),
+            'text'          => (string)$j['text']
+        ), JSON_UNESCAPED_UNICODE);
+        break;
+
+    // 小说书架管理：跳转并同步阅读进度至 MCU 设备
+    case 'shelf_set_page':
+        $bookId = isset($input['book_id']) ? trim((string)$input['book_id']) : (isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '');
+        $page = isset($input['page']) ? max(1, (int)$input['page']) : (isset($_REQUEST['page']) ? max(1, (int)$_REQUEST['page']) : 1);
+        if ($bookId === '') {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => '书籍ID不能为空'), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $res = function_exists('updateUserNovelProgress') ? updateUserNovelProgress($userId, $bookId, $page, time()) : array('ok' => false);
+        if (function_exists('setCurrentUserNovel')) {
+            setCurrentUserNovel($userId, $bookId);
+        }
+
+        if (!empty($res['ok'])) {
+            echo json_encode(array(
+                'success' => true,
+                'message' => '已成功将《' . ($res['title'] ?? '') . '》进度同步至第 ' . $res['page'] . ' 页！',
+                'page'    => (int)$res['page'],
+                'pages'   => (int)$res['pages'],
+                'pts'     => (int)$res['ts'],
+                'books'   => getUserNovels($userId),
+                'current' => getCurrentUserNovel($userId)
+            ), JSON_UNESCAPED_UNICODE);
+        } else {
+            http_response_code(400);
+            echo json_encode(array('success' => false, 'message' => $res['error'] ?? '进度保存失败'), JSON_UNESCAPED_UNICODE);
         }
         break;
 
