@@ -482,8 +482,23 @@ switch ($action) {
         $totalPages = max(1, (int)$targetBook['total_pages']);
         $currentPage = max(1, (int)$targetBook['current_page']);
 
-        if ($totalPages <= 1 && $totalChaps > 1) {
-            $totalPages = max(1, (int)round($totalChaps * 7.2));
+        $realTitles = function_exists('fetchFanqieChapterTitles') ? fetchFanqieChapterTitles($bookId) : array();
+        if (!empty($realTitles)) {
+            $realCount = count($realTitles);
+            if ($realCount > $totalChaps || $totalPages < $totalChaps || ($totalChaps <= 10 && $realCount > 10)) {
+                $totalChaps = $realCount;
+                $totalPages = max(1, (int)round($totalChaps * 7.32));
+                try {
+                    $pdo = getDB();
+                    $pdo->prepare("UPDATE `pn_user_novels` SET `total_chapters` = ?, `total_pages` = ? WHERE `id` = ?")->execute(array($totalChaps, $totalPages, (int)$targetBook['id']));
+                } catch (Throwable $e) {}
+            }
+        } elseif ($totalPages < $totalChaps) {
+            $totalPages = max(1, (int)round($totalChaps * 7.32));
+            try {
+                $pdo = getDB();
+                $pdo->prepare("UPDATE `pn_user_novels` SET `total_pages` = ? WHERE `id` = ?")->execute(array($totalPages, (int)$targetBook['id']));
+            } catch (Throwable $e) {}
         }
 
         $pagesPerChap = (float)$totalPages / (float)$totalChaps;
@@ -494,9 +509,11 @@ switch ($action) {
             $endPage = ($i === $totalChaps) ? $totalPages : max($startPage, (int)round($i * $pagesPerChap));
             $isCur = ($currentPage >= $startPage && $currentPage <= $endPage);
 
+            $chapTitle = isset($realTitles[$i]) && $realTitles[$i] !== '' ? $realTitles[$i] : ('第' . $i . '章');
+
             $chapterList[] = array(
                 'n'        => $i,
-                'title'    => '第' . $i . '章',
+                'title'    => $chapTitle,
                 'page'     => $startPage,
                 'page_end' => $endPage,
                 'is_cur'   => $isCur
@@ -515,9 +532,10 @@ switch ($action) {
         ), JSON_UNESCAPED_UNICODE);
         break;
 
-    // 小说书架管理：在线读取正文切片（用于跳转看与预览）
+    // 小说书架管理：在线读取正文切片（支持按章+按页精准读取，每一章结束下一页无缝为下章标题+正文）
     case 'shelf_read':
         $bookId = isset($input['book_id']) ? trim((string)$input['book_id']) : (isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '');
+        $chapter = isset($input['chapter']) ? max(0, (int)$input['chapter']) : (isset($_REQUEST['chapter']) ? max(0, (int)$_REQUEST['chapter']) : 0);
         $page = isset($input['page']) ? max(1, (int)$input['page']) : (isset($_REQUEST['page']) ? max(1, (int)$_REQUEST['page']) : 1);
         if ($bookId === '') {
             http_response_code(400);
@@ -530,6 +548,20 @@ switch ($action) {
             http_response_code(404);
             echo json_encode(array('success' => false, 'message' => '书架中未找到该书'), JSON_UNESCAPED_UNICODE);
             exit;
+        }
+
+        $totalChaps = max(1, (int)$targetBook['total_chapters']);
+        $totalPages = max((int)$targetBook['total_pages'], (int)round($totalChaps * 7.2));
+        $pagesPerChap = max(0.1, (float)$totalPages / (float)$totalChaps);
+
+
+
+        if ($chapter > 0) {
+            $calcChapter = max(1, min($totalChaps, $chapter));
+            $calcChapPage = $page;
+        } else {
+            $calcChapter = max(1, min($totalChaps, (int)floor(($page - 1) / $pagesPerChap) + 1));
+            $calcChapPage = max(1, (int)round($page - ($calcChapter - 1) * $pagesPerChap));
         }
 
         $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
@@ -546,15 +578,17 @@ switch ($action) {
             exit;
         }
 
-        stream_set_timeout($fp, 10);
-        $cmd = "NOVEL {$fqKey} {$page} {$bookId}\n";
+        stream_set_timeout($fp, 5);
+        $cmd = "CHAPTER {$fqKey} {$calcChapter} {$calcChapPage} {$bookId}
+";
         @fwrite($fp, $cmd);
         $resp = '';
         while (!feof($fp)) {
             $chunk = @fgets($fp, 8192);
             if ($chunk === false) break;
             $resp .= $chunk;
-            if (strpos($resp, "\n") !== false) break;
+            if (strpos($chunk, "
+") !== false || substr(rtrim($chunk), -1) === '}') break;
         }
         @fclose($fp);
 
@@ -566,28 +600,23 @@ switch ($action) {
             exit;
         }
 
-        $totalChaps = max(1, (int)$targetBook['total_chapters']);
-        $totalPages = max((int)$targetBook['total_pages'], !empty($j['pages']) ? (int)$j['pages'] : 1);
-        $calcChapter = max(1, min($totalChaps, (int)floor(($page - 1) / max(0.1, ($totalPages / $totalChaps))) + 1));
-
-        $matchedTitle = '';
-        if (preg_match('/第([0-9]+|[一二三四五六七八九十百]+)章\s*([^\n\r\t]{0,20})/u', $j['text'], $tm)) {
-            $cNumRaw = $tm[1];
-            if (ctype_digit($cNumRaw)) {
-                $calcChapter = (int)$cNumRaw;
-            }
-            $matchedTitle = trim($tm[0]);
-        }
+        $matchedTitle = !empty($j['title']) ? $j['title'] : ('第' . $calcChapter . '章');
+        $chapPage = isset($j['page']) ? (int)$j['page'] : $calcChapPage;
+        $chapPages = isset($j['pages']) ? (int)$j['pages'] : 1;
+        $globalPage = max(1, (int)round(($calcChapter - 1) * $pagesPerChap) + $chapPage);
 
         echo json_encode(array(
-            'success'       => true,
-            'book_id'       => $bookId,
-            'title'         => $targetBook['title'],
-            'page'          => (int)$page,
-            'pages'         => (int)$totalPages,
-            'chapter'       => $calcChapter,
-            'chapter_title' => $matchedTitle ?: ('第' . $calcChapter . '章'),
-            'text'          => (string)$j['text']
+            'success'        => true,
+            'book_id'        => $bookId,
+            'title'          => $targetBook['title'],
+            'chapter'        => $calcChapter,
+            'chapter_title'  => $matchedTitle,
+            'page'           => $chapPage,
+            'pages'          => $chapPages,
+            'total_chapters' => $totalChaps,
+            'global_page'    => $globalPage,
+            'total_pages'    => $totalPages,
+            'text'           => (string)$j['text']
         ), JSON_UNESCAPED_UNICODE);
         break;
 

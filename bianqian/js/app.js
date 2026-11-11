@@ -5220,12 +5220,12 @@
           mBody.style.cssText = 'flex:1;min-height:0;display:flex;overflow:hidden;';
 
           var leftPane = mkEl('div');
-          leftPane.style.cssText = 'width:290px;border-right:1px solid var(--border-color);display:flex;flex-direction:column;background:rgba(0,0,0,0.18);flex-shrink:0;';
+          leftPane.style.cssText = 'width:330px;border-right:1px solid var(--border-color);display:flex;flex-direction:column;background:rgba(0,0,0,0.18);flex-shrink:0;';
 
           var searchChapBox = mkEl('div');
           searchChapBox.style.cssText = 'padding:8px 10px;border-bottom:1px solid var(--border-color);';
           var searchChapInput = mkEl('input', 'form-input');
-          searchChapInput.placeholder = '🔍 搜索章号 (如 5 或 第5章)';
+          searchChapInput.placeholder = '🔍 搜章节名或章号 (如 草神 / 2)';
           searchChapInput.style.cssText = 'width:100%;font-size:11px;padding:4px 8px;';
           searchChapBox.appendChild(searchChapInput);
           leftPane.appendChild(searchChapBox);
@@ -5285,10 +5285,12 @@
 
           overlay.onclick = function (e) {
             if (e.target === overlay) overlay.remove();
-          };
-
-          var activePage = Number(book.current_page) || 1;
+          };          var activePage = Number(book.current_page) || 1;
           var totalPages = Number(book.total_pages) || 1;
+          var totalChapters = Number(book.total_chapters) || 1;
+          var activeChapter = 1;
+          var activeChapPage = 1;
+          var chapTotalPages = 1;
           var allChapters = [];
 
           function renderChapterList(filterText) {
@@ -5296,7 +5298,7 @@
             var ft = (filterText || '').trim().toLowerCase();
             var filtered = allChapters.filter(function (c) {
               if (!ft) return true;
-              return String(c.n).indexOf(ft) >= 0 || c.title.toLowerCase().indexOf(ft) >= 0 || String(c.page).indexOf(ft) >= 0;
+              return String(c.n).indexOf(ft) >= 0 || (c.title && c.title.toLowerCase().indexOf(ft) >= 0) || String(c.page).indexOf(ft) >= 0;
             });
 
             if (filtered.length === 0) {
@@ -5308,14 +5310,16 @@
 
             filtered.forEach(function (c) {
               var row = mkEl('div');
-              var isReading = (activePage >= c.page && activePage <= c.page_end);
+              var isReading = (c.n === activeChapter);
               row.style.cssText = 'padding:6px 10px;border-radius:4px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:6px;transition:all 0.15s;font-size:11px;' +
                 (isReading ? 'background:rgba(74,240,255,0.18);border:1px solid rgba(74,240,255,0.4);' : 'background:rgba(255,255,255,0.03);border:1px solid transparent;');
+              if (isReading) row.className = 'is-reading';
 
               var lPart = mkEl('div');
               lPart.style.cssText = 'display:flex;align-items:center;gap:6px;min-width:0;';
               var cNum = mkEl('b', '', c.title);
-              cNum.style.cssText = 'color:' + (isReading ? 'var(--accent2)' : '#fff') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+              cNum.title = c.title;
+              cNum.style.cssText = 'color:' + (isReading ? 'var(--accent2)' : '#fff') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:205px;font-size:11px;';
               lPart.appendChild(cNum);
 
               if (isReading) {
@@ -5338,33 +5342,51 @@
                 if (!isReading) row.style.background = 'rgba(255,255,255,0.03)';
               };
 
+              // 单击章节目录：直接跳转到该章第一页（章名+正文开始）
               row.onclick = function () {
-                loadPageText(c.page);
+                loadChapterPage(c.n, 1);
               };
 
               chapListBox.appendChild(row);
             });
           }
 
-          async function loadPageText(pg) {
+          async function loadChapterPage(chap, pg) {
+            chap = Math.max(1, Math.min(totalChapters || 9999, chap));
             pg = Math.max(1, pg);
-            activePage = pg;
-            curPageDisplay.textContent = '第 ' + pg + ' 页';
-            readMeta.textContent = '正在加载第 ' + pg + ' 页切片…';
+            activeChapter = chap;
+            activeChapPage = pg;
+
+            curPageDisplay.textContent = '第 ' + chap + ' 章 · 第 ' + pg + ' 页';
+            readMeta.textContent = '正在加载第 ' + chap + ' 章第 ' + pg + ' 页切片…';
             readContent.style.opacity = '0.5';
 
             try {
-              var r = await fetch('api/user_key.php?action=shelf_read&book_id=' + encodeURIComponent(book.book_id) + '&page=' + pg);
+              var r = await fetch('api/user_key.php?action=shelf_read&book_id=' + encodeURIComponent(book.book_id) + '&chapter=' + chap + '&page=' + pg);
               var res = await r.json();
               if (res.success && res.text) {
                 readContent.textContent = res.text;
-                totalPages = res.pages || totalPages;
-                readTitle.textContent = res.chapter_title || ('第 ' + (res.chapter || 1) + ' 章');
-                readMeta.textContent = '第 ' + res.page + ' / ' + totalPages + ' 页 (单片机切片)';
-                curPageDisplay.textContent = '第 ' + res.page + ' / ' + totalPages + ' 页';
-                prevBtn.disabled = (res.page <= 1);
-                nextBtn.disabled = (res.page >= totalPages);
+                activeChapter = res.chapter || chap;
+                activeChapPage = res.page || pg;
+                chapTotalPages = res.pages || 1;
+                if (res.total_pages && res.total_pages > totalPages) {
+                  totalPages = res.total_pages;
+                }
+                if (res.total_chapters && res.total_chapters > totalChapters) {
+                  totalChapters = res.total_chapters;
+                }
+                activePage = res.global_page || activePage;
+
+                readTitle.textContent = res.chapter_title || ('第 ' + activeChapter + ' 章');
+                readMeta.textContent = '第 ' + activeChapter + ' 章 · 第 ' + activeChapPage + ' / ' + chapTotalPages + ' 页 (全书估算第 ' + activePage + ' / ' + totalPages + ' 页)';
+                curPageDisplay.textContent = '第 ' + activeChapter + ' 章 · ' + activeChapPage + ' / ' + chapTotalPages + ' 页';
+
+                prevBtn.disabled = (activeChapter <= 1 && activeChapPage <= 1);
+                nextBtn.disabled = (activeChapter >= totalChapters && activeChapPage >= chapTotalPages);
+
                 renderChapterList(searchChapInput.value);
+                var curEl = chapListBox.querySelector('.is-reading');
+                if (curEl) curEl.scrollIntoView({ block: 'nearest' });
               } else {
                 readContent.textContent = '加载失败: ' + (res.message || '未知错误');
                 readMeta.textContent = '加载失败';
@@ -5378,19 +5400,43 @@
           }
 
           prevBtn.onclick = function () {
-            if (activePage > 1) loadPageText(activePage - 1);
+            if (activeChapPage > 1) {
+              loadChapterPage(activeChapter, activeChapPage - 1);
+            } else if (activeChapter > 1) {
+              // 跨章往前翻：翻到上一章最后一页（999 让后端 clamp 到该章最后一页）
+              loadChapterPage(activeChapter - 1, 999);
+            }
           };
+
           nextBtn.onclick = function () {
-            if (activePage < totalPages) loadPageText(activePage + 1);
+            if (activeChapPage < chapTotalPages) {
+              loadChapterPage(activeChapter, activeChapPage + 1);
+            } else if (activeChapter < totalChapters) {
+              // 关键需求：每一章结束之后，下一页就是下一个章节的名字 + 正文！
+              loadChapterPage(activeChapter + 1, 1);
+            }
           };
 
           jumpBtn.onclick = function () {
-            var val = parseInt(jumpInput.value, 10);
-            if (!val || val < 1) {
-              showToast('请输入有效页码', 'error');
+            var raw = (jumpInput.value || '').trim();
+            if (!raw) {
+              showToast('请输入章号或页码', 'error');
               return;
             }
-            loadPageText(val);
+            var mChap = raw.match(/^(?:第)?(\d+)(?:章)?$/);
+            if (mChap) {
+              var num = parseInt(mChap[1], 10);
+              if (num <= totalChapters) {
+                loadChapterPage(num, 1);
+                return;
+              }
+              var ppc = Math.max(0.1, totalPages / Math.max(1, totalChapters));
+              var c = Math.max(1, Math.min(totalChapters, Math.floor((num - 1) / ppc) + 1));
+              var cp = Math.max(1, Math.round(num - (c - 1) * ppc));
+              loadChapterPage(c, cp);
+              return;
+            }
+            showToast('请输入有效章号或页码', 'error');
           };
 
           searchChapInput.oninput = function () {
@@ -5401,17 +5447,19 @@
             syncBtn.disabled = true;
             syncBtn.textContent = '正在同步…';
             try {
+              var ppc = Math.max(0.1, totalPages / Math.max(1, totalChapters));
+              var curGlobal = Math.max(1, Math.round((activeChapter - 1) * ppc + activeChapPage));
               var r = await fetch('api/user_key.php?action=shelf_set_page', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ book_id: book.book_id, page: activePage })
+                body: JSON.stringify({ book_id: book.book_id, page: curGlobal })
               });
               var res = await r.json();
               if (res.success) {
-                showToast('已成功将《' + book.title + '》进度同步至第 ' + activePage + ' 页！设备下次翻页将从此页继续。');
-                book.current_page = activePage;
+                showToast('已成功将《' + book.title + '》进度同步至第 ' + curGlobal + ' 页（第 ' + activeChapter + ' 章）！设备下次翻页将从此处继续。');
+                book.current_page = curGlobal;
                 var nmCur = document.getElementById('nmCurPage');
-                if (nmCur) nmCur.textContent = activePage;
+                if (nmCur) nmCur.textContent = curGlobal;
                 if (onUpdate && typeof onUpdate === 'function') {
                   onUpdate(res.books, res.current);
                 }
@@ -5433,15 +5481,20 @@
               if (res.success) {
                 allChapters = res.chapters || [];
                 totalPages = res.total_pages || totalPages;
+                totalChapters = res.total_chapters || allChapters.length || totalChapters;
                 var nmCh = document.getElementById('nmTotalChaps');
-                if (nmCh) nmCh.textContent = res.total_chapters;
+                if (nmCh) nmCh.textContent = totalChapters;
                 var nmPg = document.getElementById('nmTotalPages');
-                if (nmPg) nmPg.textContent = res.total_pages;
+                if (nmPg) nmPg.textContent = totalPages;
                 renderChapterList();
               }
             } catch (e) {}
 
-            loadPageText(activePage);
+            var ppc = Math.max(0.1, totalPages / Math.max(1, totalChapters));
+            var curP = Math.max(1, parseInt(book.current_page || 1, 10));
+            var initialChap = Math.max(1, Math.min(totalChapters, Math.floor((curP - 1) / ppc) + 1));
+            var initialChapPage = Math.max(1, Math.round(curP - (initialChap - 1) * ppc));
+            loadChapterPage(initialChap, initialChapPage);
           }
 
           initData();

@@ -351,6 +351,7 @@ function handleTcpRequest($sock, $raw) {
             }
 
             // 3. 取页正文（NOVEL）：支持 NOVEL <KEY> <PAGE> [序号1-10 或 BOOK_ID]
+            // 中转层统一路由至 CHAPTER 按章精准切片，确保每一章独立分页，下一页必定为下章标题+正文，杜绝跨章粘连！
             if ($action === 'NOVEL') {
                 $reqPage = 1;
                 $reqBookArg = '';
@@ -380,27 +381,38 @@ function handleTcpRequest($sock, $raw) {
                 }
 
                 $realBookId = $targetBook['book_id'];
+                $totalChaps = max(1, (int)$targetBook['total_chapters']);
+                $totalPages = max((int)$targetBook['total_pages'], (int)round($totalChaps * 7.2));
+                $pagesPerChap = max(0.1, (float)$totalPages / (float)$totalChaps);
 
-                // 记录阅读进度并转发，上游返回时回写真实全书页数
-                if (function_exists('updateUserNovelPage')) {
-                    updateUserNovelPage($userId, $realBookId, $reqPage);
-                }
+                $calcChap = max(1, min($totalChaps, (int)floor(($reqPage - 1) / $pagesPerChap) + 1));
+                $calcChapPage = max(1, (int)round($reqPage - ($calcChap - 1) * $pagesPerChap));
 
-                $upstreamCmd = "NOVEL {$fqKey} {$reqPage} {$realBookId}";
-                forwardFanqieTcp($sock, $upstreamCmd, function($resp) use ($userId, $realBookId, $reqPage) {
+                $upstreamCmd = "CHAPTER {$fqKey} {$calcChap} {$calcChapPage} {$realBookId}";
+                forwardFanqieTcp($sock, $upstreamCmd, function($resp) use ($userId, $realBookId, $reqPage, $targetBook, $calcChap, $calcChapPage, $totalPages) {
                     $j = @json_decode($resp, true);
-                    $pages = ($j && !empty($j['pages'])) ? (int)$j['pages'] : null;
-                    if (function_exists('updateUserNovelPage')) {
-                        updateUserNovelPage($userId, $realBookId, $reqPage, $pages);
+                    if ($j && isset($j['text'])) {
+                        $enriched = array(
+                            'title'         => $targetBook['title'],
+                            'chapter_title' => isset($j['title']) ? $j['title'] : ('第' . $calcChap . '章'),
+                            'chapter'       => $calcChap,
+                            'page'          => $reqPage,
+                            'pages'         => $totalPages,
+                            'chap_page'     => isset($j['page']) ? (int)$j['page'] : $calcChapPage,
+                            'chap_pages'    => isset($j['pages']) ? (int)$j['pages'] : 1,
+                            'text'          => (string)$j['text']
+                        );
+                        if (function_exists('updateUserNovelPage')) {
+                            updateUserNovelPage($userId, $realBookId, $reqPage, $totalPages);
+                        }
+                        return json_encode($enriched, JSON_UNESCAPED_UNICODE) . "\n";
                     }
+                    return $resp;
                 });
                 return;
             }
 
             // 4. 按章取页（CHAPTER）：支持 CHAPTER <KEY> <N> [PAGE] [序号1-10 或 BOOK_ID]
-            // 注意：上游服务源码中 CHAPTER 指令强制要求 4 个参数：CHAPTER <KEY> <N> <PAGE> <BOOK_ID>，
-            // 且漏掉了 fallback 到 PICK 当前书的逻辑，若缺少 BOOK_ID 会直接报错 NO_BOOK。
-            // 因此中转层自动解析用户书架，缺省时自动补齐 PAGE 与真实 BOOK_ID，彻底修复该问题！
             if ($action === 'CHAPTER') {
                 $reqChapter = 1;
                 $reqPage = 1;
@@ -411,7 +423,6 @@ function handleTcpRequest($sock, $raw) {
                     $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
                 } else {
                     $tokens = preg_split('/\s+/', trim($raw));
-                    // tokens: [0]=>CHAPTER, [1]=>KEY, [2]=>N, [3]=>PAGE or BOOK, [4]=>BOOK
                     $reqChapter = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
                     $tok3 = isset($tokens[3]) ? trim($tokens[3]) : '';
                     $tok4 = isset($tokens[4]) ? trim($tokens[4]) : '';
@@ -442,8 +453,34 @@ function handleTcpRequest($sock, $raw) {
                 }
 
                 $realBookId = $targetBook['book_id'];
+                $totalChaps = max(1, (int)$targetBook['total_chapters']);
+                $totalPages = max((int)$targetBook['total_pages'], (int)round($totalChaps * 7.2));
+                $pagesPerChap = max(0.1, (float)$totalPages / (float)$totalChaps);
+                $reqChapter = max(1, min($totalChaps, $reqChapter));
+
                 $upstreamCmd = "CHAPTER {$fqKey} {$reqChapter} {$reqPage} {$realBookId}";
-                forwardFanqieTcp($sock, $upstreamCmd);
+                forwardFanqieTcp($sock, $upstreamCmd, function($resp) use ($userId, $realBookId, $reqChapter, $reqPage, $targetBook, $totalPages, $pagesPerChap) {
+                    $j = @json_decode($resp, true);
+                    if ($j && isset($j['text'])) {
+                        $pInChap = isset($j['page']) ? (int)$j['page'] : $reqPage;
+                        $globalPage = max(1, (int)round(($reqChapter - 1) * $pagesPerChap) + $pInChap);
+                        $enriched = array(
+                            'title'         => $targetBook['title'],
+                            'chapter_title' => isset($j['title']) ? $j['title'] : ('第' . $reqChapter . '章'),
+                            'chapter'       => $reqChapter,
+                            'page'          => $globalPage,
+                            'pages'         => $totalPages,
+                            'chap_page'     => $pInChap,
+                            'chap_pages'    => isset($j['pages']) ? (int)$j['pages'] : 1,
+                            'text'          => (string)$j['text']
+                        );
+                        if (function_exists('updateUserNovelPage')) {
+                            updateUserNovelPage($userId, $realBookId, $globalPage, $totalPages);
+                        }
+                        return json_encode($enriched, JSON_UNESCAPED_UNICODE) . "\n";
+                    }
+                    return $resp;
+                });
                 return;
             }
 
@@ -1290,7 +1327,10 @@ function forwardFanqieTcp($sock, $upstreamCmd, $onResponse = null) {
 
         if ($onResponse && is_callable($onResponse)) {
             try {
-                call_user_func($onResponse, $resp);
+                $mod = call_user_func($onResponse, $resp);
+                if (is_string($mod) && $mod !== '') {
+                    $resp = $mod;
+                }
             } catch (Throwable $e) {}
         }
         if (substr($resp, -1) !== "\n") {

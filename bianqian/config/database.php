@@ -856,17 +856,17 @@ function getUserNovels($userId) {
         $idx = 1;
         foreach ($rows as &$r) {
             $r['i'] = $idx++; // 序号 1~10，方便单片机直接用数字选书
-            if ((int)$r['total_pages'] <= 0) {
+            $needFix = ((int)$r['total_pages'] <= 0 || ((int)$r['total_chapters'] > 1 && (int)$r['total_pages'] < (int)$r['total_chapters']));
+            if ($needFix) {
                 $p = fetchNovelTotalPages($r['book_id']);
-                if ($p > 0) {
-                    $r['total_pages'] = $p;
-                    try {
-                        $upP = $pdo->prepare("UPDATE `pn_user_novels` SET `total_pages` = ? WHERE `id` = ?");
-                        $upP->execute(array($p, (int)$r['id']));
-                    } catch (Throwable $e) {}
-                } elseif ((int)$r['total_chapters'] > 0) {
-                    $r['total_pages'] = max(1, (int)round((int)$r['total_chapters'] * 7.2));
+                if ($p <= 0 || ($r['total_chapters'] > 0 && $p < $r['total_chapters'])) {
+                    $p = max(1, (int)round((int)$r['total_chapters'] * 7.2));
                 }
+                $r['total_pages'] = $p;
+                try {
+                    $upP = $pdo->prepare("UPDATE `pn_user_novels` SET `total_pages` = ? WHERE `id` = ?");
+                    $upP->execute(array($p, (int)$r['id']));
+                } catch (Throwable $e) {}
             }
             $pts = !empty($r['updated_at']) ? strtotime($r['updated_at']) : (!empty($r['created_at']) ? strtotime($r['created_at']) : time());
             $r['pts'] = (int)$pts;
@@ -1136,12 +1136,83 @@ function updateUserNovelProgress($userId, $bookArg, $page, $at = null) {
 function updateUserNovelPage($userId, $bookId, $page, $totalPages = null) {
     try {
         $pdo = getDB();
+        $targetPage = max(1, (int)$page);
         if ($totalPages !== null && (int)$totalPages > 0) {
+            $chk = $pdo->prepare("SELECT total_chapters, total_pages FROM `pn_user_novels` WHERE `user_id` = ? AND `book_id` = ? LIMIT 1");
+            $chk->execute(array((int)$userId, trim((string)$bookId)));
+            $curRow = $chk->fetch();
+            $curChaps = $curRow ? (int)$curRow['total_chapters'] : 0;
+            $curPages = $curRow ? (int)$curRow['total_pages'] : 0;
+
+            // 严禁异常小的切片页数（如 74 < 144）覆盖真实全书总页数！
+            if ($curChaps > 1 && (int)$totalPages < $curChaps) {
+                $totalPages = ($curPages >= $curChaps) ? $curPages : max(1, (int)round($curChaps * 7.2));
+            }
+
             $st = $pdo->prepare("UPDATE `pn_user_novels` SET `current_page` = ?, `total_pages` = ?, `updated_at` = NOW() WHERE `user_id` = ? AND `book_id` = ?");
-            $st->execute(array(max(1, (int)$page), (int)$totalPages, (int)$userId, trim((string)$bookId)));
+            $st->execute(array($targetPage, (int)$totalPages, (int)$userId, trim((string)$bookId)));
         } else {
             $st = $pdo->prepare("UPDATE `pn_user_novels` SET `current_page` = ?, `updated_at` = NOW() WHERE `user_id` = ? AND `book_id` = ?");
-            $st->execute(array(max(1, (int)$page), (int)$userId, trim((string)$bookId)));
+            $st->execute(array($targetPage, (int)$userId, trim((string)$bookId)));
         }
     } catch (Throwable $e) {}
+}
+
+/**
+ * 获取番茄小说的真实章节目录与标题列表
+ * 优先调用番茄官方公开接口，附带本地文件缓存，网络失败时回退
+ * @param string $bookId
+ * @return array array( 1 => '第1章 纳西妲？', 2 => '第2章 草神', ... )
+ */
+function fetchFanqieChapterTitles($bookId) {
+    $bookId = trim((string)$bookId);
+    if ($bookId === '') return array();
+
+    $cacheDir = dirname(__DIR__) . '/tmp';
+    if (!is_dir($cacheDir)) {
+        @mkdir($cacheDir, 0777, true);
+    }
+    $cacheFile = $cacheDir . '/chaps_' . preg_replace('/[^a-zA-Z0-9_-]/', '', $bookId) . '.json';
+    if (is_file($cacheFile) && (time() - filemtime($cacheFile) < 43200)) {
+        $c = @file_get_contents($cacheFile);
+        $cached = @json_decode($c, true);
+        if (is_array($cached) && !empty($cached)) {
+            return $cached;
+        }
+    }
+
+    $titles = array();
+    $url = 'https://fanqienovel.com/api/reader/directory/detail?bookId=' . urlencode($bookId);
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 4);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+    $resp = @curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    @curl_close($ch);
+
+    if ($httpCode === 200 && $resp) {
+        $j = @json_decode($resp, true);
+        if ($j && isset($j['data']['chapterListWithVolume']) && is_array($j['data']['chapterListWithVolume'])) {
+            $idx = 1;
+            foreach ($j['data']['chapterListWithVolume'] as $vol) {
+                if (is_array($vol)) {
+                    foreach ($vol as $chap) {
+                        if (isset($chap['title'])) {
+                            $titles[$idx++] = trim((string)$chap['title']);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!empty($titles)) {
+        @file_put_contents($cacheFile, json_encode($titles, JSON_UNESCAPED_UNICODE));
+    }
+
+    return $titles;
 }
