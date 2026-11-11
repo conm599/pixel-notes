@@ -5170,44 +5170,93 @@
 
 
         function openNovelChapterModal(book, onUpdate) {
+          var isFullscreen = true;
+
           var overlay = mkEl('div');
-          overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;padding:12px;backdrop-filter:blur(5px);';
+          overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,10,20,0.95);z-index:99999;display:flex;align-items:center;justify-content:center;padding:0;backdrop-filter:blur(6px);';
 
           var modal = mkEl('div');
-          modal.style.cssText = 'background:#131325;border:1px solid rgba(74,240,255,0.4);border-radius:8px;box-shadow:0 12px 36px rgba(0,0,0,0.7);width:100%;max-width:860px;height:88vh;display:flex;flex-direction:column;overflow:hidden;color:#fff;';
+          modal.style.cssText = 'background:#10101c;border:none;border-radius:0;box-shadow:none;width:100vw;height:100vh;display:flex;flex-direction:column;overflow:hidden;color:#fff;';
+
+          function updateModalLayout() {
+            if (isFullscreen) {
+              overlay.style.padding = '0';
+              modal.style.width = '100vw';
+              modal.style.height = '100vh';
+              modal.style.maxWidth = 'none';
+              modal.style.borderRadius = '0';
+              modal.style.border = 'none';
+              toggleSizeBtn.textContent = '🗗 窗口';
+              toggleSizeBtn.title = '切换为窗口模式';
+            } else {
+              overlay.style.padding = '16px';
+              modal.style.width = '100%';
+              modal.style.maxWidth = '1180px';
+              modal.style.height = '90vh';
+              modal.style.borderRadius = '8px';
+              modal.style.border = '1px solid rgba(74,240,255,0.4)';
+              toggleSizeBtn.textContent = '🗖 全屏';
+              toggleSizeBtn.title = '切换为全屏显示';
+            }
+          }
 
           var mHead = mkEl('div');
-          mHead.style.cssText = 'padding:12px 16px;border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.02);flex-shrink:0;';
-          var mTitle = mkEl('div', '', '📖 《' + book.title + '》 章节与页码对照 · 在线跳转阅读');
-          mTitle.style.cssText = 'font-size:14px;font-weight:bold;color:var(--accent2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-          var closeBtn = mkBtn('✕');
+          mHead.style.cssText = 'padding:10px 20px;border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.02);flex-shrink:0;';
+          var mTitle = mkEl('div', '', '📖 《' + book.title + '》 章节与页码对照 · 在线全屏阅读');
+          mTitle.style.cssText = 'font-size:15px;font-weight:bold;color:var(--accent2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+          var headBtns = mkEl('div');
+          headBtns.style.cssText = 'display:flex;align-items:center;gap:8px;flex-shrink:0;';
+
+          var toggleSizeBtn = mkBtn('🗗 窗口');
+          toggleSizeBtn.className = 'btn btn-outline btn-xs';
+          toggleSizeBtn.style.cssText = 'padding:3px 10px;font-size:11px;color:#aaa;border-color:var(--border-color);';
+          toggleSizeBtn.onclick = function () {
+            isFullscreen = !isFullscreen;
+            updateModalLayout();
+          };
+
+          var closeBtn = mkBtn('✕ 关闭');
           closeBtn.className = 'btn btn-outline btn-xs';
-          closeBtn.style.cssText = 'padding:2px 8px;font-size:12px;color:#aaa;border-color:var(--border-color);';
-          closeBtn.onclick = function () { overlay.remove(); };
+          closeBtn.style.cssText = 'padding:3px 10px;font-size:11px;color:#ff6b6b;border-color:rgba(255,107,107,0.4);';
+          closeBtn.onclick = function () {
+            cleanup();
+            overlay.remove();
+          };
+
+          headBtns.appendChild(toggleSizeBtn);
+          headBtns.appendChild(closeBtn);
           mHead.appendChild(mTitle);
-          mHead.appendChild(closeBtn);
+          mHead.appendChild(headBtns);
           modal.appendChild(mHead);
 
           var toolBar = mkEl('div');
-          toolBar.style.cssText = 'padding:8px 16px;background:rgba(0,0,0,0.3);border-bottom:1px solid var(--border-color);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11px;flex-shrink:0;';
+          toolBar.style.cssText = 'padding:10px 20px;background:rgba(0,0,0,0.3);border-bottom:1px solid var(--border-color);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;flex-shrink:0;';
 
           var infoSpan = mkEl('div');
-          infoSpan.style.cssText = 'color:#a0a0cf;display:flex;gap:12px;align-items:center;flex-wrap:wrap;';
+          infoSpan.style.cssText = 'color:#a0a0cf;display:flex;gap:16px;align-items:center;flex-wrap:wrap;';
           infoSpan.innerHTML = '<span>作者: <b>' + (book.author || '未知') + '</b></span>' +
             '<span>总章数: <b id="nmTotalChaps" style="color:var(--accent2);">' + (book.total_chapters || '...') + '</b> 章</span>' +
             '<span>总页数: <b id="nmTotalPages" style="color:var(--accent2);">' + (book.total_pages || '...') + '</b> 页</span>' +
-            '<span style="background:rgba(74,240,255,0.15);color:var(--accent2);padding:2px 8px;border-radius:3px;font-weight:bold;">设备当前: 第 <b id="nmCurPage">' + (book.current_page || 1) + '</b> 页</span>';
+            '<span style="background:rgba(74,240,255,0.15);color:var(--accent2);padding:2px 10px;border-radius:3px;font-weight:bold;">设备当前: 第 <b id="nmCurPage">' + (book.current_page || 1) + '</b> 页</span>';
 
           var jumpRow = mkEl('div');
-          jumpRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+          jumpRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
           var jumpInput = mkEl('input', 'form-input');
-          jumpInput.type = 'number';
-          jumpInput.min = '1';
-          jumpInput.placeholder = '输入页码';
-          jumpInput.style.cssText = 'width:75px;font-size:11px;padding:3px 6px;height:24px;';
+          jumpInput.type = 'text';
+          jumpInput.placeholder = '章号/页码';
+          jumpInput.title = '输入章号（如 6 或 第6章）或页码（如 33）后回车跳转';
+          jumpInput.style.cssText = 'width:90px;font-size:12px;padding:3px 8px;height:26px;';
           var jumpBtn = mkBtn('跳转看');
           jumpBtn.className = 'btn btn-primary btn-xs';
-          jumpBtn.style.cssText = 'padding:3px 10px;font-size:11px;';
+          jumpBtn.style.cssText = 'padding:4px 12px;font-size:12px;';
+
+          jumpInput.onkeydown = function (e) {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              jumpBtn.click();
+            }
+          };
 
           jumpRow.appendChild(mkEl('span', '', '跳页:'));
           jumpRow.appendChild(jumpInput);
@@ -5220,60 +5269,60 @@
           mBody.style.cssText = 'flex:1;min-height:0;display:flex;overflow:hidden;';
 
           var leftPane = mkEl('div');
-          leftPane.style.cssText = 'width:330px;border-right:1px solid var(--border-color);display:flex;flex-direction:column;background:rgba(0,0,0,0.18);flex-shrink:0;';
+          leftPane.style.cssText = 'width:340px;border-right:1px solid var(--border-color);display:flex;flex-direction:column;background:rgba(0,0,0,0.22);flex-shrink:0;';
 
           var searchChapBox = mkEl('div');
-          searchChapBox.style.cssText = 'padding:8px 10px;border-bottom:1px solid var(--border-color);';
+          searchChapBox.style.cssText = 'padding:10px 12px;border-bottom:1px solid var(--border-color);';
           var searchChapInput = mkEl('input', 'form-input');
           searchChapInput.placeholder = '🔍 搜章节名或章号 (如 草神 / 2)';
-          searchChapInput.style.cssText = 'width:100%;font-size:11px;padding:4px 8px;';
+          searchChapInput.style.cssText = 'width:100%;font-size:12px;padding:5px 10px;';
           searchChapBox.appendChild(searchChapInput);
           leftPane.appendChild(searchChapBox);
 
           var chapListBox = mkEl('div');
-          chapListBox.style.cssText = 'flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:3px;';
+          chapListBox.style.cssText = 'flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px;';
           leftPane.appendChild(chapListBox);
           mBody.appendChild(leftPane);
 
           var rightPane = mkEl('div');
-          rightPane.style.cssText = 'flex:1;display:flex;flex-direction:column;padding:12px;overflow:hidden;background:#0d0d18;min-width:0;';
+          rightPane.style.cssText = 'flex:1;display:flex;flex-direction:column;padding:16px 24px;overflow:hidden;background:#0d0d1a;min-width:0;';
 
           var readHeader = mkEl('div');
-          readHeader.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px dashed var(--border-color);margin-bottom:8px;flex-shrink:0;';
+          readHeader.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding-bottom:10px;border-bottom:1px dashed var(--border-color);margin-bottom:12px;flex-shrink:0;max-width:1100px;width:100%;margin-left:auto;margin-right:auto;';
           var readTitle = mkEl('div', '', '正文切片预览');
-          readTitle.style.cssText = 'font-size:13px;font-weight:bold;color:var(--accent2);';
+          readTitle.style.cssText = 'font-size:16px;font-weight:bold;color:var(--accent2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
           var readMeta = mkEl('div', '', '载入中…');
-          readMeta.style.cssText = 'font-size:11px;color:#8a8ab0;';
+          readMeta.style.cssText = 'font-size:12px;color:#8a8ab0;flex-shrink:0;';
           readHeader.appendChild(readTitle);
           readHeader.appendChild(readMeta);
           rightPane.appendChild(readHeader);
 
           var readContent = mkEl('div');
-          readContent.style.cssText = 'flex:1;overflow-y:auto;background:rgba(0,0,0,0.35);border:1px solid var(--border-color);border-radius:4px;padding:14px;font-size:13px;line-height:1.8;color:#d8d8ee;white-space:pre-wrap;word-break:break-word;';
+          readContent.style.cssText = 'flex:1;overflow-y:auto;background:rgba(0,0,0,0.35);border:1px solid var(--border-color);border-radius:6px;padding:24px 32px;font-size:15px;line-height:2.0;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;white-space:pre-wrap;word-break:break-word;max-width:1100px;width:100%;margin:0 auto;box-sizing:border-box;letter-spacing:0.3px;';
           readContent.textContent = '正在获取章节列表与阅读进度…';
           rightPane.appendChild(readContent);
 
           var readFoot = mkEl('div');
-          readFoot.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:8px;border-top:1px solid var(--border-color);flex-shrink:0;gap:8px;flex-wrap:wrap;';
+          readFoot.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding-top:12px;margin-top:10px;border-top:1px solid var(--border-color);flex-shrink:0;gap:12px;flex-wrap:wrap;max-width:1100px;width:100%;margin-left:auto;margin-right:auto;';
 
           var pageNav = mkEl('div');
-          pageNav.style.cssText = 'display:flex;gap:8px;align-items:center;';
-          var prevBtn = mkBtn('⬅ 上一页');
+          pageNav.style.cssText = 'display:flex;gap:10px;align-items:center;';
+          var prevBtn = mkBtn('⬅ 上一页 (←)');
           prevBtn.className = 'btn btn-outline btn-xs';
-          prevBtn.style.cssText = 'padding:3px 10px;font-size:11px;';
-          var nextBtn = mkBtn('下一页 ➡');
+          prevBtn.style.cssText = 'padding:5px 14px;font-size:12px;font-weight:bold;';
+          var nextBtn = mkBtn('下一页 ➡ (→)');
           nextBtn.className = 'btn btn-outline btn-xs';
-          nextBtn.style.cssText = 'padding:3px 10px;font-size:11px;';
+          nextBtn.style.cssText = 'padding:5px 14px;font-size:12px;font-weight:bold;';
           var curPageDisplay = mkEl('span', '', '第 1 页');
-          curPageDisplay.style.cssText = 'font-size:11px;color:#8a8ab0;font-weight:bold;';
+          curPageDisplay.style.cssText = 'font-size:12px;color:var(--accent2);font-weight:bold;';
           pageNav.appendChild(prevBtn);
           pageNav.appendChild(curPageDisplay);
           pageNav.appendChild(nextBtn);
 
           var syncBtn = mkBtn('📌 设为设备阅读进度');
           syncBtn.className = 'btn btn-primary btn-xs';
-          syncBtn.style.cssText = 'padding:4px 12px;font-size:11px;font-weight:bold;';
-          syncBtn.title = '将当前正在看的页码同步到单片机，MCU 下次翻页将从此页继续';
+          syncBtn.style.cssText = 'padding:6px 16px;font-size:12px;font-weight:bold;';
+          syncBtn.title = '将当前正在看的页码同步到单片机，MCU 下次翻页将从此处继续';
 
           readFoot.appendChild(pageNav);
           readFoot.appendChild(syncBtn);
@@ -5283,9 +5332,29 @@
           overlay.appendChild(modal);
           document.body.appendChild(overlay);
 
-          overlay.onclick = function (e) {
-            if (e.target === overlay) overlay.remove();
-          };          var activePage = Number(book.current_page) || 1;
+          function onKeyDown(e) {
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+              return;
+            }
+            if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+              e.preventDefault();
+              prevBtn.click();
+            } else if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+              e.preventDefault();
+              nextBtn.click();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              cleanup();
+              overlay.remove();
+            }
+          }
+          window.addEventListener('keydown', onKeyDown);
+
+          function cleanup() {
+            window.removeEventListener('keydown', onKeyDown);
+          }
+
+          var activePage = Number(book.current_page) || 1;
           var totalPages = Number(book.total_pages) || 1;
           var totalChapters = Number(book.total_chapters) || 1;
           var activeChapter = 1;
@@ -5319,7 +5388,7 @@
               lPart.style.cssText = 'display:flex;align-items:center;gap:6px;min-width:0;';
               var cNum = mkEl('b', '', c.title);
               cNum.title = c.title;
-              cNum.style.cssText = 'color:' + (isReading ? 'var(--accent2)' : '#fff') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:205px;font-size:11px;';
+              cNum.style.cssText = 'color:' + (isReading ? 'var(--accent2)' : '#fff') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:215px;font-size:11px;';
               lPart.appendChild(cNum);
 
               if (isReading) {
