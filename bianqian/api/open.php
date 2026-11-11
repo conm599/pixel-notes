@@ -225,14 +225,29 @@ function handleStatus($owner, $pdo) {
     // 3. todo 状态：按约定先不做，固定返回 0
     $todo = 0;
 
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(array(
+    $resData = array(
         'ts'    => $now,
         'd'     => $today,
         'open'  => $open,
         'diary' => $diary,
         'todo'  => $todo
-    ), JSON_UNESCAPED_SLASHES);
+    );
+
+    // 支持在 STATUS 中顺带上报阅读进度（省一次网络连接）
+    if (isset($_GET['page']) && is_numeric($_GET['page']) && function_exists('updateUserNovelProgress')) {
+        $statBook = isset($_GET['book']) ? trim($_GET['book']) : (isset($_GET['book_id']) ? trim($_GET['book_id']) : '');
+        $pgRes = updateUserNovelProgress($userId, $statBook, (int)$_GET['page'], $now);
+        if (!empty($pgRes['ok'])) {
+            $resData['pg_saved'] = (int)$pgRes['saved'];
+            $resData['pg_pages'] = (int)$pgRes['pages'];
+        } else {
+            $resData['pg_saved'] = 0;
+            $resData['pg_pages'] = 0;
+        }
+    }
+
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($resData, JSON_UNESCAPED_SLASHES);
 }
 
 
@@ -1073,32 +1088,36 @@ function handleNovelProxy($owner) {
 
     // 7. 进度上报接口（PROGRESS）：防止 MCU 反复擦写 Flash
     if ($action === 'progress' || $action === 'novel_progress') {
-        $reqPage = isset($_REQUEST['page']) ? max(1, (int)$_REQUEST['page']) : 1;
+        $reqPage = isset($_REQUEST['page']) ? (int)$_REQUEST['page'] : 1;
         $reqBook = isset($_REQUEST['book']) ? trim((string)$_REQUEST['book']) : (isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '');
-        $targetNovel = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBook) : null;
-        if (!$targetNovel) {
+        $reqAt = isset($_REQUEST['at']) ? (int)$_REQUEST['at'] : (isset($_REQUEST['ts']) ? (int)$_REQUEST['ts'] : null);
+
+        if (function_exists('updateUserNovelProgress')) {
+            $pRes = updateUserNovelProgress($userId, $reqBook, $reqPage, $reqAt);
+        } else {
+            $pRes = array('ok' => false, 'code' => 500, 'error' => '未初始化');
+        }
+
+        header('Content-Type: application/json; charset=utf-8');
+        if (empty($pRes['ok'])) {
             http_response_code(404);
-            header('Content-Type: application/json; charset=utf-8');
             echo json_encode(array(
-                'ok' => false,
-                'error' => '该书已从书架移出，进度已清除',
-                'code' => 404,
+                'ok'     => 0,
+                'error'  => isset($pRes['error']) ? $pRes['error'] : '该书已从书架移出，进度已清除',
+                'code'   => 404,
                 'reason' => 'BOOK_DELETED'
             ), JSON_UNESCAPED_UNICODE);
             exit;
         }
 
-        $realBookId = $targetNovel['book_id'];
-        if (function_exists('updateUserNovelPage')) {
-            updateUserNovelPage($userId, $realBookId, $reqPage);
-        }
-
-        header('Content-Type: application/json; charset=utf-8');
         echo json_encode(array(
-            'ok' => true,
-            'book_id' => $realBookId,
-            'title' => $targetNovel['title'],
-            'page' => $reqPage
+            'ok'      => 1,
+            'book_id' => $pRes['book_id'],
+            'title'   => $pRes['title'],
+            'page'    => (int)$pRes['page'],
+            'pages'   => (int)$pRes['pages'],
+            'ts'      => (int)$pRes['ts'],
+            'saved'   => (int)$pRes['saved']
         ), JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -1233,11 +1252,21 @@ function handleNovelProxy($owner) {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store, no-cache, must-revalidate');
     if ($code >= 200 && $code < 300 && !empty($resp)) {
-        if ($action === 'novel' && !empty($_GET['book'])) {
+        if (($action === 'novel' || $action === 'chapter') && !empty($resp)) {
             $nj = @json_decode($resp, true);
-            if ($nj && !empty($nj['pages']) && (int)$nj['pages'] > 0) {
-                $curP = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-                updateUserNovelPage($userId, $_GET['book'], $curP, (int)$nj['pages']);
+            if ($nj && is_array($nj)) {
+                $chg = false;
+                if (isset($nj['text']) && strlen((string)$nj['text']) > 850) {
+                    $nj['text'] = mb_strcut((string)$nj['text'], 0, 850, 'UTF-8');
+                    $chg = true;
+                }
+                if ($action === 'novel' && !empty($nj['pages']) && (int)$nj['pages'] > 0 && !empty($_GET['book'])) {
+                    $curP = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+                    updateUserNovelPage($userId, $_GET['book'], $curP, (int)$nj['pages']);
+                }
+                if ($chg) {
+                    $resp = json_encode($nj, JSON_UNESCAPED_UNICODE);
+                }
             }
         }
         echo $resp;

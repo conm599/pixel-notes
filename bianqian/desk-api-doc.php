@@ -271,12 +271,7 @@ $tcpPort = 8888;
                 </tr>
             </thead>
             <tbody>
-                <tr>
-                    <td><b>获取今日状态</b></td>
-                    <td><code>STATUS &lt;API_KEY&gt;\n</code></td>
-                    <td>回传 <code>{"ts":...,"d":...,"open":1,"diary":1,"todo":0}\n</code> 并断开</td>
-                    <td><b>~0.1s</b></td>
-                </tr>
+
                 <tr>
                     <td><b>获取管家吐槽</b></td>
                     <td><code>ROAST &lt;API_KEY&gt;\n</code></td>
@@ -320,9 +315,15 @@ $tcpPort = 8888;
                     <td><b>~0.08s</b></td>
                 </tr>
                 <tr>
+                    <td><b>获取今日状态</b></td>
+                    <td><code>STATUS &lt;API_KEY&gt; [PAGE] [BOOK_ID]\n</code></td>
+                    <td>回传 <code>{"ts":...,"d":...,"open":1,"diary":1,"todo":0}\n</code> 并断开。<b>支持顺带上报小说阅读进度</b>（省一次 TCP 连接）：当携带 <code>PAGE</code> 时，回包自动追加 <code>"pg_saved":1,"pg_pages":1054</code>。</td>
+                    <td><b>~0.1s</b></td>
+                </tr>
+                <tr>
                     <td><b>3. 上报阅读进度 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
-                    <td><code>PROGRESS &lt;API_KEY&gt; &lt;PAGE&gt; [序号1-10或ID]\n</code></td>
-                    <td><b>单片机防擦写 Flash 专用</b>：自主上报已读页码，持久化至云端 MySQL 数据库。若该书已在网页端删除，返回 <code>404 BOOK_DELETED</code> 提示单片机进度已清；若成功回传 <code>{"ok":1,"book_id":"...","title":"...","page":8}\n</code></td>
+                    <td><code>PROGRESS &lt;API_KEY&gt; &lt;PAGE&gt; [BOOK_ID] [AT]\n</code></td>
+                    <td><b>单片机防擦写 Flash 专用</b>：自主上报已读页码与设备估算秒 <code>AT</code>。时序消歧回传：<code>{"ok":1,"book_id":"...","title":"...","page":15,"pages":1054,"ts":...,"saved":1}</code>（若断网补报比云端旧则返回 <code>saved:0</code> 并返回云端最新页码；若已被移出书架返回 <code>BOOK_DELETED</code> 提示单片机清空本地标记）。</td>
                     <td><b>&lt;0.05s</b></td>
                 </tr>
                 <tr>

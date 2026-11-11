@@ -145,10 +145,10 @@ function handleTcpRequest($sock, $raw) {
             $key = isset($json['key']) ? trim($json['key']) : '';
         }
     } else {
-        // 纯文本格式：STATUS <KEY> 或 ROAST <KEY>
-        $parts = preg_split('/\s+/', $raw, 2);
-        $action = strtoupper($parts[0]);
-        $key = isset($parts[1]) ? trim($parts[1]) : '';
+        // 纯文本格式：ACTION <KEY> [ARGS...]
+        $tokens = preg_split('/\s+/', trim($raw));
+        $action = strtoupper($tokens[0]);
+        $key = isset($tokens[1]) ? trim($tokens[1]) : '';
     }
 
     // 天气代理指令（同端口明文 TCP 代理 uapis.cn 天气服务，需校验 Desk Key 防刷）
@@ -313,8 +313,8 @@ function handleTcpRequest($sock, $raw) {
                         'id'     => $ub['book_id'],
                         'title'  => $ub['title'],
                         'author' => $ub['author'],
-                        'page'   => (int)$ub['current_page'],
-                        'pages'  => (int)$ub['total_pages'],
+                        'page'   => max(1, (int)$ub['current_page']),
+                        'pages'  => max(1, (int)$ub['total_pages']),
                     );
                 }
                 $shelfData = array(
@@ -487,41 +487,59 @@ function handleTcpRequest($sock, $raw) {
                 return;
             }
 
-            // 7. 进度上报（PROGRESS）：支持 PROGRESS <KEY> <PAGE> [1-10序号或ID]
+            // 7. 进度上报（PROGRESS）：支持 PROGRESS <KEY> <PAGE> [BOOK_ID] [AT]
             if ($action === 'PROGRESS' || $action === 'NOVEL_PROGRESS' || $action === 'PAGE') {
                 $reqPage = 1;
                 $reqBookArg = '';
+                $reqAt = null;
                 if ($raw[0] === '{') {
-                    $reqPage = isset($json['page']) ? max(1, (int)$json['page']) : 1;
+                    $reqPage = isset($json['page']) ? (int)$json['page'] : 1;
                     $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                    $reqAt = isset($json['at']) ? (int)$json['at'] : (isset($json['ts']) ? (int)$json['ts'] : null);
                 } else {
                     $tokens = preg_split('/\s+/', trim($raw));
-                    $reqPage = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
-                    $reqBookArg = isset($tokens[3]) ? trim($tokens[3]) : '';
+                    $reqPage = isset($tokens[2]) ? (int)$tokens[2] : 1;
+                    $tok3 = isset($tokens[3]) ? trim($tokens[3]) : '';
+                    $tok4 = isset($tokens[4]) ? trim($tokens[4]) : '';
+                    if ($tok4 !== '') {
+                        $reqBookArg = $tok3;
+                        $reqAt = (int)$tok4;
+                    } elseif ($tok3 !== '') {
+                        if (strlen($tok3) === 10 && ctype_digit($tok3) && (int)$tok3 > 1700000000) {
+                            $reqBookArg = '';
+                            $reqAt = (int)$tok3;
+                        } else {
+                            $reqBookArg = $tok3;
+                            $reqAt = null;
+                        }
+                    }
                 }
 
-                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
-                if (!$targetBook) {
-                    $deletedNotice = json_encode(array(
+                if (function_exists('updateUserNovelProgress')) {
+                    $pRes = updateUserNovelProgress($userId, $reqBookArg, $reqPage, $reqAt);
+                } else {
+                    $pRes = array('ok' => false, 'code' => 500, 'error' => '未初始化');
+                }
+
+                if (empty($pRes['ok'])) {
+                    @fwrite($sock, json_encode(array(
                         'ok'     => 0,
-                        'error'  => '该书已从书架移出，进度已清除',
+                        'error'  => isset($pRes['error']) ? $pRes['error'] : '该书已从书架移出，进度已清除',
                         'code'   => 404,
                         'reason' => 'BOOK_DELETED'
-                    ), JSON_UNESCAPED_UNICODE) . "\n";
-                    @fwrite($sock, $deletedNotice);
+                    ), JSON_UNESCAPED_UNICODE) . "\n");
                     return;
                 }
 
-                $realBookId = $targetBook['book_id'];
-                if (function_exists('updateUserNovelPage')) {
-                    updateUserNovelPage($userId, $realBookId, $reqPage);
-                }
-
+                // 期望回包：{"ok":1,"book_id":"...","title":"...","page":15,"pages":1054,"ts":1794397774,"saved":1}
                 $okResp = json_encode(array(
                     'ok'      => 1,
-                    'book_id' => $realBookId,
-                    'title'   => $targetBook['title'],
-                    'page'    => $reqPage
+                    'book_id' => $pRes['book_id'],
+                    'title'   => $pRes['title'],
+                    'page'    => (int)$pRes['page'],
+                    'pages'   => (int)$pRes['pages'],
+                    'ts'      => (int)$pRes['ts'],
+                    'saved'   => (int)$pRes['saved']
                 ), JSON_UNESCAPED_UNICODE) . "\n";
                 @fwrite($sock, $okResp);
                 return;
@@ -740,14 +758,42 @@ function handleTcpRequest($sock, $raw) {
             } catch (Throwable $e) {}
         }
 
-        $resp = json_encode(array(
+        $statusData = array(
             'ts'    => $now,
             'd'     => $today,
             'open'  => $open,
             'diary' => $diary,
             'todo'  => 0
-        ), JSON_UNESCAPED_SLASHES) . "\n";
+        );
 
+        // 建议特性：STATUS <KEY> [PAGE] [BOOK_ID] 顺带上报进度，为单片机省一次 TCP 连接
+        $statPage = null;
+        $statBook = '';
+        if ($raw[0] === '{') {
+            if (isset($json['page']) && is_numeric($json['page'])) {
+                $statPage = (int)$json['page'];
+                $statBook = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+            }
+        } else {
+            $tokens = preg_split('/\s+/', trim($raw));
+            if (isset($tokens[2]) && is_numeric($tokens[2])) {
+                $statPage = (int)$tokens[2];
+                $statBook = isset($tokens[3]) ? trim($tokens[3]) : '';
+            }
+        }
+
+        if ($statPage !== null && function_exists('updateUserNovelProgress')) {
+            $pgRes = updateUserNovelProgress($userId, $statBook, $statPage, $now);
+            if (!empty($pgRes['ok'])) {
+                $statusData['pg_saved'] = (int)$pgRes['saved'];
+                $statusData['pg_pages'] = (int)$pgRes['pages'];
+            } else {
+                $statusData['pg_saved'] = 0;
+                $statusData['pg_pages'] = 0;
+            }
+        }
+
+        $resp = json_encode($statusData, JSON_UNESCAPED_SLASHES) . "\n";
         @fwrite($sock, $resp);
         return;
     }
@@ -1222,6 +1268,17 @@ function forwardFanqieTcp($sock, $upstreamCmd, $onResponse = null) {
     @fclose($fp);
 
     if ($resp !== '') {
+        // 截断保护：确保单次 text 不超过 850 字节（UTF-8），预留 JSON 键名元数据空间，绝不超出单片机 1024 字节静态缓冲
+        $jData = @json_decode($resp, true);
+        if ($jData && is_array($jData) && isset($jData['text'])) {
+            $rawText = (string)$jData['text'];
+            if (strlen($rawText) > 850) {
+                $jData['text'] = mb_strcut($rawText, 0, 850, 'UTF-8');
+                $resp = json_encode($jData, JSON_UNESCAPED_UNICODE) . "
+";
+            }
+        }
+
         if ($onResponse && is_callable($onResponse)) {
             try {
                 call_user_func($onResponse, $resp);

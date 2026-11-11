@@ -1050,6 +1050,73 @@ function setCurrentUserNovel($userId, $bookId) {
 }
 
 /**
+ * 上报或更新用户小说阅读进度（带时间戳时序消歧、防 Flash 磨损、删书拦截）
+ * 返回规范数组：
+ * - 成功: array('ok'=>true, 'book_id'=>..., 'title'=>..., 'page'=>..., 'pages'=>..., 'ts'=>..., 'saved'=>1|0)
+ * - 书已删除: array('ok'=>false, 'code'=>404, 'reason'=>'BOOK_DELETED', 'error'=>'...')
+ */
+function updateUserNovelProgress($userId, $bookArg, $page, $at = null) {
+    $targetBook = getUserNovelByIdOrIndex($userId, $bookArg);
+    if (!$targetBook) {
+        return array(
+            'ok'      => false,
+            'code'    => 404,
+            'reason'  => 'BOOK_DELETED',
+            'error'   => '该书已从书架移出，进度已清除'
+        );
+    }
+
+    $bookId = $targetBook['book_id'];
+    $page = max(1, (int)$page);
+    $now = time();
+    $atTs = ($at !== null && (int)$at > 1000000000) ? (int)$at : $now;
+
+    // 获取数据库中已有更新时间和阅读页码
+    $dbPage = max(1, (int)$targetBook['current_page']);
+    $dbTs = !empty($targetBook['updated_at']) ? strtotime($targetBook['updated_at']) : 0;
+
+    $saved = 1;
+    // 时序与冲突检测：若设备带了离线估算时间戳，且设备时间比云端记录旧（且云端页码更大或相同），则忽略旧进度
+    if ($at !== null && $dbTs > 0 && $atTs < $dbTs && $dbPage >= $page) {
+        $saved = 0;
+        $finalPage = $dbPage;
+    } else {
+        $saved = 1;
+        $finalPage = $page;
+        try {
+            $pdo = getDB();
+            $st = $pdo->prepare("UPDATE `pn_user_novels` SET `current_page` = ?, `updated_at` = FROM_UNIXTIME(?) WHERE `user_id` = ? AND `book_id` = ?");
+            $st->execute(array($finalPage, $atTs, (int)$userId, $bookId));
+        } catch (Throwable $e) {}
+    }
+
+    // 纠正与确保全书总页数真实非 0
+    $totalPages = (int)$targetBook['total_pages'];
+    if ($totalPages <= 0) {
+        $totalPages = fetchNovelTotalPages($bookId);
+        if ($totalPages > 0) {
+            try {
+                $pdo = getDB();
+                $upP = $pdo->prepare("UPDATE `pn_user_novels` SET `total_pages` = ? WHERE `id` = ?");
+                $upP->execute(array($totalPages, (int)$targetBook['id']));
+            } catch (Throwable $e) {}
+        } elseif ((int)$targetBook['total_chapters'] > 0) {
+            $totalPages = max(1, (int)round((int)$targetBook['total_chapters'] * 7.2));
+        }
+    }
+
+    return array(
+        'ok'      => true,
+        'book_id' => $bookId,
+        'title'   => $targetBook['title'],
+        'page'    => $finalPage,
+        'pages'   => $totalPages > 0 ? $totalPages : 1,
+        'ts'      => $atTs,
+        'saved'   => $saved
+    );
+}
+
+/**
  * 记录用户读到的页码
  */
 function updateUserNovelPage($userId, $bookId, $page, $totalPages = null) {
