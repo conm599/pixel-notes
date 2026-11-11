@@ -5421,17 +5421,24 @@
           }
 
           async function loadChapterPage(chap, pg) {
-            chap = Math.max(1, Math.min(totalChapters || 9999, chap));
-            pg = Math.max(1, pg);
-            activeChapter = chap;
-            activeChapPage = pg;
-
-            curPageDisplay.textContent = '第 ' + chap + ' 章 · 第 ' + pg + ' 页';
-            readMeta.textContent = '正在加载第 ' + chap + ' 章第 ' + pg + ' 页切片…';
+            var isGlobal = (!chap || chap <= 0);
+            if (!isGlobal) {
+              chap = Math.max(1, Math.min(totalChapters || 9999, chap));
+              pg = Math.max(1, pg);
+              activeChapter = chap;
+              activeChapPage = pg;
+              curPageDisplay.textContent = '第 ' + chap + ' 章 · 第 ' + pg + ' 页';
+              readMeta.textContent = '正在加载第 ' + chap + ' 章第 ' + pg + ' 页切片…';
+            } else {
+              pg = Math.max(1, pg);
+              curPageDisplay.textContent = '第 ' + pg + ' 页';
+              readMeta.textContent = '正在加载第 ' + pg + ' 页…';
+            }
             readContent.style.opacity = '0.5';
 
             try {
-              var r = await fetch('api/user_key.php?action=shelf_read&book_id=' + encodeURIComponent(book.book_id) + '&chapter=' + chap + '&page=' + pg);
+              var url = 'api/user_key.php?action=shelf_read&book_id=' + encodeURIComponent(book.book_id) + (isGlobal ? ('&page=' + pg) : ('&chapter=' + chap + '&page=' + pg));
+              var r = await fetch(url);
               var res = await r.json();
               if (res.success && res.text) {
                 readContent.textContent = res.text;
@@ -5492,20 +5499,25 @@
               showToast('请输入章号或页码', 'error');
               return;
             }
-            var mChap = raw.match(/^(?:第)?(\d+)(?:章)?$/);
-            if (mChap) {
-              var num = parseInt(mChap[1], 10);
-              if (num <= totalChapters) {
-                loadChapterPage(num, 1);
-                return;
-              }
-              var ppc = Math.max(0.1, totalPages / Math.max(1, totalChapters));
-              var c = Math.max(1, Math.min(totalChapters, Math.floor((num - 1) / ppc) + 1));
-              var cp = Math.max(1, Math.round(num - (c - 1) * ppc));
-              loadChapterPage(c, cp);
+            var mChapOnly = raw.match(/^(?:第)?(\d+)(?:章)$/i) || raw.match(/^c(\d+)$/i);
+            if (mChapOnly) {
+              var chapNum = parseInt(mChapOnly[1], 10);
+              loadChapterPage(chapNum, 1);
               return;
             }
-            showToast('请输入有效章号或页码', 'error');
+            var mPageOnly = raw.match(/^(?:第)?(\d+)(?:页)$/i) || raw.match(/^p(\d+)$/i);
+            if (mPageOnly) {
+              var pageNum = parseInt(mPageOnly[1], 10);
+              loadChapterPage(0, pageNum);
+              return;
+            }
+            var mPure = raw.match(/^(\d+)$/);
+            if (mPure) {
+              var num = parseInt(mPure[1], 10);
+              loadChapterPage(0, num);
+              return;
+            }
+            showToast('请输入有效章号或页码（如 140 或 第20章）', 'error');
           };
 
           searchChapInput.oninput = function () {
@@ -5516,8 +5528,7 @@
             syncBtn.disabled = true;
             syncBtn.textContent = '正在同步…';
             try {
-              var ppc = Math.max(0.1, totalPages / Math.max(1, totalChapters));
-              var curGlobal = Math.max(1, Math.round((activeChapter - 1) * ppc + activeChapPage));
+              var curGlobal = Math.max(1, activePage || 1);
               var r = await fetch('api/user_key.php?action=shelf_set_page', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -5559,11 +5570,8 @@
               }
             } catch (e) {}
 
-            var ppc = Math.max(0.1, totalPages / Math.max(1, totalChapters));
             var curP = Math.max(1, parseInt(book.current_page || 1, 10));
-            var initialChap = Math.max(1, Math.min(totalChapters, Math.floor((curP - 1) / ppc) + 1));
-            var initialChapPage = Math.max(1, Math.round(curP - (initialChap - 1) * ppc));
-            loadChapterPage(initialChap, initialChapPage);
+            loadChapterPage(0, curP);
           }
 
           initData();

@@ -385,8 +385,11 @@ function handleTcpRequest($sock, $raw) {
                 $totalPages = max((int)$targetBook['total_pages'], (int)round($totalChaps * 7.2));
                 $pagesPerChap = max(0.1, (float)$totalPages / (float)$totalChaps);
 
-                $calcChap = max(1, min($totalChaps, (int)floor(($reqPage - 1) / $pagesPerChap) + 1));
-                $calcChapPage = max(1, (int)round($reqPage - ($calcChap - 1) * $pagesPerChap));
+                                $map = function_exists('novelPageToChapterOffset')
+                    ? novelPageToChapterOffset($reqPage, $totalChaps, $totalPages)
+                    : array('chapter' => max(1, min($totalChaps, (int)floor(($reqPage - 1) / $pagesPerChap) + 1)), 'chap_page' => 1);
+                $calcChap = $map['chapter'];
+                $calcChapPage = $map['chap_page'];
 
                 $upstreamCmd = "CHAPTER {$fqKey} {$calcChap} {$calcChapPage} {$realBookId}";
                 forwardFanqieTcp($sock, $upstreamCmd, function($resp) use ($userId, $realBookId, $reqPage, $targetBook, $calcChap, $calcChapPage, $totalPages) {
@@ -462,8 +465,10 @@ function handleTcpRequest($sock, $raw) {
                 forwardFanqieTcp($sock, $upstreamCmd, function($resp) use ($userId, $realBookId, $reqChapter, $reqPage, $targetBook, $totalPages, $pagesPerChap) {
                     $j = @json_decode($resp, true);
                     if ($j && isset($j['text'])) {
-                        $pInChap = isset($j['page']) ? (int)$j['page'] : $reqPage;
-                        $globalPage = max(1, (int)round(($reqChapter - 1) * $pagesPerChap) + $pInChap);
+                                                $pInChap = isset($j['page']) ? (int)$j['page'] : $reqPage;
+                        $globalPage = function_exists('novelChapterOffsetToPage')
+                            ? novelChapterOffsetToPage($reqChapter, $pInChap, $totalChaps, $totalPages)
+                            : max(1, (int)round(($reqChapter - 1) * $pagesPerChap) + $pInChap);
                         $enriched = array(
                             'title'         => $targetBook['title'],
                             'chapter_title' => isset($j['title']) ? $j['title'] : ('第' . $reqChapter . '章'),

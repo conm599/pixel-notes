@@ -559,9 +559,16 @@ switch ($action) {
         if ($chapter > 0) {
             $calcChapter = max(1, min($totalChaps, $chapter));
             $calcChapPage = $page;
+            $globalPage = function_exists('novelChapterOffsetToPage')
+                ? novelChapterOffsetToPage($calcChapter, $calcChapPage, $totalChaps, $totalPages)
+                : max(1, (int)round(($calcChapter - 1) * $pagesPerChap) + $calcChapPage);
         } else {
-            $calcChapter = max(1, min($totalChaps, (int)floor(($page - 1) / $pagesPerChap) + 1));
-            $calcChapPage = max(1, (int)round($page - ($calcChapter - 1) * $pagesPerChap));
+            $map = function_exists('novelPageToChapterOffset')
+                ? novelPageToChapterOffset($page, $totalChaps, $totalPages)
+                : array('chapter' => max(1, min($totalChaps, (int)floor(($page - 1) / $pagesPerChap) + 1)), 'chap_page' => 1);
+            $calcChapter = $map['chapter'];
+            $calcChapPage = $map['chap_page'];
+            $globalPage = (int)$page;
         }
 
         $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
@@ -603,7 +610,11 @@ switch ($action) {
         $matchedTitle = !empty($j['title']) ? $j['title'] : ('第' . $calcChapter . '章');
         $chapPage = isset($j['page']) ? (int)$j['page'] : $calcChapPage;
         $chapPages = isset($j['pages']) ? (int)$j['pages'] : 1;
-        $globalPage = max(1, (int)round(($calcChapter - 1) * $pagesPerChap) + $chapPage);
+                if ($chapter > 0) {
+            $globalPage = function_exists('novelChapterOffsetToPage')
+                ? novelChapterOffsetToPage($calcChapter, $chapPage, $totalChaps, $totalPages)
+                : max(1, (int)round(($calcChapter - 1) * $pagesPerChap) + $chapPage);
+        }
 
         echo json_encode(array(
             'success'        => true,

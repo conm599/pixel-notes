@@ -1216,3 +1216,68 @@ function fetchFanqieChapterTitles($bookId) {
 
     return $titles;
 }
+
+/**
+ * 全局页码转章节号与章内页码（精准双向无缝映射，彻底消除首页跳过与偏移BUG）
+ * @param int $globalPage 全局页码 (1 .. total_pages)
+ * @param int $totalChapters 总章数
+ * @param int $totalPages 总页数
+ * @return array array('chapter' => int, 'chap_page' => int, 'start_page' => int, 'end_page' => int)
+ */
+function novelPageToChapterOffset($globalPage, $totalChapters, $totalPages) {
+    $totalChapters = max(1, (int)$totalChapters);
+    $totalPages = max(1, (int)$totalPages);
+    $globalPage = max(1, min($totalPages, (int)$globalPage));
+
+    $ppc = (float)$totalPages / (float)$totalChapters;
+    $est = max(1, min($totalChapters, (int)floor(($globalPage - 1) / $ppc) + 1));
+
+    // 在估算点邻域内精准匹配 [start_page, end_page] 区间
+    for ($i = max(1, $est - 2); $i <= min($totalChapters, $est + 2); $i++) {
+        $s = (int)round(($i - 1) * $ppc) + 1;
+        $e = ($i === $totalChapters) ? $totalPages : (int)round($i * $ppc);
+        if ($globalPage >= $s && $globalPage <= $e) {
+            return array(
+                'chapter'    => $i,
+                'chap_page'  => $globalPage - $s + 1,
+                'start_page' => $s,
+                'end_page'   => $e
+            );
+        }
+    }
+
+    // 兜底线性扫描
+    for ($i = 1; $i <= $totalChapters; $i++) {
+        $s = (int)round(($i - 1) * $ppc) + 1;
+        $e = ($i === $totalChapters) ? $totalPages : (int)round($i * $ppc);
+        if ($globalPage >= $s && $globalPage <= $e) {
+            return array(
+                'chapter'    => $i,
+                'chap_page'  => $globalPage - $s + 1,
+                'start_page' => $s,
+                'end_page'   => $e
+            );
+        }
+    }
+
+    return array('chapter' => 1, 'chap_page' => 1, 'start_page' => 1, 'end_page' => 1);
+}
+
+/**
+ * 章节号与章内页码转全局页码
+ * @param int $chapter 章节号 (1 .. total_chapters)
+ * @param int $chapPage 章内页码 (1 .. N)
+ * @param int $totalChapters 总章数
+ * @param int $totalPages 总页数
+ * @return int 全局页码
+ */
+function novelChapterOffsetToPage($chapter, $chapPage, $totalChapters, $totalPages) {
+    $totalChapters = max(1, (int)$totalChapters);
+    $totalPages = max(1, (int)$totalPages);
+    $chapter = max(1, min($totalChapters, (int)$chapter));
+    $chapPage = max(1, (int)$chapPage);
+
+    $ppc = (float)$totalPages / (float)$totalChapters;
+    $s = (int)round(($chapter - 1) * $ppc) + 1;
+    return max(1, min($totalPages, $s + $chapPage - 1));
+}
