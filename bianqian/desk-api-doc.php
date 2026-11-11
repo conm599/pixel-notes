@@ -305,7 +305,7 @@ $tcpPort = 8888;
                 <tr>
                     <td><b>1. 拉取 10 本书单 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
                     <td><code>BOOKS &lt;API_KEY&gt;\n</code> (或 <code>NOVEL_SHELF\n</code>)</td>
-                    <td><b>第一级：全量获取推送到设备的 10 本书单菜单</b>。回传单行紧凑 JSON（仅 300~500 字节，远低于 1200 字节静态缓冲）：<code>{"total":3,"books":[{"i":1,"id":"...","title":"凡人修仙","page":2,"pages":7753},{"i":2,...}]}</code>。设备端以此渲染列表菜单，按键上下选择想看哪本。</td>
+                    <td><b>第一级：全量获取推送到设备的 10 本书单菜单</b>。回传单行紧凑 JSON（仅 300~500 字节，远低于 1200 字节静态缓冲）：<code>{"total":1,"current":"...","books":[{"i":1,"id":"...","title":"凡人修仙","author":"...","page":2,"pages":7753,"pts":1794397774}]}</code>。设备端以此渲染列表菜单，按键上下选择想看哪本。每本书含 <code>pts</code>（进度最后更新时间戳，10位 Unix 秒），设备用于判定“本地断网兜底进度是否比云端新”，<code>page</code> 无进度时返回 1（不返 0），<code>pages</code> 永远 &gt; 0。</td>
                     <td><b>&lt;0.05s</b></td>
                 </tr>
                 <tr>

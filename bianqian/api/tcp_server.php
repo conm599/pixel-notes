@@ -308,6 +308,7 @@ function handleTcpRequest($sock, $raw) {
                 $cur = function_exists('getCurrentUserNovel') ? getCurrentUserNovel($userId) : null;
                 $resList = array();
                 foreach ($userBooks as $ub) {
+                    $pts = !empty($ub['pts']) ? (int)$ub['pts'] : (!empty($ub['updated_at']) ? strtotime($ub['updated_at']) : (!empty($ub['created_at']) ? strtotime($ub['created_at']) : time()));
                     $resList[] = array(
                         'i'      => (int)($ub['i'] ?? 1),
                         'id'     => $ub['book_id'],
@@ -315,6 +316,7 @@ function handleTcpRequest($sock, $raw) {
                         'author' => $ub['author'],
                         'page'   => max(1, (int)$ub['current_page']),
                         'pages'  => max(1, (int)$ub['total_pages']),
+                        'pts'    => (int)$pts,
                     );
                 }
                 $shelfData = array(

@@ -868,6 +868,10 @@ function getUserNovels($userId) {
                     $r['total_pages'] = max(1, (int)round((int)$r['total_chapters'] * 7.2));
                 }
             }
+            $pts = !empty($r['updated_at']) ? strtotime($r['updated_at']) : (!empty($r['created_at']) ? strtotime($r['created_at']) : time());
+            $r['pts'] = (int)$pts;
+            $r['page'] = max(1, (int)$r['current_page']);
+            $r['pages'] = max(1, (int)$r['total_pages']);
         }
         unset($r);
         return $rows;
@@ -913,7 +917,13 @@ function getCurrentUserNovel($userId) {
         $st = $pdo->prepare("SELECT * FROM `pn_user_novels` WHERE `user_id` = ? AND `is_current` = 1 LIMIT 1");
         $st->execute(array((int)$userId));
         $cur = $st->fetch();
-        if ($cur) return $cur;
+        if ($cur) {
+            $pts = !empty($cur['updated_at']) ? strtotime($cur['updated_at']) : (!empty($cur['created_at']) ? strtotime($cur['created_at']) : time());
+            $cur['pts'] = (int)$pts;
+            $cur['page'] = max(1, (int)$cur['current_page']);
+            $cur['pages'] = max(1, (int)$cur['total_pages']);
+            return $cur;
+        }
 
         // 若没有明确激活的，取第一本并自动设为激活
         $st = $pdo->prepare("SELECT * FROM `pn_user_novels` WHERE `user_id` = ? ORDER BY `sort_order` ASC, `id` DESC LIMIT 1");
@@ -922,6 +932,10 @@ function getCurrentUserNovel($userId) {
         if ($first) {
             $pdo->prepare("UPDATE `pn_user_novels` SET `is_current` = 1 WHERE `id` = ?")->execute(array((int)$first['id']));
             $first['is_current'] = 1;
+            $pts = !empty($first['updated_at']) ? strtotime($first['updated_at']) : (!empty($first['created_at']) ? strtotime($first['created_at']) : time());
+            $first['pts'] = (int)$pts;
+            $first['page'] = max(1, (int)$first['current_page']);
+            $first['pages'] = max(1, (int)$first['total_pages']);
             return $first;
         }
         return null;
