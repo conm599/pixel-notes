@@ -280,7 +280,7 @@ $tcpPort = 8888;
                 <tr>
                     <td><b>获取管家吐槽</b></td>
                     <td><code>ROAST &lt;API_KEY&gt;\n</code></td>
-                    <td>以 0.1s/字 逐字流式向 Socket 吐出纯文本，传输完毕追加 <code>\n</code> 并断开</td>
+                    <td>以 0.1s/字 逐字流式向 Socket 吐出纯文本，传输完毕追加 <code>\n</code> 并断开（模型接口限流放宽至<b>每分钟最多 2 次</b>）</td>
                     <td>~4-6s</td>
                 </tr>
                 <tr>
@@ -318,6 +318,12 @@ $tcpPort = 8888;
                     <td><code>NOVEL &lt;API_KEY&gt; &lt;PAGE&gt; [序号1-10]\n</code></td>
                     <td><b>第二级：点进选中的书读正文（300 字切片）</b>。例如读第 2 本书第 1 页发 <code>NOVEL &lt;KEY&gt; 1 2\n</code>（单片机只需记整数序号 1~10！）。服务端固定按 300 字切片（单包 ~800 字节，严格 &lt;1KB，纯 UTF-8 剔除非 GB2312 字符无 Emoji，绝不爆 8KB 环形缓冲与 79KB 空闲堆），回传 <code>{"title":...,"page":1,"pages":...,"text":...}\n</code>。断电续读仅需将 <code>book_i</code> 和 <code>page</code> 写入 NVS。</td>
                     <td><b>~0.08s</b></td>
+                </tr>
+                <tr>
+                    <td><b>3. 上报阅读进度 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>
+                    <td><code>PROGRESS &lt;API_KEY&gt; &lt;PAGE&gt; [序号1-10或ID]\n</code></td>
+                    <td><b>单片机防擦写 Flash 专用</b>：自主上报已读页码，持久化至云端 MySQL 数据库。若该书已在网页端删除，返回 <code>404 BOOK_DELETED</code> 提示单片机进度已清；若成功回传 <code>{"ok":1,"book_id":"...","title":"...","page":8}\n</code></td>
+                    <td><b>&lt;0.05s</b></td>
                 </tr>
                 <tr>
                     <td><b>番茄单章拉取 <span class="badge" style="background:#ff4d4f;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">仅限管理员</span></b></td>

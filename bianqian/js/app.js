@@ -5208,7 +5208,7 @@
             delBtn.title = '从书架移出';
             delBtn.style.cssText = 'font-size:11px;padding:3px 8px;color:var(--danger);border-color:var(--danger);';
             delBtn.addEventListener('click', async function () {
-              if (!confirm('确定将《' + b.title + '》从 MCU 书架移出吗？')) return;
+              if (!confirm('【警告】确定将《' + b.title + '》从 MCU 书架移出吗？\n\n移出后，该书的阅读进度也将被永久清除，且设备端将无法继续同步！')) return;
               delBtn.disabled = true;
               try {
                 var r = await fetch('api/user_key.php?action=shelf_remove', {

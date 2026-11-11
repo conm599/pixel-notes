@@ -250,7 +250,7 @@ function handleTcpRequest($sock, $raw) {
     // 指令支持：NOVEL, CHAPTER, SEARCH, CHAPTERS, BOOKS, PICK, INFO, DL, TASK, NOVEL_STATUS, FQ_STATUS, FQ
     $novelActions = array(
         'NOVEL', 'CHAPTER', 'SEARCH', 'CHAPTERS', 'BOOKS', 'PICK',
-        'INFO', 'DL', 'TASK', 'NOVEL_STATUS', 'FQ_STATUS', 'FQ', 'NOVEL_SHELF', 'SHELF'
+        'INFO', 'DL', 'TASK', 'NOVEL_STATUS', 'FQ_STATUS', 'FQ', 'NOVEL_SHELF', 'SHELF', 'PROGRESS', 'NOVEL_PROGRESS', 'PAGE'
     );
     if (in_array($action, $novelActions, true)) {
         if ($raw[0] === '{') {
@@ -364,10 +364,14 @@ function handleTcpRequest($sock, $raw) {
                 $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
                 if (!$targetBook) {
                     $emptyNotice = json_encode(array(
-                        'title' => '书架为空',
-                        'page'  => 1,
-                        'pages' => 1,
-                        'text'  => '您的书架暂无小说。请先在网页端搜索并加入书架（最多10本），将自动全部推送到设备！'
+                        'ok'     => 0,
+                        'error'  => '该书已从书架移出，进度已清除',
+                        'code'   => 404,
+                        'reason' => 'BOOK_DELETED',
+                        'title'  => '书已移出',
+                        'page'   => 1,
+                        'pages'  => 1,
+                        'text'   => '该小说已从您的书架移出，本地进度已清除。请在网页控制台重新添加。'
                     ), JSON_UNESCAPED_UNICODE) . "\n";
                     @fwrite($sock, $emptyNotice);
                     return;
@@ -375,13 +379,19 @@ function handleTcpRequest($sock, $raw) {
 
                 $realBookId = $targetBook['book_id'];
 
-                // 记录阅读进度
+                // 记录阅读进度并转发，上游返回时回写真实全书页数
                 if (function_exists('updateUserNovelPage')) {
                     updateUserNovelPage($userId, $realBookId, $reqPage);
                 }
 
                 $upstreamCmd = "NOVEL {$fqKey} {$reqPage} {$realBookId}";
-                forwardFanqieTcp($sock, $upstreamCmd);
+                forwardFanqieTcp($sock, $upstreamCmd, function($resp) use ($userId, $realBookId, $reqPage) {
+                    $j = @json_decode($resp, true);
+                    $pages = ($j && !empty($j['pages'])) ? (int)$j['pages'] : null;
+                    if (function_exists('updateUserNovelPage')) {
+                        updateUserNovelPage($userId, $realBookId, $reqPage, $pages);
+                    }
+                });
                 return;
             }
 
@@ -474,6 +484,46 @@ function handleTcpRequest($sock, $raw) {
 
                 $upstreamCmd = "INFO {$fqKey}" . ($realBookId !== '' ? " {$realBookId}" : "");
                 forwardFanqieTcp($sock, $upstreamCmd);
+                return;
+            }
+
+            // 7. 进度上报（PROGRESS）：支持 PROGRESS <KEY> <PAGE> [1-10序号或ID]
+            if ($action === 'PROGRESS' || $action === 'NOVEL_PROGRESS' || $action === 'PAGE') {
+                $reqPage = 1;
+                $reqBookArg = '';
+                if ($raw[0] === '{') {
+                    $reqPage = isset($json['page']) ? max(1, (int)$json['page']) : 1;
+                    $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                } else {
+                    $tokens = preg_split('/\s+/', trim($raw));
+                    $reqPage = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
+                    $reqBookArg = isset($tokens[3]) ? trim($tokens[3]) : '';
+                }
+
+                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
+                if (!$targetBook) {
+                    $deletedNotice = json_encode(array(
+                        'ok'     => 0,
+                        'error'  => '该书已从书架移出，进度已清除',
+                        'code'   => 404,
+                        'reason' => 'BOOK_DELETED'
+                    ), JSON_UNESCAPED_UNICODE) . "\n";
+                    @fwrite($sock, $deletedNotice);
+                    return;
+                }
+
+                $realBookId = $targetBook['book_id'];
+                if (function_exists('updateUserNovelPage')) {
+                    updateUserNovelPage($userId, $realBookId, $reqPage);
+                }
+
+                $okResp = json_encode(array(
+                    'ok'      => 1,
+                    'book_id' => $realBookId,
+                    'title'   => $targetBook['title'],
+                    'page'    => $reqPage
+                ), JSON_UNESCAPED_UNICODE) . "\n";
+                @fwrite($sock, $okResp);
                 return;
             }
 
@@ -706,18 +756,29 @@ function handleTcpRequest($sock, $raw) {
         $now = time();
         $today = date('Y-m-d', $now);
 
-        // 1. 限流 60 秒 1 次
+        // 1. 限流：每分钟最多允许 2 次
         $lockDir = sys_get_temp_dir() . '/pn_roast_limits';
         if (!is_dir($lockDir)) @mkdir($lockDir, 0777, true);
         $rateFile = $lockDir . '/rate_' . md5($key);
+        $timestamps = array();
         if (is_file($rateFile)) {
-            $lastReq = (int)@file_get_contents($rateFile);
-            if ($now - $lastReq < 60) {
-                @fwrite($sock, "ERR 429 TOO MANY REQUESTS\n");
+            $saved = @file_get_contents($rateFile);
+            $arr = @json_decode($saved, true);
+            if (is_array($arr)) {
+                $timestamps = $arr;
+            } elseif (is_numeric(trim($saved))) {
+                $timestamps = array((int)trim($saved));
+            }
+            $timestamps = array_values(array_filter($timestamps, function($ts) use ($now) {
+                return ($now - $ts) < 60;
+            }));
+            if (count($timestamps) >= 2) {
+                @fwrite($sock, "ERR 429 TOO MANY REQUESTS (MAX 2 PER MINUTE)\n");
                 return;
             }
         }
-        @file_put_contents($rateFile, (string)$now, LOCK_EX);
+        $timestamps[] = $now;
+        @file_put_contents($rateFile, json_encode($timestamps), LOCK_EX);
 
         // 2. 状态描述
         $openText = '今天尚未登录便签';
@@ -1134,7 +1195,7 @@ function fetchSayingProxy() {
 /**
  * 转发 TCP 指令至上游番茄小说服务（单端口 TCP 明文单行模式）
  */
-function forwardFanqieTcp($sock, $upstreamCmd) {
+function forwardFanqieTcp($sock, $upstreamCmd, $onResponse = null) {
     $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
     $parsed = parse_url($fqHost);
     $host = isset($parsed['host']) ? $parsed['host'] : '111.170.163.248';
@@ -1161,6 +1222,11 @@ function forwardFanqieTcp($sock, $upstreamCmd) {
     @fclose($fp);
 
     if ($resp !== '') {
+        if ($onResponse && is_callable($onResponse)) {
+            try {
+                call_user_func($onResponse, $resp);
+            } catch (Throwable $e) {}
+        }
         if (substr($resp, -1) !== "\n") {
             $resp .= "\n";
         }

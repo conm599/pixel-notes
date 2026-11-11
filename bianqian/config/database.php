@@ -811,7 +811,41 @@ function touchUserLoginDate($userId) {
 
 
 /**
+ * 向番茄小说后端探测真实全书切片总页数（仅需数十毫秒，自动缓存与回写）
+ */
+function fetchNovelTotalPages($bookId) {
+    static $cache = array();
+    $bookId = trim((string)$bookId);
+    if ($bookId === '') return 0;
+    if (isset($cache[$bookId])) return $cache[$bookId];
+
+    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+    $fqKey = function_exists('getFanqieApiKey') ? getFanqieApiKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
+
+    $url = $fqHost . '/api/v1/mcu/novel?page=1&book=' . urlencode($bookId);
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array('X-API-Key: ' . $fqKey));
+    $resp = @curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code === 200 && !empty($resp)) {
+        $data = @json_decode($resp, true);
+        if ($data && !empty($data['pages']) && (int)$data['pages'] > 0) {
+            $pages = (int)$data['pages'];
+            $cache[$bookId] = $pages;
+            return $pages;
+        }
+    }
+    return 0;
+}
+
+/**
  * 获取用户的 MCU 小说书架列表（最多 10 本，已全部推送到设备）
+ * 包含 total_pages 智能自愈机制：若入库时为 0，自动探活回写真实页数，彻底杜绝 MCU 显示 8/0 页
  */
 function getUserNovels($userId) {
     try {
@@ -822,6 +856,18 @@ function getUserNovels($userId) {
         $idx = 1;
         foreach ($rows as &$r) {
             $r['i'] = $idx++; // 序号 1~10，方便单片机直接用数字选书
+            if ((int)$r['total_pages'] <= 0) {
+                $p = fetchNovelTotalPages($r['book_id']);
+                if ($p > 0) {
+                    $r['total_pages'] = $p;
+                    try {
+                        $upP = $pdo->prepare("UPDATE `pn_user_novels` SET `total_pages` = ? WHERE `id` = ?");
+                        $upP->execute(array($p, (int)$r['id']));
+                    } catch (Throwable $e) {}
+                } elseif ((int)$r['total_chapters'] > 0) {
+                    $r['total_pages'] = max(1, (int)round((int)$r['total_chapters'] * 7.2));
+                }
+            }
         }
         unset($r);
         return $rows;
@@ -854,7 +900,8 @@ function getUserNovelByIdOrIndex($userId, $arg) {
         }
     }
 
-    return getCurrentUserNovel($userId) ?: $novels[0];
+    // 显式指定了书架序号或 book_id 但未在书架找到（如已被删除或越界），严禁静默回退，直接返回 null！
+    return null;
 }
 
 /**
@@ -1005,10 +1052,15 @@ function setCurrentUserNovel($userId, $bookId) {
 /**
  * 记录用户读到的页码
  */
-function updateUserNovelPage($userId, $bookId, $page) {
+function updateUserNovelPage($userId, $bookId, $page, $totalPages = null) {
     try {
         $pdo = getDB();
-        $st = $pdo->prepare("UPDATE `pn_user_novels` SET `current_page` = ?, `updated_at` = NOW() WHERE `user_id` = ? AND `book_id` = ?");
-        $st->execute(array(max(1, (int)$page), (int)$userId, trim((string)$bookId)));
+        if ($totalPages !== null && (int)$totalPages > 0) {
+            $st = $pdo->prepare("UPDATE `pn_user_novels` SET `current_page` = ?, `total_pages` = ?, `updated_at` = NOW() WHERE `user_id` = ? AND `book_id` = ?");
+            $st->execute(array(max(1, (int)$page), (int)$totalPages, (int)$userId, trim((string)$bookId)));
+        } else {
+            $st = $pdo->prepare("UPDATE `pn_user_novels` SET `current_page` = ?, `updated_at` = NOW() WHERE `user_id` = ? AND `book_id` = ?");
+            $st->execute(array(max(1, (int)$page), (int)$userId, trim((string)$bookId)));
+        }
     } catch (Throwable $e) {}
 }

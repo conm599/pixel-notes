@@ -245,22 +245,34 @@ function handleRoast($owner, $pdo) {
     $now = time();
     $today = date('Y-m-d', $now);
 
-    // 1. 限流：每分钟最多 1 次
+    // 1. 限流：每分钟最多允许 2 次
     $lockDir = sys_get_temp_dir() . '/pn_roast_limits';
     if (!is_dir($lockDir)) @mkdir($lockDir, 0777, true);
     $rateFile = $lockDir . '/rate_' . md5((string)$owner['api_key']);
+    $timestamps = array();
     if (is_file($rateFile)) {
-        $lastReq = (int)@file_get_contents($rateFile);
-        if ($now - $lastReq < 60) {
-            $retryAfter = 60 - ($now - $lastReq);
+        $saved = @file_get_contents($rateFile);
+        $arr = @json_decode($saved, true);
+        if (is_array($arr)) {
+            $timestamps = $arr;
+        } elseif (is_numeric(trim($saved))) {
+            $timestamps = array((int)trim($saved));
+        }
+        $timestamps = array_values(array_filter($timestamps, function($ts) use ($now) {
+            return ($now - $ts) < 60;
+        }));
+        if (count($timestamps) >= 2) {
+            $oldest = min($timestamps);
+            $retryAfter = max(1, 60 - ($now - $oldest));
             http_response_code(429);
             header('Retry-After: ' . $retryAfter);
             header('Content-Type: text/plain; charset=utf-8');
-            echo '请求太频繁，请稍候再试';
+            echo '请求太频繁（模型接口每分钟最多2次），请稍候再试';
             exit;
         }
     }
-    @file_put_contents($rateFile, (string)$now, LOCK_EX);
+    $timestamps[] = $now;
+    @file_put_contents($rateFile, json_encode($timestamps), LOCK_EX);
 
     // 2. 获取当天的便签状态
     $openText = '今天尚未登录便签';
@@ -972,6 +984,10 @@ function handleNovelProxy($owner) {
                 }
             }
         }
+        // 若 pages 仍为 0，向后端拉取第 1 页正文元数据以获取真实全书切片总页数
+        if ($bPages <= 0 && function_exists('fetchNovelTotalPages')) {
+            $bPages = fetchNovelTotalPages($bId);
+        }
 
         $res = function_exists('addUserNovel') ? addUserNovel($userId, $bId, $bTitle, $bAuthor, $bChaps, $bPages, $bCover) : array('ok' => false, 'error' => '功能未初始化');
         header('Content-Type: application/json; charset=utf-8');
@@ -1053,6 +1069,38 @@ function handleNovelProxy($owner) {
                 $_GET['n'] = 1;
             }
         }
+    }
+
+    // 7. 进度上报接口（PROGRESS）：防止 MCU 反复擦写 Flash
+    if ($action === 'progress' || $action === 'novel_progress') {
+        $reqPage = isset($_REQUEST['page']) ? max(1, (int)$_REQUEST['page']) : 1;
+        $reqBook = isset($_REQUEST['book']) ? trim((string)$_REQUEST['book']) : (isset($_REQUEST['book_id']) ? trim((string)$_REQUEST['book_id']) : '');
+        $targetNovel = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBook) : null;
+        if (!$targetNovel) {
+            http_response_code(404);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array(
+                'ok' => false,
+                'error' => '该书已从书架移出，进度已清除',
+                'code' => 404,
+                'reason' => 'BOOK_DELETED'
+            ), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $realBookId = $targetNovel['book_id'];
+        if (function_exists('updateUserNovelPage')) {
+            updateUserNovelPage($userId, $realBookId, $reqPage);
+        }
+
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array(
+            'ok' => true,
+            'book_id' => $realBookId,
+            'title' => $targetNovel['title'],
+            'page' => $reqPage
+        ), JSON_UNESCAPED_UNICODE);
+        exit;
     }
 
     // 处理 POST 请求（透传单行指令或 REST 提交）
@@ -1185,6 +1233,13 @@ function handleNovelProxy($owner) {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store, no-cache, must-revalidate');
     if ($code >= 200 && $code < 300 && !empty($resp)) {
+        if ($action === 'novel' && !empty($_GET['book'])) {
+            $nj = @json_decode($resp, true);
+            if ($nj && !empty($nj['pages']) && (int)$nj['pages'] > 0) {
+                $curP = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+                updateUserNovelPage($userId, $_GET['book'], $curP, (int)$nj['pages']);
+            }
+        }
         echo $resp;
     } else {
         http_response_code($code > 0 ? $code : 502);
