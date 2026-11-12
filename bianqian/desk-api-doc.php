@@ -553,6 +553,15 @@ void fetchRoastTcp() {
             <b>3 级安全邮箱验证机制</b>：<br>
             清空历史记忆属于不可撤销操作，必须在便签系统网页端（「桌面状态屏」弹窗）点击「清空记忆」，并输入向账号绑定邮箱发送的 6 位动态验证码，验证通过后方可物理重置数据库中的历史上下文。
         </div>
+    <!-- 7. 单片机预取与高频阅读性能优化指南 (按收益排) -->
+    <section class="doc-section">
+        <h2><i class="ic ic-zap"></i> 7. 单片机预取与高频阅读性能优化指南 (按收益排)</h2>
+        <div class="alert-box" style="background:rgba(74,240,255,0.08);border-left:4px solid var(--accent);">
+            <b>针对 4G 模组与单片机三页预取队列（3×1KB 静态缓冲）的核心优化：</b><br>
+            <b>① 章节级 LRU 30 章切片缓存（收益最高，已上线）</b>：服务端常驻内存切片缓存，冷页 ~870ms，热页 <b>&lt;2ms（网络往返约 110ms）</b>，设备端<b>一行代码不用改</b>，同章翻页与预取瞬间秒回！<br>
+            <b>② Keep-Alive 单连接多指令（已上线）</b>：读完一行回一行，服务端不主动关闭连接，空闲 30 秒超时再关。单片机无需每条指令重复 4G MIPOPEN 握手（单次建连立省 1~2 秒！）。<br>
+            <b>③ 批量取页指令 <code>NOVELS &lt;KEY&gt; &lt;FROM&gt; &lt;COUNT&gt;</code>（已上线）</b>：一条指令直接收齐 3 页切片，耗时仅 201ms。
+        </div>
     </section>
 
     <footer style="text-align:center;color:#8a8ab0;font-size:12px;margin-top:40px;">

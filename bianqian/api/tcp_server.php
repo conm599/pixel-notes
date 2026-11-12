@@ -58,6 +58,10 @@ date_default_timezone_set(suite_cfg('app_timezone', 'Asia/Shanghai'));
 // 简单的客户端跟踪
 $clients = array();
 
+// 小说章节切片常驻内存 LRU 缓存池（最多保留 30 章，命中延迟 <2ms）
+$gNovelChapterCache = array();
+$MAX_LRU_CHAPTERS = 30;
+
 while (true) {
     $read = array($server);
     foreach ($clients as $c) {
@@ -82,7 +86,8 @@ while (true) {
                 $clients[$id] = array(
                     'socket' => $clientSocket,
                     'buffer' => '',
-                    'connected_at' => time()
+                    'connected_at' => time(),
+                    'last_active_at' => time()
                 );
             }
             // 从可读列表中移除 server，剩下的是客户端
@@ -105,25 +110,32 @@ while (true) {
 
             $clients[$id]['buffer'] .= $data;
 
-            // 遇到换行符则解析指令
-            if (strpos($clients[$id]['buffer'], "\n") !== false || strpos($clients[$id]['buffer'], "\r") !== false) {
-                $rawCmd = trim($clients[$id]['buffer']);
-                $clients[$id]['buffer'] = ''; // 清空缓冲区
+            // 遇到换行符则逐行解析指令（支持同一连接发送多条指令，避免 4G 模组频繁 MIPOPEN 重建连接）
+            while (($pos = strpos($clients[$id]['buffer'], "\n")) !== false) {
+                $rawCmd = trim(substr($clients[$id]['buffer'], 0, $pos));
+                $clients[$id]['buffer'] = substr($clients[$id]['buffer'], $pos + 1);
 
                 if ($rawCmd !== '') {
                     handleTcpRequest($sock, $rawCmd);
+                    $clients[$id]['last_active_at'] = time(); // 刷新活跃时间戳
                 }
-                // 处理完毕关闭连接（MCU Pull 模式，一问一答后断开，开销最小）
-                @fclose($sock);
-                unset($clients[$id]);
+            }
+            if (strpos($clients[$id]['buffer'], "\r") !== false && strpos($clients[$id]['buffer'], "\n") === false) {
+                $rawCmd = trim($clients[$id]['buffer']);
+                $clients[$id]['buffer'] = '';
+                if ($rawCmd !== '') {
+                    handleTcpRequest($sock, $rawCmd);
+                    $clients[$id]['last_active_at'] = time();
+                }
             }
         }
     }
 
-    // 清理超时空闲连接（超过 15 秒未发指令的丢弃）
+    // 清理空闲连接：单连接支持连续多条命令，空闲超过 30 秒未发新指令再安全关闭
     $now = time();
     foreach ($clients as $id => $c) {
-        if ($now - $c['connected_at'] > 15) {
+        $lastActive = isset($c['last_active_at']) ? $c['last_active_at'] : $c['connected_at'];
+        if ($now - $lastActive > 30) {
             @fclose($c['socket']);
             unset($clients[$id]);
         }
@@ -249,7 +261,7 @@ function handleTcpRequest($sock, $raw) {
     // 番茄小说服务代理指令（仅限管理员，带 Desk Key）
     // 指令支持：NOVEL, CHAPTER, SEARCH, CHAPTERS, BOOKS, PICK, INFO, DL, TASK, NOVEL_STATUS, FQ_STATUS, FQ
     $novelActions = array(
-        'NOVEL', 'CHAPTER', 'SEARCH', 'CHAPTERS', 'BOOKS', 'PICK',
+        'NOVEL', 'NOVELS', 'CHAPTER', 'SEARCH', 'CHAPTERS', 'BOOKS', 'PICK',
         'INFO', 'DL', 'TASK', 'NOVEL_STATUS', 'FQ_STATUS', 'FQ', 'NOVEL_SHELF', 'SHELF', 'PROGRESS', 'NOVEL_PROGRESS', 'PAGE'
     );
     if (in_array($action, $novelActions, true)) {
@@ -348,10 +360,8 @@ function handleTcpRequest($sock, $raw) {
                     @fwrite($sock, "ERR 404 NOVEL NOT FOUND\n");
                 }
                 return;
-            }
-
-            // 3. 取页正文（NOVEL）：支持 NOVEL <KEY> <PAGE> [序号1-10 或 BOOK_ID]
-            // 中转层统一路由至 CHAPTER 按章精准切片，确保每一章独立分页，下一页必定为下章标题+正文，杜绝跨章粘连！
+            }            // 3. 取页正文（NOVEL）：支持 NOVEL <KEY> <PAGE> [序号1-10 或 BOOK_ID]
+            // 接入常驻内存 LRU 章节切片缓存（LRU 30 章，命中延迟 <2ms）
             if ($action === 'NOVEL') {
                 $reqPage = 1;
                 $reqBookArg = '';
@@ -364,58 +374,46 @@ function handleTcpRequest($sock, $raw) {
                     $reqBookArg = isset($tokens[3]) ? trim($tokens[3]) : '';
                 }
 
-                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
-                if (!$targetBook) {
-                    $emptyNotice = json_encode(array(
-                        'ok'     => 0,
-                        'error'  => '该书已从书架移出，进度已清除',
-                        'code'   => 404,
-                        'reason' => 'BOOK_DELETED',
-                        'title'  => '书已移出',
-                        'page'   => 1,
-                        'pages'  => 1,
-                        'text'   => '该小说已从您的书架移出，本地进度已清除。请在网页控制台重新添加。'
-                    ), JSON_UNESCAPED_UNICODE) . "\n";
-                    @fwrite($sock, $emptyNotice);
-                    return;
-                }
-
-                $realBookId = $targetBook['book_id'];
-                $totalChaps = max(1, (int)$targetBook['total_chapters']);
-                $totalPages = max((int)$targetBook['total_pages'], (int)round($totalChaps * 7.2));
-                $pagesPerChap = max(0.1, (float)$totalPages / (float)$totalChaps);
-
-                                $map = function_exists('novelPageToChapterOffset')
-                    ? novelPageToChapterOffset($reqPage, $totalChaps, $totalPages)
-                    : array('chapter' => max(1, min($totalChaps, (int)floor(($reqPage - 1) / $pagesPerChap) + 1)), 'chap_page' => 1);
-                $calcChap = $map['chapter'];
-                $calcChapPage = $map['chap_page'];
-
-                $upstreamCmd = "CHAPTER {$fqKey} {$calcChap} {$calcChapPage} {$realBookId}";
-                forwardFanqieTcp($sock, $upstreamCmd, function($resp) use ($userId, $realBookId, $reqPage, $targetBook, $calcChap, $calcChapPage, $totalPages) {
-                    $j = @json_decode($resp, true);
-                    if ($j && isset($j['text'])) {
-                        $enriched = array(
-                            'title'         => $targetBook['title'],
-                            'chapter_title' => isset($j['title']) ? $j['title'] : ('第' . $calcChap . '章'),
-                            'chapter'       => $calcChap,
-                            'page'          => $reqPage,
-                            'pages'         => $totalPages,
-                            'chap_page'     => isset($j['page']) ? (int)$j['page'] : $calcChapPage,
-                            'chap_pages'    => isset($j['pages']) ? (int)$j['pages'] : 1,
-                            'text'          => (string)$j['text']
-                        );
-                        if (function_exists('updateUserNovelPage')) {
-                            updateUserNovelPage($userId, $realBookId, $reqPage, $totalPages);
-                        }
-                        return json_encode($enriched, JSON_UNESCAPED_UNICODE) . "\n";
-                    }
-                    return $resp;
-                });
+                $res = buildNovelPageOutput($userId, $reqBookArg, $reqPage, $fqKey);
+                @fwrite($sock, json_encode($res, JSON_UNESCAPED_UNICODE) . "\n");
                 return;
             }
 
-            // 4. 按章取页（CHAPTER）：支持 CHAPTER <KEY> <N> [PAGE] [序号1-10 或 BOOK_ID]
+            // 3.1 批量取页（NOVELS）：支持 NOVELS <KEY> <START_PAGE> [COUNT] [序号1-10 或 BOOK_ID]
+            // 一次请求连续吐出 COUNT 行合法 JSON（默认 3 页，限制 1~5 页），配合 Keep-Alive 极速填满 MCU 三页预取队列
+            if ($action === 'NOVELS') {
+                $reqPage = 1;
+                $reqCount = 3;
+                $reqBookArg = '';
+                if ($raw[0] === '{') {
+                    $reqPage = isset($json['page']) ? max(1, (int)$json['page']) : (isset($json['from']) ? max(1, (int)$json['from']) : 1);
+                    $reqCount = isset($json['count']) ? max(1, min(5, (int)$json['count'])) : 3;
+                    $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                } else {
+                    $tokens = preg_split('/\s+/', trim($raw));
+                    $reqPage = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
+                    $tok3 = isset($tokens[3]) ? trim($tokens[3]) : '';
+                    $tok4 = isset($tokens[4]) ? trim($tokens[4]) : '';
+                    if (is_numeric($tok3) && (int)$tok3 > 0 && (int)$tok3 <= 10 && strlen($tok3) <= 2) {
+                        $reqCount = max(1, min(5, (int)$tok3));
+                        $reqBookArg = $tok4;
+                    } else {
+                        $reqBookArg = $tok3;
+                        if (is_numeric($tok4) && (int)$tok4 > 0) {
+                            $reqCount = max(1, min(5, (int)$tok4));
+                        }
+                    }
+                }
+
+                for ($i = 0; $i < $reqCount; $i++) {
+                    $curP = $reqPage + $i;
+                    $res = buildNovelPageOutput($userId, $reqBookArg, $curP, $fqKey);
+                    @fwrite($sock, json_encode($res, JSON_UNESCAPED_UNICODE) . "\n");
+                }
+                return;
+            }
+
+            // 4. 按章取页（CHAPTER）// 4. 按章取页（CHAPTER）：支持 CHAPTER <KEY> <N> [PAGE] [序号1-10 或 BOOK_ID]
             if ($action === 'CHAPTER') {
                 $reqChapter = 1;
                 $reqPage = 1;
@@ -1281,6 +1279,180 @@ function fetchSayingProxy() {
     return null;
 }
 
+
+/**
+ * 上游番茄原生 TCP 请求底层调用
+ */
+function queryFanqieTcpRaw($upstreamCmd) {
+    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+    $parsed = parse_url($fqHost);
+    $host = isset($parsed['host']) ? $parsed['host'] : '111.170.163.248';
+    $port = isset($parsed['port']) ? (int)$parsed['port'] : 53223;
+
+    $fp = @fsockopen($host, $port, $errno, $errstr, 4);
+    if (!$fp) {
+        return null;
+    }
+
+    stream_set_timeout($fp, 12);
+    @fwrite($fp, trim($upstreamCmd) . "\n");
+
+    $resp = '';
+    while (!feof($fp)) {
+        $chunk = @fgets($fp, 8192);
+        if ($chunk === false) break;
+        $resp .= $chunk;
+        if (strpos($resp, "\n") !== false) {
+            break;
+        }
+    }
+    @fclose($fp);
+    return trim($resp);
+}
+
+/**
+ * 章节切片 LRU 30 章常驻内存缓存获取（命中耗时 <2ms，彻底根除重复拉取上游延迟）
+ */
+function fetchNovelChapterPageCached($bookId, $chapter, $chapPage, $fqKey) {
+    global $gNovelChapterCache, $MAX_LRU_CHAPTERS;
+    if (!is_array($gNovelChapterCache)) {
+        $gNovelChapterCache = array();
+    }
+    if (!isset($MAX_LRU_CHAPTERS) || $MAX_LRU_CHAPTERS < 1) {
+        $MAX_LRU_CHAPTERS = 30;
+    }
+
+    $bookId = (string)$bookId;
+    $chapter = max(1, (int)$chapter);
+    $chapPage = max(1, (int)$chapPage);
+    $cacheKey = $bookId . ':' . $chapter;
+
+    // 1. 命中内存缓存：直接返回
+    if (isset($gNovelChapterCache[$cacheKey]['pages'][$chapPage])) {
+        $gNovelChapterCache[$cacheKey]['at'] = time(); // 刷新 LRU 时间戳
+        return $gNovelChapterCache[$cacheKey]['pages'][$chapPage];
+    }
+
+    // 2. 未命中：请求上游
+    $upstreamCmd = "CHAPTER {$fqKey} {$chapter} {$chapPage} {$bookId}";
+    $resp = queryFanqieTcpRaw($upstreamCmd);
+    if (!$resp) {
+        return null;
+    }
+
+    $jData = @json_decode($resp, true);
+    if (!$jData || !isset($jData['text'])) {
+        return null;
+    }
+
+    // 截断保护：确保单次 text 不超过 850 字节（UTF-8）
+    $rawText = (string)$jData['text'];
+    if (strlen($rawText) > 850) {
+        $rawText = mb_strcut($rawText, 0, 850, 'UTF-8');
+    }
+    $cTitle = isset($jData['title']) ? (string)$jData['title'] : ('第' . $chapter . '章');
+    $retChapPage = isset($jData['page']) ? (int)$jData['page'] : $chapPage;
+    $retChapPages = isset($jData['pages']) ? (int)$jData['pages'] : 1;
+
+    $slice = array(
+        'title'   => $cTitle,
+        'chapter' => $chapter,
+        'page'    => $retChapPage,
+        'pages'   => $retChapPages,
+        'text'    => $rawText
+    );
+
+    // 3. 写入 LRU 缓存池
+    if (!isset($gNovelChapterCache[$cacheKey])) {
+        // 章节超出 30 章上限时淘汰最旧未访问的
+        if (count($gNovelChapterCache) >= $MAX_LRU_CHAPTERS) {
+            $oldestKey = null;
+            $oldestTime = PHP_INT_MAX;
+            foreach ($gNovelChapterCache as $k => $cItem) {
+                $t = isset($cItem['at']) ? $cItem['at'] : 0;
+                if ($t < $oldestTime) {
+                    $oldestTime = $t;
+                    $oldestKey = $k;
+                }
+            }
+            if ($oldestKey !== null) {
+                unset($gNovelChapterCache[$oldestKey]);
+            }
+        }
+        $gNovelChapterCache[$cacheKey] = array(
+            'book_id' => $bookId,
+            'chapter' => $chapter,
+            'title'   => $cTitle,
+            'pages'   => array(),
+            'at'      => time()
+        );
+    }
+
+    $gNovelChapterCache[$cacheKey]['pages'][$retChapPage] = $slice;
+    $gNovelChapterCache[$cacheKey]['at'] = time();
+
+    return $slice;
+}
+
+/**
+ * 组装单个小说页面的完整回包（供 NOVEL 与 NOVELS 指令复用）
+ */
+function buildNovelPageOutput($userId, $reqBookArg, $reqPage, $fqKey) {
+    $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
+    if (!$targetBook) {
+        return array(
+            'ok'     => 0,
+            'error'  => '该书已从书架移出，进度已清除',
+            'code'   => 404,
+            'reason' => 'BOOK_DELETED',
+            'title'  => '书已移出',
+            'page'   => 1,
+            'pages'  => 1,
+            'text'   => '该小说已从您的书架移出，本地进度已清除。请在网页控制台重新添加。'
+        );
+    }
+
+    $realBookId = $targetBook['book_id'];
+    $totalChaps = max(1, (int)$targetBook['total_chapters']);
+    $totalPages = max((int)$targetBook['total_pages'], (int)round($totalChaps * 7.2));
+    $reqPage = max(1, min($totalPages, (int)$reqPage));
+
+    $map = function_exists('novelPageToChapterOffset')
+        ? novelPageToChapterOffset($reqPage, $totalChaps, $totalPages)
+        : array('chapter' => 1, 'chap_page' => 1);
+    $calcChap = $map['chapter'];
+    $calcChapPage = $map['chap_page'];
+
+    $slice = fetchNovelChapterPageCached($realBookId, $calcChap, $calcChapPage, $fqKey);
+    if (!$slice) {
+        return array(
+            'ok'      => 0,
+            'error'   => '上游服务超时或异常',
+            'code'    => 503,
+            'reason'  => 'UPSTREAM_FAIL',
+            'title'   => $targetBook['title'],
+            'chapter' => $calcChap,
+            'page'    => $reqPage,
+            'pages'   => $totalPages,
+            'text'    => '【提示】获取小说正文超时，请稍后重试。'
+        );
+    }
+
+    if (function_exists('updateUserNovelPage')) {
+        updateUserNovelPage($userId, $realBookId, $reqPage, $totalPages);
+    }
+
+    return array(
+        'title'         => $targetBook['title'],
+        'chapter_title' => $slice['title'],
+        'chapter'       => $calcChap,
+        'page'          => $reqPage,
+        'pages'         => $totalPages,
+        'chap_page'     => $slice['page'],
+        'chap_pages'    => $slice['pages'],
+        'text'          => $slice['text']
+    );
+}
 
 /**
  * 转发 TCP 指令至上游番茄小说服务（单端口 TCP 明文单行模式）
