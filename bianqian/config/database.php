@@ -82,6 +82,44 @@ define('DB_PASS', suite_cfg('bianqian_db_pass', 'CHANGE_ME_DB_PASS')); // 凭证
 date_default_timezone_set(suite_cfg('app_timezone', 'Asia/Shanghai'));
 
 /**
+ * 确保本机番茄小说下载/网关服务后台常驻 (127.0.0.1:53223 / 8091)
+ * 仅对本机 127.0.0.1 开放，不对外暴露公网 IP，不影响其他业务
+ */
+function ensureFanqieServiceRunning() {
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+
+    // 0.05s 超时探测本地 53223 端口是否已就绪
+    $fp = @fsockopen('127.0.0.1', 53223, $errno, $errstr, 0.05);
+    if ($fp) {
+        @fclose($fp);
+        return;
+    }
+
+    $fqDir = dirname(__DIR__) . '/fqdl/service';
+    $script = $fqDir . '/fq_service.py';
+    if (!is_file($script)) return;
+
+    $phpBin = '/usr/bin/python3';
+    if (!is_file($phpBin)) $phpBin = 'python3';
+
+    $logFile = dirname(__DIR__) . '/fqdl/service.log';
+    $cmd = sprintf('cd %s && %s %s > %s 2>&1 &',
+        escapeshellarg($fqDir),
+        escapeshellarg($phpBin),
+        escapeshellarg($script),
+        escapeshellarg($logFile)
+    );
+
+    if (function_exists('exec')) {
+        @exec($cmd);
+    } elseif (function_exists('shell_exec')) {
+        @shell_exec($cmd);
+    }
+}
+
+/**
  * 确保明文 TCP 服务随 PHP 请求自愈拉起
  * 端口默认 8888，已在监听则 0.05s 内退出，未监听则后台静默拉起
  */
@@ -119,6 +157,7 @@ function ensureDeskTcpServerRunning($port = 8888, $force = false) {
     }
 }
 
+ensureFanqieServiceRunning();
 ensureDeskTcpServerRunning(8888);
 
 function getDB() {
@@ -479,9 +518,9 @@ function getUapisApiKey() {
  * 获取番茄小说代理服务配置（仅限管理员代理使用）
  */
 function getFanqieHost() {
-    $host = trim(getSetting('fanqie_host', 'http://111.170.163.248:53223'));
+    $host = trim(getSetting('fanqie_host', 'http://127.0.0.1:53223'));
     if ($host === '') {
-        $host = 'http://111.170.163.248:53223';
+        $host = 'http://127.0.0.1:53223';
     }
     return rtrim($host, '/');
 }
@@ -1020,6 +1059,10 @@ function removeUserNovel($userId, $bookId) {
                 $pdo->prepare("UPDATE `pn_user_novels` SET `is_current` = 1 WHERE `id` = ?")->execute(array((int)$nextId));
             }
         }
+
+        // 用户要求：删掉书时，直接不管 TTL 彻底物理清理上游缓存与云端数据
+        purgeNovelUpstreamAndCache($bookId);
+
         return array('ok' => true);
     } catch (Exception $e) {
         return array('ok' => false, 'error' => $e->getMessage());
@@ -1029,6 +1072,41 @@ function removeUserNovel($userId, $bookId) {
 /**
  * 设置某本书为当前激活推送到 MCU 的书
  */
+/**
+ * 彻底物理清空某一本书在上游与中转层的全部缓存与落盘文件（无视 TTL）
+ */
+function purgeNovelUpstreamAndCache($bookId) {
+    $bookId = trim((string)$bookId);
+    if ($bookId === '') return;
+
+    // 1. 清理中转层全局切片缓存
+    global $gNovelChapterCache;
+    if (isset($gNovelChapterCache) && is_array($gNovelChapterCache)) {
+        foreach (array_keys($gNovelChapterCache) as $ck) {
+            if (strpos($ck, $bookId . ':') === 0) {
+                unset($gNovelChapterCache[$ck]);
+            }
+        }
+    }
+
+    // 2. 向本地番茄服务 127.0.0.1:53223 发送 PURGE_BOOK 指令
+    try {
+        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://127.0.0.1:53223';
+        $parsed = parse_url($fqHost);
+        $host = isset($parsed['host']) ? $parsed['host'] : '127.0.0.1';
+        $port = isset($parsed['port']) ? (int)$parsed['port'] : 53223;
+        $fqKey = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
+
+        $fp = @fsockopen($host, $port, $errno, $errstr, 2);
+        if ($fp) {
+            stream_set_timeout($fp, 3);
+            @fwrite($fp, "PURGE_BOOK " . $fqKey . " " . $bookId . "\n");
+            $resp = @fgets($fp, 2048);
+            @fclose($fp);
+        }
+    } catch (Throwable $e) {}
+}
+
 function setCurrentUserNovel($userId, $bookId) {
     try {
         $pdo = getDB();

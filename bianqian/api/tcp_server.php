@@ -262,7 +262,7 @@ function handleTcpRequest($sock, $raw) {
     // 指令支持：NOVEL, CHAPTER, SEARCH, CHAPTERS, BOOKS, PICK, INFO, DL, TASK, NOVEL_STATUS, FQ_STATUS, FQ
     $novelActions = array(
         'NOVEL', 'NOVELS', 'CHAPTER', 'SEARCH', 'CHAPTERS', 'BOOKS', 'PICK',
-        'INFO', 'DL', 'TASK', 'NOVEL_STATUS', 'FQ_STATUS', 'FQ', 'NOVEL_SHELF', 'SHELF', 'PROGRESS', 'NOVEL_PROGRESS', 'PAGE'
+        'INFO', 'DL', 'TASK', 'NOVEL_STATUS', 'FQ_STATUS', 'FQ', 'NOVEL_SHELF', 'SHELF', 'PROGRESS', 'NOVEL_PROGRESS', 'PAGE', 'PURGE_BOOK', 'DELETE_BOOK', 'PURGE'
     );
     if (in_array($action, $novelActions, true)) {
         if ($raw[0] === '{') {
@@ -379,6 +379,48 @@ function handleTcpRequest($sock, $raw) {
                 return;
             }
 
+
+            // 6. 彻底删书与清除缓存（PURGE_BOOK / DELETE_BOOK）：无视 TTL，物理清空中转层与上游的所有缓存与落盘数据
+            if ($action === 'PURGE_BOOK' || $action === 'DELETE_BOOK' || $action === 'PURGE') {
+                $delBookArg = '';
+                if ($raw[0] === '{') {
+                    $delBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
+                } else {
+                    $tokens = preg_split('/\s+/', trim($raw));
+                    $delBookArg = isset($tokens[2]) ? trim($tokens[2]) : '';
+                }
+
+                $realBookId = $delBookArg;
+                if ($realBookId !== '' && is_numeric($realBookId) && (int)$realBookId >= 1 && (int)$realBookId <= 10 && strlen($realBookId) <= 2) {
+                    $userBooks = function_exists('getUserNovels') ? getUserNovels($userId) : array();
+                    foreach ($userBooks as $ub) {
+                        if ((int)($ub['i'] ?? 0) === (int)$realBookId) {
+                            $realBookId = $ub['book_id'];
+                            break;
+                        }
+                    }
+                }
+
+                // 1) 从书架移除
+                if (function_exists('removeUserNovel') && $realBookId !== '') {
+                    removeUserNovel($userId, $realBookId);
+                }
+
+                // 2) 清空中转层切片池
+                global $gNovelChapterCache;
+                if (is_array($gNovelChapterCache) && $realBookId !== '') {
+                    foreach (array_keys($gNovelChapterCache) as $ck) {
+                        if (strpos($ck, $realBookId . ':') === 0) {
+                            unset($gNovelChapterCache[$ck]);
+                        }
+                    }
+                }
+
+                // 3) 向上游发送 PURGE_BOOK 物理清除
+                $upstreamCmd = "PURGE_BOOK " . $fqKey . " " . $realBookId;
+                forwardFanqieTcp($sock, $upstreamCmd);
+                return;
+            }
             // 3.1 批量取页（NOVELS）：支持 NOVELS <KEY> <START_PAGE> [COUNT] [序号1-10 或 BOOK_ID]
             // 一次请求连续吐出 COUNT 行合法 JSON（默认 3 页，限制 1~5 页），配合 Keep-Alive 极速填满 MCU 三页预取队列
             if ($action === 'NOVELS') {
@@ -954,11 +996,18 @@ function sendTcpStream($sock, $text) {
     $len = mb_strlen($text, 'UTF-8');
     for ($i = 0; $i < $len; $i++) {
         $char = mb_substr($text, $i, 1, 'UTF-8');
-        @fwrite($sock, $char);
+        $w = @fwrite($sock, $char);
+        if ($w === false) {
+            break; // 客户端异常断开，立即退出
+        }
+        @fflush($sock);
         usleep(100000); // 100ms = 0.1s
     }
+    // 流式吐字结束定界符：必须发送且仅发送一个换行符并立即 flush，连接保持保活
     @fwrite($sock, "\n");
+    @fflush($sock);
 }
+
 
 function tcpSanitizeRoast($text) {
     $text = str_replace(array("\r", "\n", "\t", '"', "'", "`", "\\"), ' ', $text);
@@ -1322,6 +1371,16 @@ function splitChapterTextIntoPages($title, $chapter, $fullText) {
         return array();
     }
 
+    // 确保每章第 1 页开头必须包含章节名称（如 "第6章 章节名"）
+    $cleanTitle = trim((string)$title);
+    if ($cleanTitle !== '') {
+        $first100 = mb_substr($fullText, 0, 100, 'UTF-8');
+        if (mb_strpos($first100, $cleanTitle, 0, 'UTF-8') === false &&
+            !preg_match('/^第\s*' . (int)$chapter . '\s*章/u', $first100)) {
+            $fullText = $cleanTitle . "\n" . $fullText;
+        }
+    }
+
     $pages = array();
     $maxBytes = 850; // 单片机静态缓冲 1024 字节，预留 JSON 键名元数据空间
     $maxChars = 280; // 目标每页汉字数
@@ -1337,7 +1396,7 @@ function splitChapterTextIntoPages($title, $chapter, $fullText) {
 
         // 尝试在自然段落换行处分割（如果剩余字数足够）
         if ($offset + $takeChars < $len) {
-            $lastNl = mb_strrpos($sub, "\n", 'UTF-8');
+            $lastNl = mb_strrpos($sub, "\n", 0, 'UTF-8');
             if ($lastNl !== false && $lastNl > 150) {
                 $sub = mb_substr($sub, 0, $lastNl + 1, 'UTF-8');
                 $takeChars = mb_strlen($sub, 'UTF-8');
@@ -1358,12 +1417,13 @@ function splitChapterTextIntoPages($title, $chapter, $fullText) {
     $totalP = count($pages);
     $result = array();
     foreach ($pages as $pNum => $txt) {
+        $flatTxt = preg_replace('/\s+/', ' ', $txt);
         $result[$pNum] = array(
             'title'   => $title,
             'chapter' => (int)$chapter,
             'page'    => $pNum,
             'pages'   => $totalP,
-            'text'    => $txt
+            'text'    => $flatTxt
         );
     }
     return $result;
@@ -1390,9 +1450,21 @@ function fetchNovelChapterPageCached($bookId, $chapter, $chapPage, $fqKey) {
     }
 
     // 2. 未命中：请求上游
-    // 优先尝试向期望的上游整章接口请求，若上游暂不支持则回退单页切片
-    $upstreamCmd = "CHAPTER {$fqKey} {$chapter} {$chapPage} {$bookId}";
+    // 优先向上游发起 CHAPTER_RAW 指令获取整章长文本（上游内存池命中仅需 ~90ms，全章一次性就绪）
+    $upstreamCmd = "CHAPTER_RAW {$fqKey} {$chapter} {$bookId}";
     $resp = queryFanqieTcpRaw($upstreamCmd);
+
+    // 兼容回退写法：若上游暂不支持则回退 CHAPTER <KEY> <N> 0 <BOOK>
+    if (!$resp || strpos($resp, 'ERR') === 0) {
+        $upstreamCmd = "CHAPTER {$fqKey} {$chapter} 0 {$bookId}";
+        $resp = queryFanqieTcpRaw($upstreamCmd);
+    }
+    // 再次回退：旧版单页切片
+    if (!$resp || strpos($resp, 'ERR') === 0) {
+        $upstreamCmd = "CHAPTER {$fqKey} {$chapter} {$chapPage} {$bookId}";
+        $resp = queryFanqieTcpRaw($upstreamCmd);
+    }
+
     if (!$resp) {
         return null;
     }

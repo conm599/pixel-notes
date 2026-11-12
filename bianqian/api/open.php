@@ -82,6 +82,40 @@ if ($endpoint === 'reload_tcp') {
         echo json_encode(array('success' => true, 'message' => 'TCP server reloaded'));
         exit;
     }
+}
+
+// 特权维护端点：更新并重启 VPS 本地番茄服务
+if ($endpoint === 'update_fqdl') {
+    $token = isset($_GET['token']) ? (string)$_GET['token'] : '';
+    $deployFile = dirname(__DIR__) . '/_deploy.php';
+    $realToken = '';
+    if (is_file($deployFile)) {
+        $c = @file_get_contents($deployFile);
+        if ($c && preg_match("/define\('DEPLOY_TOKEN',\s*'([^']+)'\)/", $c, $m)) {
+            $realToken = $m[1];
+        }
+    }
+    if ($realToken !== '' && $token !== '' && hash_equals($realToken, $token)) {
+        $fqDir = dirname(__DIR__) . '/fqdl/service';
+        $targetFile = isset($_GET['file']) ? trim($_GET['file']) : '';
+        $written = 0;
+        if ($targetFile === 'fq_mcu.py' || $targetFile === 'fq_service.py') {
+            $input = file_get_contents('php://input');
+            if ($input) {
+                $written = file_put_contents($fqDir . '/' . $targetFile, $input, LOCK_EX);
+            }
+        }
+        if (function_exists('exec')) {
+            @exec('pkill -f fq_service.py');
+        } elseif (function_exists('shell_exec')) {
+            @shell_exec('pkill -f fq_service.py');
+        }
+        usleep(600000);
+        ensureFanqieServiceRunning();
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array('success' => true, 'updated' => $targetFile, 'bytes' => $written));
+        exit;
+    }
     http_response_code(403);
     echo json_encode(array('error' => 'Forbidden'));
     exit;
