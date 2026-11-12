@@ -85,6 +85,25 @@ if ($endpoint === 'reload_tcp') {
 }
 
 // 特权维护端点：更新并重启 VPS 本地番茄服务
+if ($endpoint === 'diag') {
+    $token = isset($_GET['token']) ? (string)$_GET['token'] : '';
+    $deployFile = dirname(__DIR__) . '/_deploy.php';
+    $realToken = '';
+    if (is_file($deployFile)) {
+        $ct = @file_get_contents($deployFile);
+        if ($ct && preg_match("/define\('DEPLOY_TOKEN',\s*'([^']+)'\)/", $ct, $m)) {
+            $realToken = $m[1];
+        }
+    }
+    if ($realToken !== '' && $token !== '' && hash_equals($realToken, $token)) {
+        $ps = shell_exec('ps aux | grep -E "tcp_server|fq_service|python" | grep -v grep');
+        $net = shell_exec('netstat -tlpn 2>&1');
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array('ps' => $ps, 'net' => $net));
+        exit;
+    }
+}
+
 if ($endpoint === 'update_fqdl') {
     $token = isset($_GET['token']) ? (string)$_GET['token'] : '';
     $deployFile = dirname(__DIR__) . '/_deploy.php';

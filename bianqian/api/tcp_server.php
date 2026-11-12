@@ -145,6 +145,141 @@ while (true) {
 /**
  * 处理单个 TCP 指令
  */
+/**
+ * 智能解析小说指令的多态参数（彻底兼容任意参数顺序与书号识别）
+ * 支持:
+ *   [PAGE]
+ *   [PAGE] [COUNT]
+ *   [PAGE] [COUNT] [BOOK]
+ *   [BOOK] [PAGE] [COUNT]
+ *   [BOOK] [PAGE]
+ */
+function parseNovelMultiArgs($tokens, $userBooks = array()) {
+    $rawArgs = array_slice($tokens, 2);
+    $bookArg = '';
+    $nums = array();
+
+    $knownBids = array();
+    $knownIndices = array();
+    foreach ($userBooks as $ub) {
+        $bid = (string)$ub['book_id'];
+        $knownBids[$bid] = true;
+        if (isset($ub['i'])) {
+            $knownIndices[(string)$ub['i']] = $bid;
+        }
+    }
+
+    foreach ($rawArgs as $arg) {
+        $a = trim((string)$arg);
+        if ($a === '') continue;
+        if (isset($knownBids[$a]) || strlen($a) >= 15 || (!is_numeric($a) && $bookArg === '')) {
+            if ($bookArg === '') {
+                $bookArg = $a;
+                continue;
+            }
+        }
+        if (is_numeric($a)) {
+            $nums[] = (int)$a;
+        } else {
+            if ($bookArg === '') $bookArg = $a;
+        }
+    }
+
+    $page = 1;
+    $count = 3;
+
+    if (count($nums) === 1) {
+        $page = max(1, $nums[0]);
+    } elseif (count($nums) === 2) {
+        $page = max(1, $nums[0]);
+        $count = max(1, min(5, $nums[1]));
+    } elseif (count($nums) >= 3) {
+        if (isset($knownIndices[(string)$nums[0]]) && $bookArg === '') {
+            $bookArg = $knownIndices[(string)$nums[0]];
+            $page = max(1, $nums[1]);
+            $count = max(1, min(5, $nums[2]));
+        } elseif (isset($knownIndices[(string)$nums[2]]) && $bookArg === '') {
+            $page = max(1, $nums[0]);
+            $count = max(1, min(5, $nums[1]));
+            $bookArg = $knownIndices[(string)$nums[2]];
+        } else {
+            $page = max(1, $nums[0]);
+            $count = max(1, min(5, $nums[1]));
+            if ($bookArg === '') $bookArg = (string)$nums[2];
+        }
+    }
+
+    return array('book' => $bookArg, 'page' => $page, 'count' => $count);
+}
+
+/**
+ * 智能解析章节指令的多态参数
+ * 支持:
+ *   [N]
+ *   [N] [PAGE]
+ *   [N] [PAGE] [BOOK]
+ *   [BOOK] [N] [PAGE]
+ *   [BOOK] [N]
+ */
+function parseChapterMultiArgs($tokens, $userBooks = array()) {
+    $rawArgs = array_slice($tokens, 2);
+    $bookArg = '';
+    $nums = array();
+
+    $knownBids = array();
+    $knownIndices = array();
+    foreach ($userBooks as $ub) {
+        $bid = (string)$ub['book_id'];
+        $knownBids[$bid] = true;
+        if (isset($ub['i'])) {
+            $knownIndices[(string)$ub['i']] = $bid;
+        }
+    }
+
+    foreach ($rawArgs as $arg) {
+        $a = trim((string)$arg);
+        if ($a === '') continue;
+        if (isset($knownBids[$a]) || strlen($a) >= 15 || (!is_numeric($a) && $bookArg === '')) {
+            if ($bookArg === '') {
+                $bookArg = $a;
+                continue;
+            }
+        }
+        if (is_numeric($a)) {
+            $nums[] = (int)$a;
+        } else {
+            if ($bookArg === '') $bookArg = $a;
+        }
+    }
+
+    $chapter = 1;
+    $page = 1;
+
+    if (count($nums) === 1) {
+        $chapter = max(1, $nums[0]);
+    } elseif (count($nums) === 2) {
+        $chapter = max(1, $nums[0]);
+        $page = max(1, $nums[1]);
+    } elseif (count($nums) >= 3) {
+        if (isset($knownIndices[(string)$nums[0]]) && $bookArg === '') {
+            $bookArg = $knownIndices[(string)$nums[0]];
+            $chapter = max(1, $nums[1]);
+            $page = max(1, $nums[2]);
+        } elseif (isset($knownIndices[(string)$nums[2]]) && $bookArg === '') {
+            $chapter = max(1, $nums[0]);
+            $page = max(1, $nums[1]);
+            $bookArg = $knownIndices[(string)$nums[2]];
+        } else {
+            $chapter = max(1, $nums[0]);
+            $page = max(1, $nums[1]);
+            if ($bookArg === '') $bookArg = (string)$nums[2];
+        }
+    }
+
+    return array('book' => $bookArg, 'chapter' => $chapter, 'page' => $page);
+}
+
+
 function handleTcpRequest($sock, $raw) {
     $action = '';
     $key = '';
@@ -360,25 +495,23 @@ function handleTcpRequest($sock, $raw) {
                     @fwrite($sock, "ERR 404 NOVEL NOT FOUND\n");
                 }
                 return;
-            }            // 3. 取页正文（NOVEL）：支持 NOVEL <KEY> <PAGE> [序号1-10 或 BOOK_ID]
-            // 接入常驻内存 LRU 章节切片缓存（LRU 30 章，命中延迟 <2ms）
+            }// 3. 取页正文（NOVEL）：智能支持单页取书
             if ($action === 'NOVEL') {
-                $reqPage = 1;
-                $reqBookArg = '';
+                $userBooks = function_exists('getUserNovels') ? getUserNovels($userId) : array();
                 if ($raw[0] === '{') {
                     $reqPage = isset($json['page']) ? max(1, (int)$json['page']) : 1;
                     $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
                 } else {
-                    $tokens = preg_split('/\s+/', trim($raw));
-                    $reqPage = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
-                    $reqBookArg = isset($tokens[3]) ? trim($tokens[3]) : '';
+                    $parsed = parseNovelMultiArgs(preg_split('/\s+/', trim($raw)), $userBooks);
+                    $reqBookArg = $parsed['book'];
+                    $reqPage = $parsed['page'];
                 }
 
                 $res = buildNovelPageOutput($userId, $reqBookArg, $reqPage, $fqKey);
                 @fwrite($sock, json_encode($res, JSON_UNESCAPED_UNICODE) . "\n");
+                @fflush($sock);
                 return;
             }
-
 
             // 6. 彻底删书与清除缓存（PURGE_BOOK / DELETE_BOOK）：无视 TTL，物理清空中转层与上游的所有缓存与落盘数据
             if ($action === 'PURGE_BOOK' || $action === 'DELETE_BOOK' || $action === 'PURGE') {
@@ -421,67 +554,48 @@ function handleTcpRequest($sock, $raw) {
                 forwardFanqieTcp($sock, $upstreamCmd);
                 return;
             }
-            // 3.1 批量取页（NOVELS）：支持 NOVELS <KEY> <START_PAGE> [COUNT] [序号1-10 或 BOOK_ID]
-            // 一次请求连续吐出 COUNT 行合法 JSON（默认 3 页，限制 1~5 页），配合 Keep-Alive 极速填满 MCU 三页预取队列
+
+            // 3.1 批量取页（NOVELS）：支持 NOVELS <KEY> <PAGE> [COUNT] [BOOK] 或 NOVELS <KEY> <BOOK> <PAGE> [COUNT]
+            // 一次请求连续吐出 COUNT 行合法 JSON（默认 3 页，限制 1~5 页），配合 Keep-Alive 极速填满 MCU 预取队列
             if ($action === 'NOVELS') {
-                $reqPage = 1;
-                $reqCount = 3;
-                $reqBookArg = '';
+                $userBooks = function_exists('getUserNovels') ? getUserNovels($userId) : array();
                 if ($raw[0] === '{') {
                     $reqPage = isset($json['page']) ? max(1, (int)$json['page']) : (isset($json['from']) ? max(1, (int)$json['from']) : 1);
                     $reqCount = isset($json['count']) ? max(1, min(5, (int)$json['count'])) : 3;
                     $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
                 } else {
-                    $tokens = preg_split('/\s+/', trim($raw));
-                    $reqPage = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
-                    $tok3 = isset($tokens[3]) ? trim($tokens[3]) : '';
-                    $tok4 = isset($tokens[4]) ? trim($tokens[4]) : '';
-                    if (is_numeric($tok3) && (int)$tok3 > 0 && (int)$tok3 <= 10 && strlen($tok3) <= 2) {
-                        $reqCount = max(1, min(5, (int)$tok3));
-                        $reqBookArg = $tok4;
-                    } else {
-                        $reqBookArg = $tok3;
-                        if (is_numeric($tok4) && (int)$tok4 > 0) {
-                            $reqCount = max(1, min(5, (int)$tok4));
-                        }
-                    }
+                    $parsed = parseNovelMultiArgs(preg_split('/\s+/', trim($raw)), $userBooks);
+                    $reqBookArg = $parsed['book'];
+                    $reqPage = $parsed['page'];
+                    $reqCount = $parsed['count'];
                 }
+
+                $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
+                $totalPages = $targetBook ? max((int)$targetBook['total_pages'], (int)round(max(1, (int)$targetBook['total_chapters']) * 7.2)) : 99999;
 
                 for ($i = 0; $i < $reqCount; $i++) {
                     $curP = $reqPage + $i;
+                    if ($curP > $totalPages && $i > 0) break;
                     $res = buildNovelPageOutput($userId, $reqBookArg, $curP, $fqKey);
                     @fwrite($sock, json_encode($res, JSON_UNESCAPED_UNICODE) . "\n");
+                    @fflush($sock);
                 }
                 return;
             }
 
-            // 4. 按章取页（CHAPTER）// 4. 按章取页（CHAPTER）：支持 CHAPTER <KEY> <N> [PAGE] [序号1-10 或 BOOK_ID]
+            // 4. 按章取页（CHAPTER）：支持 CHAPTER <KEY> <N> [PAGE] [BOOK] 或 CHAPTER <KEY> <BOOK> <N> [PAGE]
+            // 接入常驻内存 LRU 章节切片缓存（$gNovelChapterCache，跳章秒回 <1ms）
             if ($action === 'CHAPTER') {
-                $reqChapter = 1;
-                $reqPage = 1;
-                $reqBookArg = '';
+                $userBooks = function_exists('getUserNovels') ? getUserNovels($userId) : array();
                 if ($raw[0] === '{') {
                     $reqChapter = isset($json['n']) ? max(1, (int)$json['n']) : (isset($json['chapter']) ? max(1, (int)$json['chapter']) : 1);
                     $reqPage = isset($json['page']) ? max(1, (int)$json['page']) : 1;
                     $reqBookArg = isset($json['book']) ? trim($json['book']) : (isset($json['book_id']) ? trim($json['book_id']) : '');
                 } else {
-                    $tokens = preg_split('/\s+/', trim($raw));
-                    $reqChapter = isset($tokens[2]) ? max(1, (int)$tokens[2]) : 1;
-                    $tok3 = isset($tokens[3]) ? trim($tokens[3]) : '';
-                    $tok4 = isset($tokens[4]) ? trim($tokens[4]) : '';
-
-                    if ($tok4 !== '') {
-                        $reqPage = max(1, (int)$tok3);
-                        $reqBookArg = $tok4;
-                    } elseif ($tok3 !== '') {
-                        if (strlen($tok3) > 10) {
-                            $reqPage = 1;
-                            $reqBookArg = $tok3;
-                        } else {
-                            $reqPage = max(1, (int)$tok3);
-                            $reqBookArg = '';
-                        }
-                    }
+                    $parsed = parseChapterMultiArgs(preg_split('/\s+/', trim($raw)), $userBooks);
+                    $reqBookArg = $parsed['book'];
+                    $reqChapter = $parsed['chapter'];
+                    $reqPage = $parsed['page'];
                 }
 
                 $targetBook = function_exists('getUserNovelByIdOrIndex') ? getUserNovelByIdOrIndex($userId, $reqBookArg) : null;
@@ -492,6 +606,7 @@ function handleTcpRequest($sock, $raw) {
                         'reason' => 'NO_BOOK'
                     ), JSON_UNESCAPED_UNICODE) . "\n";
                     @fwrite($sock, $emptyNotice);
+                    @fflush($sock);
                     return;
                 }
 
@@ -501,33 +616,38 @@ function handleTcpRequest($sock, $raw) {
                 $pagesPerChap = max(0.1, (float)$totalPages / (float)$totalChaps);
                 $reqChapter = max(1, min($totalChaps, $reqChapter));
 
-                $upstreamCmd = "CHAPTER {$fqKey} {$reqChapter} {$reqPage} {$realBookId}";
-                forwardFanqieTcp($sock, $upstreamCmd, function($resp) use ($userId, $realBookId, $reqChapter, $reqPage, $targetBook, $totalPages, $pagesPerChap) {
-                    $j = @json_decode($resp, true);
-                    if ($j && isset($j['text'])) {
-                                                $pInChap = isset($j['page']) ? (int)$j['page'] : $reqPage;
-                        $globalPage = function_exists('novelChapterOffsetToPage')
-                            ? novelChapterOffsetToPage($reqChapter, $pInChap, $totalChaps, $totalPages)
-                            : max(1, (int)round(($reqChapter - 1) * $pagesPerChap) + $pInChap);
-                        $enriched = array(
-                            'title'         => $targetBook['title'],
-                            'chapter_title' => isset($j['title']) ? $j['title'] : ('第' . $reqChapter . '章'),
-                            'chapter'       => $reqChapter,
-                            'page'          => $globalPage,
-                            'pages'         => $totalPages,
-                            'chap_page'     => $pInChap,
-                            'chap_pages'    => isset($j['pages']) ? (int)$j['pages'] : 1,
-                            'text'          => (string)$j['text']
-                        );
-                        if (function_exists('updateUserNovelPage')) {
-                            updateUserNovelPage($userId, $realBookId, $globalPage, $totalPages);
-                        }
-                        return json_encode($enriched, JSON_UNESCAPED_UNICODE) . "\n";
-                    }
-                    return $resp;
-                });
+                // 核心加速：直查常驻切片缓存 $gNovelChapterCache，未命中才向上游请求 CHAPTER_RAW 并切片缓存
+                $slice = fetchNovelChapterPageCached($realBookId, $reqChapter, $reqPage, $fqKey);
+                if (!$slice) {
+                    @fwrite($sock, "ERR 503 CHAPTER FETCH TIMEOUT\n");
+                    @fflush($sock);
+                    return;
+                }
+
+                $globalPage = function_exists('novelChapterOffsetToPage')
+                    ? novelChapterOffsetToPage($reqChapter, $slice['page'], $totalChaps, $totalPages)
+                    : max(1, (int)round(($reqChapter - 1) * $pagesPerChap) + $slice['page']);
+
+                $enriched = array(
+                    'title'         => $targetBook['title'],
+                    'chapter_title' => $slice['title'],
+                    'chapter'       => $reqChapter,
+                    'page'          => $globalPage,
+                    'pages'         => $totalPages,
+                    'chap_page'     => $slice['page'],
+                    'chap_pages'    => $slice['pages'],
+                    'text'          => $slice['text']
+                );
+
+                if (function_exists('updateUserNovelPage')) {
+                    updateUserNovelPage($userId, $realBookId, $globalPage, $totalPages);
+                }
+
+                @fwrite($sock, json_encode($enriched, JSON_UNESCAPED_UNICODE) . "\n");
+                @fflush($sock);
                 return;
             }
+
 
             // 5. 章节目录列表（CHAPTERS）：支持 CHAPTERS <KEY> [序号1-10 或 BOOK_ID] [OFFSET] [LIMIT]
             if ($action === 'CHAPTERS') {
