@@ -2,3 +2,7 @@
 # suite-config.php 由 /admini 面板生成，含数据库密码与各站密令
 suite-config.php
 __pycache__/
+
+# 严禁将私密番茄逆向 API 与下载工具推送到公开开源仓
+fqdl/
+番茄*
