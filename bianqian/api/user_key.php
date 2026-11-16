@@ -347,7 +347,7 @@ switch ($action) {
             exit;
         }
 
-        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://127.0.0.1:53223';
         $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
         $searchUrl = $fqHost . '/api/v1/search?q=' . urlencode($q) . '&pages=1';
         $ch = curl_init($searchUrl);
@@ -387,7 +387,7 @@ switch ($action) {
         }
 
         // 若缺少章节或页数，尝试向上游 info 接口补全
-        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://127.0.0.1:53223';
         $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
         if ($chaps <= 0 || $pages <= 0) {
             $infoUrl = $fqHost . '/api/v1/mcu/info?book=' . urlencode($bookId);
@@ -571,11 +571,11 @@ switch ($action) {
             $globalPage = (int)$page;
         }
 
-        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://127.0.0.1:53223';
         $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
 
         $parsed = parse_url($fqHost);
-        $host = isset($parsed['host']) ? $parsed['host'] : '111.170.163.248';
+        $host = isset($parsed['host']) ? $parsed['host'] : '127.0.0.1';
         $port = isset($parsed['port']) ? (int)$parsed['port'] : 53223;
 
         $fp = @fsockopen($host, $port, $errno, $errstr, 4);
@@ -610,6 +610,18 @@ switch ($action) {
         $matchedTitle = !empty($j['title']) ? $j['title'] : ('第' . $calcChapter . '章');
         $chapPage = isset($j['page']) ? (int)$j['page'] : $calcChapPage;
         $chapPages = isset($j['pages']) ? (int)$j['pages'] : 1;
+
+        // 每章第 1 页正文开头自动补齐【章节名 + 正文】
+        if ($chapPage === 1) {
+            $cleanTitle = trim($matchedTitle);
+            if ($cleanTitle !== '') {
+                $first100 = mb_substr($j['text'], 0, 100, 'UTF-8');
+                if (mb_strpos($first100, $cleanTitle, 0, 'UTF-8') === false &&
+                    !preg_match('/^第\\s*' . (int)$calcChapter . '\\s*章/u', $first100)) {
+                    $j['text'] = $cleanTitle . "\n" . $j['text'];
+                }
+            }
+        }
                 if ($chapter > 0) {
             $globalPage = function_exists('novelChapterOffsetToPage')
                 ? novelChapterOffsetToPage($calcChapter, $chapPage, $totalChaps, $totalPages)

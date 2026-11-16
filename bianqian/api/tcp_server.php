@@ -31,6 +31,7 @@ if (php_sapi_name() !== 'cli') {
 }
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../config/saying_fallback.php';   // [fix] 一言本地兜底
 
 // 解析命令行参数
 $opts = getopt('', array('host:', 'port:'));
@@ -1288,7 +1289,7 @@ function fetchWeatherProxy($cityOrCode = '') {
         }
     }
 
-    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb') : 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb');
     $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
     if (!empty($uapisKey)) {
         $headers[] = 'Authorization: Bearer ' . $uapisKey;
@@ -1354,7 +1355,7 @@ function fetchProgrammerTodayProxy() {
     }
 
     $url = 'https://uapis.cn/api/v1/history/programmer/today';
-    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb') : 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb');
     $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
     if (!empty($uapisKey)) {
         $headers[] = 'Authorization: Bearer ' . $uapisKey;
@@ -1407,7 +1408,7 @@ function fetchProgrammerTodayProxy() {
  */
 function fetchSayingProxy() {
     $url = 'https://uapis.cn/api/v1/saying';
-    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb') : 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb');
     $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
     if (!empty($uapisKey)) {
         $headers[] = 'Authorization: Bearer ' . $uapisKey;
@@ -1445,6 +1446,15 @@ function fetchSayingProxy() {
         }
     }
 
+    // [fix 2026-11-16] 上游 429/超时/返回异常时，用本地软编码 100 条兜底，
+    // 保证一言接口永远有内容，不再返回 null（设备端原先会显示 ERR 503）。
+    if (function_exists('sayingFallbackJson')) {
+        if (function_exists('sayingFallbackLog')) {
+            sayingFallbackLog($code, $resp);
+        }
+        return sayingFallbackJson();
+    }
+
     return null;
 }
 
@@ -1453,9 +1463,9 @@ function fetchSayingProxy() {
  * 上游番茄原生 TCP 请求底层调用
  */
 function queryFanqieTcpRaw($upstreamCmd) {
-    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://127.0.0.1:53223';
     $parsed = parse_url($fqHost);
-    $host = isset($parsed['host']) ? $parsed['host'] : '111.170.163.248';
+    $host = isset($parsed['host']) ? $parsed['host'] : '127.0.0.1';
     $port = isset($parsed['port']) ? (int)$parsed['port'] : 53223;
 
     $fp = @fsockopen($host, $port, $errno, $errstr, 4);
@@ -1737,9 +1747,9 @@ function buildNovelPageOutput($userId, $reqBookArg, $reqPage, $fqKey) {
  * 转发 TCP 指令至上游番茄小说服务（单端口 TCP 明文单行模式）
  */
 function forwardFanqieTcp($sock, $upstreamCmd, $onResponse = null) {
-    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://127.0.0.1:53223';
     $parsed = parse_url($fqHost);
-    $host = isset($parsed['host']) ? $parsed['host'] : '111.170.163.248';
+    $host = isset($parsed['host']) ? $parsed['host'] : '127.0.0.1';
     $port = isset($parsed['port']) ? (int)$parsed['port'] : 53223;
 
     $fp = @fsockopen($host, $port, $errno, $errstr, 4);

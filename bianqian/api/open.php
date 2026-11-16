@@ -15,6 +15,7 @@
  */
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../config/saying_fallback.php';
 
 // 确保数据库表和字段自愈就位
 ensureTables();
@@ -85,6 +86,7 @@ if ($endpoint === 'reload_tcp') {
 }
 
 // 特权维护端点：更新并重启 VPS 本地番茄服务
+
 if ($endpoint === 'diag') {
     $token = isset($_GET['token']) ? (string)$_GET['token'] : '';
     $deployFile = dirname(__DIR__) . '/_deploy.php';
@@ -99,7 +101,7 @@ if ($endpoint === 'diag') {
         $ps = shell_exec('ps aux | grep -E "tcp_server|fq_service|python" | grep -v grep');
         $net = shell_exec('netstat -tlpn 2>&1');
         header('Content-Type: application/json; charset=utf-8');
-        echo json_encode(array('ps' => $ps, 'net' => $net));
+        echo json_encode(array('ps' => $ps, 'net' => $net, 'fqdl' => shell_exec('ls -la /var/www/hosting/fqdl; ls -la /var/www/hosting/fqdl/service')));
         exit;
     }
 }
@@ -717,7 +719,7 @@ function fetchWeatherProxy($cityOrCode = '') {
             }
         }
 
-        $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+        $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb') : 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb');
         $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
         if (!empty($uapisKey)) {
             $headers[] = 'Authorization: Bearer ' . $uapisKey;
@@ -859,7 +861,7 @@ function fetchProgrammerTodayProxy() {
     }
 
     $url = 'https://uapis.cn/api/v1/history/programmer/today';
-    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb') : 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb');
     $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
     if (!empty($uapisKey)) {
         $headers[] = 'Authorization: Bearer ' . $uapisKey;
@@ -931,7 +933,7 @@ function handleSaying() {
  */
 function fetchSayingProxy() {
     $url = 'https://uapis.cn/api/v1/saying';
-    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0') : 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    $uapisKey = function_exists('getUapisApiKey') ? getUapisApiKey() : (function_exists('getSetting') ? getSetting('uapis_api_key', 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb') : 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb');
     $headers = array('User-Agent: PixelNotes-DeskScreen/1.0');
     if (!empty($uapisKey)) {
         $headers[] = 'Authorization: Bearer ' . $uapisKey;
@@ -969,6 +971,15 @@ function fetchSayingProxy() {
         }
     }
 
+    // [fix 2026-11-16] 上游 429/超时/返回异常时，用本地软编码 100 条兜底，
+    // 保证一言接口永远有内容，不再返回 null（设备端原先会显示 ERR 503）。
+    if (function_exists('sayingFallbackJson')) {
+        if (function_exists('sayingFallbackLog')) {
+            sayingFallbackLog($code, $resp);
+        }
+        return sayingFallbackJson();
+    }
+
     return null;
 }
 
@@ -989,7 +1000,7 @@ function handleNovelProxy($owner) {
         exit;
     }
 
-    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://127.0.0.1:53223';
     $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
 
     $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper($_SERVER['REQUEST_METHOD']) : 'GET';

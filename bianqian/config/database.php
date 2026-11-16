@@ -446,7 +446,7 @@ function ensureTables(&$error = null) {
             $stUapis = $pdo->prepare("SELECT svalue FROM `pn_settings` WHERE `skey` = 'uapis_api_key'");
             $stUapis->execute();
             if ($stUapis->fetchColumn() === false) {
-                $pdo->prepare("INSERT INTO `pn_settings` (`skey`, `svalue`, `updated_at`) VALUES ('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0', NOW())")->execute();
+                $pdo->prepare("INSERT INTO `pn_settings` (`skey`, `svalue`, `updated_at`) VALUES ('uapis_api_key', 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb', NOW())")->execute();
             }
         } catch (Throwable $e) {}
 
@@ -454,8 +454,13 @@ function ensureTables(&$error = null) {
         try {
             $stFqH = $pdo->prepare("SELECT svalue FROM `pn_settings` WHERE `skey` = 'fanqie_host'");
             $stFqH->execute();
-            if ($stFqH->fetchColumn() === false) {
-                $pdo->prepare("INSERT INTO `pn_settings` (`skey`, `svalue`, `updated_at`) VALUES ('fanqie_host', 'http://111.170.163.248:53223', NOW())")->execute();
+            $fqHostRow = $stFqH->fetchColumn();
+            if ($fqHostRow === false) {
+                // [fix] 番茄服务已改为本机部署，兜底与种子统一走 127.0.0.1
+                $pdo->prepare("INSERT INTO `pn_settings` (`skey`, `svalue`, `updated_at`) VALUES ('fanqie_host', 'http://127.0.0.1:53223', NOW())")->execute();
+            } elseif (is_string($fqHostRow) && strpos($fqHostRow, '111.170.163.248') !== false) {
+                // [fix] 自愈：仍指向已下线公网机器的旧配置，就地纠正回本机
+                $pdo->prepare("UPDATE `pn_settings` SET `svalue` = 'http://127.0.0.1:53223', `updated_at` = NOW() WHERE `skey` = 'fanqie_host'")->execute();
             }
             $stFqK = $pdo->prepare("SELECT svalue FROM `pn_settings` WHERE `skey` = 'fanqie_key'");
             $stFqK->execute();
@@ -511,7 +516,7 @@ function setSetting($key, $value) {
  * 获取第三方接口 API Key（uapis.cn，用于天气与程序员历史等服务）
  */
 function getUapisApiKey() {
-    return getSetting('uapis_api_key', 'ATut6bfa8c5f880340b9be8164d872cd97b0');
+    return getSetting('uapis_api_key', 'uapi-xx9dplh7EUbH8Qarjx9vDa07QL1evZbQFJKPUUFb');
 }
 
 /**
@@ -858,7 +863,7 @@ function fetchNovelTotalPages($bookId) {
     if ($bookId === '') return 0;
     if (isset($cache[$bookId])) return $cache[$bookId];
 
-    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+    $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://127.0.0.1:53223';
     $fqKey = function_exists('getFanqieApiKey') ? getFanqieApiKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
 
     $url = $fqHost . '/api/v1/mcu/novel?page=1&book=' . urlencode($bookId);
@@ -1124,7 +1129,7 @@ function setCurrentUserNovel($userId, $bookId) {
         $pdo->prepare("UPDATE `pn_user_novels` SET `is_current` = 1, `updated_at` = NOW() WHERE `id` = ?")->execute(array((int)$target['id']));
 
         // 轻量触发上游 PICK 指令开启预热
-        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://111.170.163.248:53223';
+        $fqHost = function_exists('getFanqieHost') ? getFanqieHost() : 'http://127.0.0.1:53223';
         $fqKey  = function_exists('getFanqieKey') ? getFanqieKey() : '5b42436aea8a5296e40b4b95d2ed2ad7';
         $pickUrl = $fqHost . '/api/v1/mcu/pick?book=' . urlencode($bookId);
         $ch = curl_init($pickUrl);
